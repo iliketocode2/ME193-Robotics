@@ -8,6 +8,7 @@ Usage:
 import time
 import legoeducation as le
 
+
 class _CardReader:
     """Mixin that adds card-tap reading to any LEGO Education device."""
     _last_card_serial = None
@@ -25,6 +26,7 @@ class _CardReader:
             if current != 0:
                 return current
         return None
+
 
 class singleMotor(_CardReader, le.SingleMotor):
     def __init__(self):
@@ -63,7 +65,9 @@ class singleMotor(_CardReader, le.SingleMotor):
 
 class doubleMotor(_CardReader, le.DoubleMotor):
 
-    def connect(self, card_serial, card_color=None):
+    def connect(self, card_serial=None, card_color=None):
+        """Connect to a Double Motor. With no arguments, connects to the
+        first advertising Double Motor found (no Connection Card needed)."""
         for attempt in range(5):
             try:
                 super().connect(card_color=card_color, card_serial=card_serial)
@@ -161,14 +165,6 @@ class controller(_CardReader, le.Controller):
     def right_released(self): return self.sensor.rightPercent == 0
     def left_position(self):  return self.sensor.leftPercent
     def right_position(self): return self.sensor.rightPercent
-
-    def left_angle(self):
-        """Direction the left stick is pushed, in degrees. Meaningless at center (percent == 0)."""
-        return self.sensor.leftAngle
-
-    def right_angle(self):
-        """Direction the right stick is pushed, in degrees. Meaningless at center (percent == 0)."""
-        return self.sensor.rightAngle
 
     def drive(self, dm, t=100):
         for i in range(t):
