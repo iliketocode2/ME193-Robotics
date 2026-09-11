@@ -26,11 +26,11 @@ from lelib import singleMotor, controller
 # Fill these in with the color/serial printed on your LEGO Connection Cards.
 # Valid colors: le.LEGO_COLOR_RED, _YELLOW, _BLUE, _GREEN, _PURPLE,
 # _MAGENTA, _AZURE, _ORANGE.
-MOTOR_CARD_COLOR = le.LEGO_COLOR_ORANGE
-MOTOR_CARD_SERIAL = 0  # <-- fill in with your motor card's serial number
+MOTOR_CARD_COLOR = le.LEGO_COLOR_RED
+MOTOR_CARD_SERIAL = 3664  # <-- fill in with your motor card's serial number
 
-CONTROLLER_CARD_COLOR = le.LEGO_COLOR_ORANGE
-CONTROLLER_CARD_SERIAL = 0  # <-- fill in with your controller card's serial number
+CONTROLLER_CARD_COLOR = le.LEGO_COLOR_RED
+CONTROLLER_CARD_SERIAL = 3664  # <-- fill in with your controller card's serial number
 
 POLL_DELAY_S = 0.05  # seconds between joystick reads
 
