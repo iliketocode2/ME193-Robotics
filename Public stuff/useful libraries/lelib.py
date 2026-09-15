@@ -13,6 +13,33 @@ class _CardReader:
     """Mixin that adds card-tap reading to any LEGO Education device."""
     _last_card_serial = None
 
+    def _connect_with_retry(self, device_label, card_serial, card_color=None):
+        """Retry connect() on a transient BLE failure.
+
+        legoeducation's own connect() doesn't raise on a failed BLE link --
+        it logs an error and returns with self.connected still False (see
+        basic_device.py). So retrying only on a raised "not ready"
+        exception (the original approach here) never actually retries that
+        failure mode; this also retries whenever self.connected is still
+        False after a clean return, which is what a flaky/stale BLE
+        connection (e.g. a Windows GATT-cache race after an earlier
+        ungraceful disconnect) looks like in practice.
+        """
+        for attempt in range(5):
+            try:
+                super(_CardReader, self).connect(card_color=card_color, card_serial=card_serial)
+            except Exception as e:
+                if "not ready" in str(e).lower() and attempt < 4:
+                    time.sleep(1)
+                    continue
+                raise
+            if self.connected:
+                return
+            if attempt < 4:
+                time.sleep(1)
+        if not self.connected:
+            raise ConnectionError(f'Error connecting to {device_label}.')
+
     def card_serial(self):
         """Return the serial number of the card currently on the sensor (0 = no card)."""
         return self.scanned_card.serial
@@ -33,17 +60,7 @@ class singleMotor(_CardReader, le.SingleMotor):
         super().__init__()
 
     def connect(self, card_serial, card_color=None):
-        for attempt in range(5):
-            try:
-                super().connect(card_color=card_color, card_serial=card_serial)
-                break
-            except Exception as e:
-                if "not ready" in str(e).lower() and attempt < 4:
-                    time.sleep(1)
-                else:
-                    raise
-        if not self.connected:
-            raise ConnectionError('Error connecting to Single Motor.')
+        self._connect_with_retry('Single Motor', card_serial, card_color)
 
     def spin(self, rotations=1):
         self.motor_run_for_degrees(rotations * 360)
@@ -68,17 +85,7 @@ class doubleMotor(_CardReader, le.DoubleMotor):
     def connect(self, card_serial=None, card_color=None):
         """Connect to a Double Motor. With no arguments, connects to the
         first advertising Double Motor found (no Connection Card needed)."""
-        for attempt in range(5):
-            try:
-                super().connect(card_color=card_color, card_serial=card_serial)
-                break
-            except Exception as e:
-                if "not ready" in str(e).lower() and attempt < 4:
-                    time.sleep(1)
-                else:
-                    raise
-        if not self.connected:
-            raise ConnectionError('Error connecting to Double Motor.')
+        self._connect_with_retry('Double Motor', card_serial, card_color)
 
     def move_steps(self, step=1):
         self.movement_move_for_degrees(-180 * step)
@@ -145,17 +152,7 @@ class doubleMotor(_CardReader, le.DoubleMotor):
 class controller(_CardReader, le.Controller):
 
     def connect(self, card_serial, card_color=None):
-        for attempt in range(5):
-            try:
-                super().connect(card_color=card_color, card_serial=card_serial)
-                break
-            except Exception as e:
-                if "not ready" in str(e).lower() and attempt < 4:
-                    time.sleep(1)
-                else:
-                    raise
-        if not self.connected:
-            raise ConnectionError('Error connecting to Controller.')
+        self._connect_with_retry('Controller', card_serial, card_color)
 
     def left_up(self):        return self.sensor.leftPercent > 0
     def left_down(self):      return self.sensor.leftPercent < 0
@@ -177,17 +174,7 @@ class colorSensor(_CardReader, le.ColorSensor):
         super().__init__()
 
     def connect(self, card_serial, card_color=None):
-        for attempt in range(5):
-            try:
-                super().connect(card_color=card_color, card_serial=card_serial)
-                break
-            except Exception as e:
-                if "not ready" in str(e).lower() and attempt < 4:
-                    time.sleep(1)
-                else:
-                    raise
-        if not self.connected:
-            raise ConnectionError('Error connecting to Color Sensor.')
+        self._connect_with_retry('Color Sensor', card_serial, card_color)
 
     def reflection(self):
         return self.sensor.reflection

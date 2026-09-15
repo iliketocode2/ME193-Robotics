@@ -1,13 +1,14 @@
-'''
+"""
 Camera selection and initialisation helper for all ME193 examples.
 
 Usage:
     from camlib import pick_camera
     cap, start_ms = pick_camera()
-'''
+"""
 
 import subprocess
 import json
+import sys
 import time
 import cv2
 import numpy as np
@@ -16,7 +17,9 @@ import numpy as np
 def _camera_names():
     """Return display names for cameras from macOS system_profiler.
     Note: order may not match OpenCV's AVFoundation index order — use
-    the visual preview in pick_camera() to identify cameras reliably."""
+    the visual preview in pick_camera() to identify cameras reliably.
+    On Windows/Linux there's no equally lightweight OS call for this, so
+    this returns [] and callers fall back to generic "Camera N" labels."""
     try:
         raw  = subprocess.check_output(
             ['system_profiler', 'SPCameraDataType', '-json'],
@@ -28,7 +31,41 @@ def _camera_names():
         return []
 
 
-def pick_camera(width=1280, height=720):
+def _backend_candidates():
+    """Platform-appropriate cv2.VideoCapture backend flags, in try-order.
+
+    Opening with the wrong (or no) backend is the usual cause of black
+    frames or corrupted/noisy images on a given OS: AVFoundation is the
+    reliable backend on macOS, DirectShow (falling back to Media
+    Foundation) on Windows.
+    """
+    if sys.platform == "darwin":
+        return [cv2.CAP_AVFOUNDATION, cv2.CAP_ANY]
+    if sys.platform.startswith("win"):
+        return [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+    return [cv2.CAP_ANY]
+
+
+def _open_camera(index):
+    """Open `index`, trying each platform backend in turn, and force MJPG
+    decoding once opened.
+
+    Without an explicit FOURCC, cv2.CAP_DSHOW on Windows frequently hands
+    back a raw/YUY2 buffer that OpenCV misinterprets as BGR — the visible
+    symptom is a black frame full of horizontal noise bars, not an
+    exception. Forcing MJPG (widely supported, hardware-decoded on most
+    webcams) fixes that.
+    """
+    for backend in _backend_candidates():
+        cap = cv2.VideoCapture(index, backend)
+        if cap.isOpened():
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+            return cap
+        cap.release()
+    return cv2.VideoCapture(index)  # last resort, no backend hint
+
+
+def pick_camera(width=640, height=480):
     """
     Scan for connected cameras, show a live preview thumbnail of each one,
     and let the user press the matching number key to choose.
@@ -49,22 +86,23 @@ def pick_camera(width=1280, height=720):
     available = []   # list of (index, label)
     previews  = {}   # index -> BGR thumbnail
     for i in range(6):
-        cap = cv2.VideoCapture(i, cv2.CAP_AVFOUNDATION)
-        if not cap.isOpened():
-            cap.release()
-            continue
+        cap = _open_camera(i)
+
+        ret, frame = False, None
         # Skip the first few frames — they are often black while the sensor warms up
         for _ in range(8):
             ret, frame = cap.read()
         if ret and frame is not None:
             previews[i] = cv2.resize(frame, (THUMB_W, THUMB_H))
-        label = names[i] if i < len(names) else f"Camera {i}"
-        available.append((i, label))
+            label = names[i] if i < len(names) else f"Camera {i}"
+            available.append((i, label))
         cap.release()
+        time.sleep(0.1)  # let the driver settle between probes (Windows DirectShow is flaky about rapid open/close)
 
     if not available:
         raise RuntimeError(
-            "No cameras found. Check System Settings → Privacy & Security → Camera."
+            "No cameras found. Check System Settings → Privacy & Security → Camera "
+            "(macOS) or that no other app is using the camera (Windows)."
         )
 
     # If only one camera, skip the chooser
@@ -104,13 +142,12 @@ def pick_camera(width=1280, height=720):
         print(f"Using camera {chosen}\n")
 
     # Open the chosen camera for real
-    cap = cv2.VideoCapture(chosen, cv2.CAP_AVFOUNDATION)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(chosen)
+    cap = _open_camera(chosen)
     if not cap.isOpened():
         raise RuntimeError(
             f"Could not open camera {chosen}. "
-            "Check System Settings → Privacy & Security → Camera."
+            "Check System Settings → Privacy & Security → Camera (macOS) or "
+            "that no other app is using the camera (Windows)."
         )
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  width)
