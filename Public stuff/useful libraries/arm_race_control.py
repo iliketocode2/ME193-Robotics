@@ -67,6 +67,7 @@ from mediapipe.tasks.python import vision as mp_vision
 import legoeducation as le
 from lelib import doubleMotor
 from camlib import pick_camera
+from piviz import send_telemetry  # optional: live dashboard on a Raspberry Pi, see piviz.py
 
 # --- Hardware placeholder ---------------------------------------------------
 # None = connect to the first advertising Double Motor. Fine for solo
@@ -224,6 +225,7 @@ def main():
             # Either hand missing = stop, not "last known speed" -- only set once
             # both a speed (right hand) and a direction (left hand) are seen below.
             right_speed = None
+            right_fingers = 0
             left_direction = None  # (forward, turn), each in [-1, 1]
 
             for landmarks, handedness in zip(result.hand_landmarks, result.handedness):
@@ -233,6 +235,7 @@ def main():
 
                 if side == "Right":
                     fingers = _count_extended_fingers(landmarks)
+                    right_fingers = fingers
                     right_speed = (fingers / 5) * MAX_SPEED
                     cv2.circle(frame, (wx, wy), 10, (0, 255, 0), -1)
                     cv2.putText(frame, f"Right: {fingers} fingers -> {right_speed:+.0f}%",
@@ -248,15 +251,20 @@ def main():
                     cv2.putText(frame, f"Left: fwd {left_direction[0]:+.2f} turn {left_direction[1]:+.2f}",
                                 (wx + 12, wy + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
+            forward, turn = left_direction if left_direction is not None else (0.0, 0.0)
+
             if right_speed is not None and left_direction is not None:
                 # Arcade-drive mixing: forward moves both wheels together,
                 # turn spins them apart -- the standard forward+turn ->
                 # left/right-wheel-speed scheme for a differential-drive robot.
-                forward, turn = left_direction
                 target_left = int(max(-MAX_SPEED, min(MAX_SPEED, right_speed * (forward + turn))))
                 target_right = int(max(-MAX_SPEED, min(MAX_SPEED, right_speed * (forward - turn))))
             else:
                 target_left, target_right = 0, 0
+
+            # Optional fun add-on -- see piviz.py. Best-effort/non-blocking,
+            # so a missing Raspberry Pi never affects the control loop above.
+            send_telemetry(right_fingers, right_speed or 0.0, forward, turn)
 
             cv2.imshow("Finger Race Control -- press q to stop", frame)
 
