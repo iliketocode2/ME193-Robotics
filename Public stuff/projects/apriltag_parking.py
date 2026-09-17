@@ -104,10 +104,10 @@ APRILTAG_DICTIONARY = cv2.aruco.DICT_APRILTAG_36h11
 TARGET_TAG_ID = None  # None = react to any detected tag; set an int to track one specific ID
 
 # --- Controller (the "policy") tuning ----------------------------------------
-MAX_SPEED = 60          # top motor speed as a percent (0-100)
-STEER_GAIN = 0.2       # turn response to horizontal centering error -- raise for a stiffer "spring"
+MAX_SPEED = 50          # top motor speed as a percent (0-100)
+STEER_GAIN = 0.1      # turn response to horizontal centering error -- raise for a stiffer "spring"
 FORWARD_GAIN = 0.00006  # drive response to tag-size (distance) error -- same idea, other axis
-TARGET_TAG_AREA = 9000  # pixels^2 -- CALIBRATE THIS (see Setup step 3 above)
+TARGET_TAG_AREA = 18000  # pixels^2 -- CALIBRATE THIS (see Setup step 3 above)
 DEADZONE_PX = 12        # +/- pixel band around center that reads as "already centered"
 
 # Motor mounting may be mirrored side-to-side on this chassis, so
