@@ -51,6 +51,17 @@ Both motors stop immediately -- no "last known command," no search/spin
 behavior. This is a deliberate, simple choice (see this project's
 Notion page for the reasoning), not an oversight.
 
+Camera pan platform (manual, not part of the AprilTag policy)
+----------------------------------------------------------------
+The phone sits on a rotating platform driven by its own Single Motor,
+independent of the Double Motor "car" above. That's manual only --
+there's no autonomous pan-seeking behavior here, just a Controller's
+left joystick teleoperating the platform every frame so a human can
+re-aim the camera at the tag if it drifts out of frame. All three
+devices (Double Motor, Single Motor, Controller) connect using the
+*same* card serial/color -- one physical Connection Card tapped to all
+three, per this project's hardware setup.
+
 Setup:
     1. Get the iPhone stream working first via apriltag_stream_test.py
        -- this script uses the same STREAM_URL.
@@ -75,7 +86,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "useful libraries"))
 
 import legoeducation as le
-from lelib import doubleMotor
+from lelib import doubleMotor, singleMotor, controller
 
 # --- Camera source -- same URL validated in apriltag_stream_test.py --------
 STREAM_URL = "http://10.243.67.39:8080/stream.jpeg"  # <-- update if the phone's IP changes
@@ -93,11 +104,21 @@ STREAM_URL = "http://10.243.67.39:8080/stream.jpeg"  # <-- update if the phone's
 FRAME_ROTATION = None  # phone remounted landscape -- re-verify with the pan test if this changes again
 
 # --- Hardware placeholder ---------------------------------------------------
-# None = connect to the first advertising Double Motor. Fine for solo
-# testing, but ambiguous with more than one Double Motor nearby -- set
-# a real card_serial/card_color (see your Connection Card) for the demo.
-CAR_CARD_SERIAL = 1126  # <-- fill in with your Double Motor card's serial number
-CAR_CARD_COLOR = le.LEGO_COLOR_GREEN
+# All three devices below (Double Motor "car", Single Motor "pan platform",
+# Controller) are set up to connect via the *same* Connection Card -- fill
+# in the one card's serial/color here rather than a separate constant per
+# device. None = connect to the first advertising device of that type. Fine
+# for solo testing, but ambiguous with more than one of the same device type
+# nearby -- set a real card_serial/card_color (see your Connection Card) for
+# the demo.
+CARD_SERIAL = 3664  # <-- fill in with your shared Connection Card's serial number
+CARD_COLOR = le.LEGO_COLOR_RED
+
+# Camera pan platform's joystick teleop -- left stick drives the Single
+# Motor directly at a speed proportional to how far it's pushed (same
+# convention as single_motor_controller.py). Flip if the platform spins
+# the wrong way relative to stick direction once you watch it move.
+INVERT_PAN_MOTOR = False
 
 # --- AprilTag ----------------------------------------------------------------
 APRILTAG_DICTIONARY = cv2.aruco.DICT_APRILTAG_36h11
@@ -140,6 +161,22 @@ def _drive_wheel(car, motor_side, speed, invert, blocking=False):
                  else le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE)
     car.motor_run(direction=direction, motor=motor_side, speed=abs(speed), blocking=blocking)
 
+def _drive_pan_motor(pan_motor, speed, invert):
+    """Set the camera pan platform's Single Motor to a signed speed
+    (-100..100), or stop it at 0.
+
+    Non-blocking for the same reason as _drive_wheel(): this gets called
+    from inside the vision loop, so a manual joystick nudge shouldn't
+    stall frame processing waiting on a BLE ack.
+    """
+    if invert:
+        speed = -speed
+    if speed == 0:
+        pan_motor.motor_stop(blocking=False)
+        return
+    direction = (le.MOTOR_MOVE_DIRECTION_CLOCKWISE if speed >= 0
+                 else le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE)
+    pan_motor.motor_run(direction=direction, speed=abs(speed), blocking=False)
 
 def detect_tag(detector, frame):
     """Return (corners[4,2], centroid[x,y]) for the first matching tag in
@@ -175,16 +212,28 @@ def policy(centroid, area, frame_width):
 
 def main():
     car = doubleMotor()
-    car.connect(card_serial=CAR_CARD_SERIAL, card_color=CAR_CARD_COLOR)
+    pan_motor = singleMotor()
+    ctl = controller()
 
-    # cap/detector are set up *inside* the try below (not here) so that a
-    # failure in either still reaches the finally block and disconnects
-    # the Double Motor instead of leaking the BLE connection.
+    # cap/detector, and all three connect() calls, are done *inside* the
+    # try below (not here) so that a failure partway through setup (e.g.
+    # car connects fine but the Controller doesn't) still reaches the
+    # finally block and disconnects whatever already connected, instead
+    # of leaking a BLE connection.
     cap = None
 
     try:
+        car.connect(card_serial=CARD_SERIAL, card_color=CARD_COLOR)
         if not car.connected:
             raise ConnectionError("Double Motor did not connect.")
+
+        pan_motor.connect(card_serial=CARD_SERIAL, card_color=CARD_COLOR)
+        if not pan_motor.connected:
+            raise ConnectionError("Single Motor (camera pan platform) did not connect.")
+
+        ctl.connect(card_serial=CARD_SERIAL, card_color=CARD_COLOR)
+        if not ctl.connected:
+            raise ConnectionError("Controller did not connect.")
 
         cap = cv2.VideoCapture(STREAM_URL)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -199,6 +248,7 @@ def main():
         detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
 
         last_left, last_right = 0, 0
+        last_pan_speed = 0
 
         while True:
             ok, frame = cap.read()
@@ -240,13 +290,25 @@ def main():
                 _drive_wheel(car, le.MOTOR_RIGHT, target_right, INVERT_RIGHT_MOTOR)
                 last_right = target_right
 
+            # Manual camera pan platform -- independent of the AprilTag
+            # policy above, polled every frame off the Controller's left
+            # stick. Released stick reads as 0 (stop), matching
+            # single_motor_controller.py's convention.
+            pan_speed = 0 if ctl.left_released() else ctl.left_position()
+            if pan_speed != last_pan_speed:
+                _drive_pan_motor(pan_motor, pan_speed, INVERT_PAN_MOTOR)
+                last_pan_speed = pan_speed
+
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
     finally:
         # Hard stop independent of whatever the last frame read --
         # explicit MOTOR_BOTH (lelib's stop() only stops motor index 0).
         car.motor_stop(motor=le.MOTOR_BOTH, blocking=True)
+        pan_motor.motor_stop(blocking=True)
         car.disconnect()
+        pan_motor.disconnect()
+        ctl.disconnect()
         if cap is not None:
             cap.release()
         cv2.destroyAllWindows()
