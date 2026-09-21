@@ -1,41 +1,41 @@
 """
-AprilTag centering (drive straight only)
-==========================================
+AprilTag centering -- computer webcam edition
+================================================
 
-Simplified sibling of apriltag_parking.py. Assumptions here are
-different from that script:
+Same straight-line PD centering as apriltag_center.py, but the camera
+and the tag have swapped roles:
 
-    - The camera is mounted 90 degrees off the car's front (looking out
-      to the side, not straight ahead), and the car sits parallel to
-      the wall/plane the tag is mounted on. That means the car doesn't
-      need to turn at all -- sliding straight forward/backward along
-      that wall is what moves the tag left/right in frame.
-    - The car is a plain Double Motor -- no pan platform, no
-      Controller, nothing else connected.
+    - The AprilTag is taped to the Double Motor car itself, not
+      mounted on a wall.
+    - The camera is this computer's own webcam (via camlib.pick_camera()
+      -- no phone/stream setup at all), sitting still and watching the
+      car drive back and forth parallel to the screen.
 
-So the only goal is: drive straight (both wheels the same signed
-speed, no differential steering) until the AprilTag's centroid is
-horizontally centered in frame. No turning, no distance/area logic at
-all -- just forward/backward drive, driven by a PD controller.
+The goal is unchanged: drive straight (both wheels the same signed
+speed, no turning) until the tag's centroid is horizontally centered
+in the camera's frame -- i.e. the car always stops in the middle of
+your computer's camera view.
 
-The PD math itself is left for you to fill in -- see the
-"PD CONTROL -- FILL IN" block inside policy() below. error (pixels off
-center) and error_rate (pixels/sec) are already computed for you.
+The PD math is the same policy() as apriltag_center.py. If you already
+tuned Kp/Kd there, treat those as a starting point only -- this
+camera's resolution and field of view are different from the phone
+stream's, so the same gains will likely need retuning here.
 
 What happens with no tag detected
 -----------------------------------
-Both motors stop immediately -- no "last known command," no search/spin
-behavior, same as apriltag_parking.py.
+Motors stop immediately -- no "last known command," no search/spin
+behavior, same as apriltag_center.py.
 
 Setup:
-    1. Get the iPhone stream working first via apriltag_stream_test.py
-       -- this script uses the same STREAM_URL.
-    2. Print an AprilTag from the 36h11 family and mount it on the
-       wall/plane the car will drive parallel to, at camera height.
-    3. Fill in Kp/Kd in policy() below.
+    1. Print an AprilTag from the 36h11 family and tape it to the car
+       so it's visible face-on as the car drives parallel to the
+       screen (roughly camera height).
+    2. Run this script -- it'll prompt you to pick a camera if more
+       than one is connected.
+    3. Fill in / re-tune Kp/Kd in policy() below for this camera.
 
 Run:
-    my_env/Scripts/python "Public stuff/projects/apriltag_center.py"
+    my_env/Scripts/python "Public stuff/projects/apriltag_center_webcam.py"
 """
 import os
 import sys
@@ -45,23 +45,14 @@ import time
 import cv2
 import numpy as np
 
-# lelib.py lives in the shared "useful libraries" folder, not next to
-# this script -- add it to sys.path so the import below resolves no
-# matter where this script is run from.
+# lelib.py/camlib.py live in the shared "useful libraries" folder, not
+# next to this script -- add it to sys.path so the imports below
+# resolve no matter where this script is run from.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "useful libraries"))
 
 import legoeducation as le
 from lelib import doubleMotor
-
-# --- Camera source -- same URL validated in apriltag_stream_test.py --------
-STREAM_URL = "http://10.243.67.39:8080/stream.jpeg"  # <-- update if the phone's IP changes
-
-# None = no rotation; otherwise cv2.ROTATE_90_CLOCKWISE /
-# cv2.ROTATE_90_COUNTERCLOCKWISE / cv2.ROTATE_180. Verify with
-# apriltag_stream_test.py first -- panning the camera left/right should
-# pan the image left/right, not up/down, since policy() below only
-# reads horizontal pixel offset.
-FRAME_ROTATION = None
+from camlib import pick_camera
 
 # --- Hardware placeholder ---------------------------------------------------
 # None = connect to the first advertising Double Motor. Fine for solo
@@ -96,14 +87,12 @@ INVERT_DRIVE_DIRECTION = False
 
 # Firmware-level ramp (0-100): how fast the hub itself is allowed to
 # speed up/slow down toward a newly commanded speed, independent of
-# what policy() outputs. This is the real fix for a jerky/violent car --
-# without it, every new commanded speed is applied instantly, so a
-# noisy one-frame derivative spike (see policy()'s Kd term) snaps the
-# motor straight to it. Lower = gentler ramp = less jerk, slower to
-# react. Start low if the phone mount is fragile. car.run() drives
-# through legoeducation's "movement" commands, not raw per-motor ones,
-# so this must be set via movement_set_acceleration() -- motor_set_acceleration()
-# is a separate command channel that car.run() never touches.
+# what policy() outputs. Lower = gentler ramp = less jerk, slower to
+# react. Start low if the phone mount/tag attachment is fragile.
+# car.run() drives through legoeducation's "movement" commands, not raw
+# per-motor ones, so this must be set via movement_set_acceleration() --
+# motor_set_acceleration() is a separate command channel that car.run()
+# never touches.
 MOTOR_ACCEL = 10
 MOTOR_DECEL = 10
 
@@ -122,8 +111,8 @@ class _MotorDriver:
     concurrent.futures.Future, regardless of that call's own
     blocking= kwarg, which only affects whether the *coroutine* also
     waits for a completion ack). If the main thread issues those calls,
-    every BLE round-trip stalls cap.read()/cv2.imshow() along with it --
-    that's what was slowing down the camera feed.
+    every BLE round-trip stalls cap.read()/cv2.imshow() along with it,
+    slowing the camera feed down.
 
     This class fixes that by owning the car and running its own loop on
     a background thread: the vision loop just calls set_target() (a
@@ -193,11 +182,11 @@ def policy(centroid, frame_width, prev_error, dt):
         error = 0
     error_rate = (error - prev_error) / dt if dt > 0 else 0.0
 
-    # ---------------- PD CONTROL -- FILL IN ----------------
-    Kp = 0.0075 # <-- proportional gain
+    # ---------------- PD CONTROL -- FILL IN / RE-TUNE ----------------
+    Kp = 0.0075  # <-- proportional gain
     Kd = 0.0001  # <-- derivative gain
     drive = Kp * error + Kd * error_rate
-    # --------------------------------------------------------
+    # -------------------------------------------------------------------
 
     drive = max(-1.0, min(1.0, drive))
     return drive, error
@@ -215,14 +204,7 @@ def main():
         car.movement_set_acceleration(MOTOR_ACCEL, MOTOR_DECEL)
         driver = _MotorDriver(car)
 
-        cap = cv2.VideoCapture(STREAM_URL)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if not cap.isOpened():
-            raise RuntimeError(
-                f"Could not open stream at {STREAM_URL!r}. Re-verify it with "
-                "apriltag_stream_test.py first -- this script assumes that "
-                "part already works."
-            )
+        cap, _ = pick_camera()
 
         dictionary = cv2.aruco.getPredefinedDictionary(APRILTAG_DICTIONARY)
         detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
@@ -233,11 +215,9 @@ def main():
         while True:
             ok, frame = cap.read()
             if not ok:
-                print("Frame read failed -- stream may have dropped.")
+                print("Frame read failed -- camera may have disconnected.")
                 break
 
-            if FRAME_ROTATION is not None:
-                frame = cv2.rotate(frame, FRAME_ROTATION)
             h, w = frame.shape[:2]
 
             now = time.monotonic()
@@ -269,7 +249,7 @@ def main():
                             (cx + 10, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
             cv2.line(frame, (w // 2, 0), (w // 2, h), (255, 255, 0), 1)  # centering reference
-            cv2.imshow("AprilTag centering -- press q to stop", frame)
+            cv2.imshow("AprilTag centering (webcam) -- press q to stop", frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
