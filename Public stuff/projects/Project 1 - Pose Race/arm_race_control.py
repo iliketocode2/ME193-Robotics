@@ -38,7 +38,7 @@ How was it trained, and what are the limitations?
     BLE latency between a gesture and the wheels responding.
 
 Run:
-    my_env/Scripts/python "Public stuff/projects/arm_race_control.py"
+    my_env/Scripts/python "Public stuff/projects/Project 1 - Pose Race/arm_race_control.py"
 """
 
 import os
@@ -78,9 +78,11 @@ _MODEL_URL = (
     "hand_landmarker/float16/latest/hand_landmarker.task"
 )
 # Stored outside "Public stuff/" (repo root's .gitignore ignores everything
-# except Public stuff/**) so this ~8MB download never lands in git.
+# except Public stuff/**) so this ~8MB download never lands in git. Three
+# levels up from this script (Public stuff/projects/Project 1 - Pose
+# Race/) reaches the repo root.
 _MODEL_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "models", "hand_landmarker.task"
+    os.path.dirname(__file__), "..", "..", "..", "models", "hand_landmarker.task"
 )
 
 

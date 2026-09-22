@@ -67,19 +67,39 @@ script runs a 3-state pipeline every frame:
                    (vision P-control, PAN_STEER_GAIN);
                  * the car turns in place, using the pan platform's own
                    accumulated relative rotation (pan_motor.motor.position,
-                   in degrees) as its error signal -- that reading IS the
-                   bearing from the car's forward direction to the tag,
-                   because the pan platform's zero point is calibrated
-                   to "dead ahead" once at startup (see Setup below).
+                   in degrees, wrapped to +/-180) as its error signal --
+                   that reading IS the bearing from the car's forward
+                   direction to the tag, because the pan platform's zero
+                   point is calibrated to "dead ahead" once at startup
+                   (see Setup below).
                Running both loops at once is what produces the
                counter-rotation: as the car turns, the tag drifts in the
                pan camera's view, and the pan loop corrects by rotating
                the platform back toward center -- an automatic,
                equal-and-opposite counter-rotation relative to the car's
-               own turn. No IMU/yaw math needed. Once the pan platform's
-               angle is back within ALIGN_TOLERANCE_DEG of zero (car is
-               now facing the tag directly) -> DRIVE. Losing the tag
-               anywhere in ALIGN -> back to SEARCH.
+               own turn. No IMU/yaw math needed.
+
+               Which physical direction the car should turn in response
+               to a given pan-angle sign isn't hardcoded -- it depends
+               on motor wiring/mounting that can't be predicted from
+               code alone, and guessing wrong here doesn't just turn the
+               wrong way once, it's a positive-feedback loop (the car
+               turns away, the pan platform has to chase the tag even
+               harder, the "error" grows instead of shrinking, and it
+               looks like the car "gets confused" and spins past where
+               the tag actually is). So ALIGN starts with a brief,
+               fixed-speed probe turn and watches whether the pan angle
+               actually shrank or grew in response, before committing to
+               a direction for the rest of that approach -- the video
+               feed (via the pan platform's own vision-driven position)
+               tells the car which way is correct, instead of a
+               hand-guessed constant.
+
+               Once the pan platform's angle is back within
+               ALIGN_TOLERANCE_DEG of zero (car is now facing the tag
+               directly) -> DRIVE. Losing the tag anywhere in ALIGN ->
+               back to SEARCH (and the next ALIGN re-probes from
+               scratch).
 
     DRIVE   -- unchanged from before: the pan platform is held
                stationary (its job is done) and the car drives using the
@@ -106,19 +126,21 @@ Setup:
        Skipping this makes ALIGN turn toward the wrong heading.
 
 Run:
-    my_env/Scripts/python "Public stuff/projects/apriltag_parking.py"
+    my_env/Scripts/python "Public stuff/projects/Project 2 - April Tag/apriltag_parking.py"
 """
 import os
 import sys
 import threading
+import time
 
 import cv2
 import numpy as np
 
-# lelib.py/camlib.py live in the shared "useful libraries" folder, not next
-# to this script -- add it to sys.path so the imports below resolve no
-# matter where this script is run from.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "useful libraries"))
+# lelib.py/camlib.py live in the shared "useful libraries" folder, two
+# levels up from this script (Public stuff/projects/Project 2 - April
+# Tag/) -- add it to sys.path so the imports below resolve no matter
+# where this script is run from.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "useful libraries"))
 
 import legoeducation as le
 from lelib import doubleMotor, singleMotor, controller
@@ -179,7 +201,7 @@ INVERT_RIGHT_MOTOR = True
 # backward, flip this -- NOT the INVERT_*_MOTOR flags above (that would
 # re-break forward/backward, since those apply the same way regardless
 # of whether the command came from driving straight or turning).
-INVERT_TURN_DIRECTION = True
+INVERT_TURN_DIRECTION = False
 
 # --- ALIGN state tuning (autonomous pan-vision + car turn-to-heading) ------
 # Pan motor's vision P-gain during ALIGN -- same shape as STEER_GAIN's
@@ -200,8 +222,11 @@ ALIGN_TURN_GAIN = 0.02
 # ALIGN is a deliberately slow, cautious turn-in-place (see module
 # docstring) -- capped well below MAX_SPEED so the counter-rotating pan
 # vision loop has time to keep tracking the tag while the car turns,
-# instead of the car swinging past it.
-ALIGN_MAX_SPEED = 20
+# instead of the car swinging past it. Kept low on purpose: a fast turn
+# outruns the pan encoder's ~10Hz BLE notification rate (see the ALIGN
+# branch in main()) and gives the vision-centering loop less time to
+# keep the tag in frame at all.
+ALIGN_MAX_SPEED = 12
 
 # How close pan_motor.motor.position must be to 0 (degrees) before the
 # car is considered "facing the tag" and control hands off to DRIVE.
@@ -209,14 +234,12 @@ ALIGN_MAX_SPEED = 20
 # satisfy it; too loose and DRIVE starts while still visibly off-axis.
 ALIGN_TOLERANCE_DEG = 5
 
-# Separate from INVERT_TURN_DIRECTION above (which calibrates
-# pixel-error-sign -> wheel-turn-sign for DRIVE's steering): this
-# calibrates pan-POSITION-error-sign -> wheel-turn-sign for ALIGN's
-# turn-to-heading. A different pair of signals that could need opposite
-# calibration even on the same physical wheels -- flip this (not
-# INVERT_TURN_DIRECTION) if the car turns away from the tag instead of
-# toward it during ALIGN.
-INVERT_ALIGN_TURN_DIRECTION = False
+# How long (seconds) ALIGN's initial probe turn runs before checking
+# whether it helped (see the ALIGN branch in main()). Needs to be long
+# enough to span multiple ~100ms BLE position notifications so the
+# "did the angle shrink" comparison isn't just reading the same stale
+# value twice.
+ALIGN_PROBE_DURATION_S = 0.4
 
 # Firmware-level ramp (0-100) for each motor, set once at startup, so
 # neither motor snaps instantly to a newly commanded speed -- helps
@@ -411,6 +434,13 @@ def main():
 
         state = STATE_SEARCH
 
+        # ALIGN's turn-direction probe state -- see the ALIGN branch
+        # below and the module docstring. Reset every time SEARCH hands
+        # off to a fresh ALIGN attempt.
+        align_turn_sign = None
+        align_probe_start_time = None
+        align_probe_start_angle = None
+
         while True:
             ok, frame = cap.read()
             if not ok:
@@ -445,6 +475,11 @@ def main():
                 pan_driver.set_target(pan_speed)
                 if tag_visible:
                     state = STATE_ALIGN
+                    # Fresh probe for this attempt -- see the ALIGN
+                    # branch below.
+                    align_turn_sign = None
+                    align_probe_start_time = None
+                    align_probe_start_angle = None
 
             elif state == STATE_ALIGN:
                 if not tag_visible:
@@ -460,20 +495,57 @@ def main():
                     pan_cmd = max(-1.0, min(1.0, PAN_STEER_GAIN * x_error / (w / 2)))
                     pan_driver.set_target(int(max(-PAN_MAX_SPEED, min(PAN_MAX_SPEED, PAN_MAX_SPEED * pan_cmd))))
 
-                    # Car: turn-in-place P-control using the pan
-                    # platform's own accumulated rotation as the error --
-                    # see module docstring for why running both loops
-                    # concurrently produces the counter-rotation effect.
+                    # pan_motor.motor.position is a raw, unbounded counter
+                    # (it doesn't reset every 360 degrees) -- spin the
+                    # joystick around more than once while hunting for the
+                    # tag in SEARCH and this reads e.g. 740 instead of the
+                    # equivalent, much smaller 20. Wrap it to the shortest
+                    # signed angle in (-180, 180] before using it as an
+                    # error, or ALIGN tries to unwind however many extra
+                    # full turns got accumulated instead of just turning
+                    # the short way.
                     pan_angle = pan_motor.motor.position
-                    turn = max(-1.0, min(1.0, ALIGN_TURN_GAIN * pan_angle))
-                    if INVERT_ALIGN_TURN_DIRECTION:
-                        turn = -turn
-                    target_left = int(max(-ALIGN_MAX_SPEED, min(ALIGN_MAX_SPEED, ALIGN_MAX_SPEED * turn)))
-                    car_driver.set_target((target_left, -target_left))  # pure turn-in-place
+                    pan_angle = ((pan_angle + 180) % 360) - 180
 
                     if abs(pan_angle) < ALIGN_TOLERANCE_DEG:
+                        # Already facing the tag -- checked before the
+                        # probe below runs, so an ALIGN attempt that
+                        # starts out already aligned doesn't spend
+                        # ALIGN_PROBE_DURATION_S needlessly turning away
+                        # from a heading that was already correct.
+                        car_driver.set_target((0, 0))
                         pan_driver.set_target(0)
                         state = STATE_DRIVE
+                    elif align_turn_sign is None:
+                        # Don't yet know which physical turn direction
+                        # actually points the car toward the tag -- see
+                        # module docstring. Run a brief fixed-speed probe
+                        # turn (arbitrarily "positive") and watch whether
+                        # pan_angle moves closer to 0 or farther from it.
+                        now = time.monotonic()
+                        if align_probe_start_time is None:
+                            align_probe_start_time = now
+                            align_probe_start_angle = pan_angle
+                            car_driver.set_target((ALIGN_MAX_SPEED, -ALIGN_MAX_SPEED))
+                        elif now - align_probe_start_time >= ALIGN_PROBE_DURATION_S:
+                            moved_closer = abs(pan_angle) < abs(align_probe_start_angle)
+                            align_turn_sign = 1.0 if moved_closer else -1.0
+                            print(f"ALIGN: probe done (pan_angle {align_probe_start_angle:.0f} -> "
+                                  f"{pan_angle:.0f}); turn_sign={align_turn_sign:+.0f}")
+                        # else: still probing, target already set above.
+                    else:
+                        # Car: turn-in-place P-control using the pan
+                        # platform's own accumulated rotation as the
+                        # error, with the sign the probe just determined
+                        # -- see module docstring for why running this
+                        # concurrently with the pan vision loop above
+                        # produces the counter-rotation effect.
+                        turn = max(-1.0, min(1.0, align_turn_sign * ALIGN_TURN_GAIN * pan_angle))
+                        target_left = int(max(-ALIGN_MAX_SPEED, min(ALIGN_MAX_SPEED, ALIGN_MAX_SPEED * turn)))
+                        car_driver.set_target((target_left, -target_left))  # pure turn-in-place
+
+                    cv2.putText(frame, f"pan_angle={pan_angle:.0f}deg turn_sign={align_turn_sign}",
+                                (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
             elif state == STATE_DRIVE:
                 pan_driver.set_target(0)  # platform's job is done -- hold it stationary

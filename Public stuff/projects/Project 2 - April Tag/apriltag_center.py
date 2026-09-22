@@ -35,7 +35,7 @@ Setup:
     3. Fill in Kp/Kd in policy() below.
 
 Run:
-    my_env/Scripts/python "Public stuff/projects/apriltag_center.py"
+    my_env/Scripts/python "Public stuff/projects/Project 2 - April Tag/apriltag_center.py"
 """
 import os
 import sys
@@ -45,10 +45,11 @@ import time
 import cv2
 import numpy as np
 
-# lelib.py lives in the shared "useful libraries" folder, not next to
-# this script -- add it to sys.path so the import below resolves no
-# matter where this script is run from.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "useful libraries"))
+# lelib.py lives in the shared "useful libraries" folder, two levels up
+# from this script (Public stuff/projects/Project 2 - April Tag/) -- add
+# it to sys.path so the import below resolves no matter where this
+# script is run from.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "useful libraries"))
 
 import legoeducation as le
 from lelib import doubleMotor
@@ -194,7 +195,7 @@ def policy(centroid, frame_width, prev_error, dt):
     error_rate = (error - prev_error) / dt if dt > 0 else 0.0
 
     # ---------------- PD CONTROL -- FILL IN ----------------
-    Kp = 0.0075 # <-- proportional gain
+    Kp = 0.0025 # <-- proportional gain
     Kd = 0.0001  # <-- derivative gain
     drive = Kp * error + Kd * error_rate
     # --------------------------------------------------------

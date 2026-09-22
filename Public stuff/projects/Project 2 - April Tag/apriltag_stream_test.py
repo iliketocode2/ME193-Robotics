@@ -12,7 +12,7 @@ Setup:
     3. Paste that URL into STREAM_URL below.
 
 Run:
-    my_env/Scripts/python "Public stuff/projects/apriltag_stream_test.py"
+    my_env/Scripts/python "Public stuff/projects/Project 2 - April Tag/apriltag_stream_test.py"
 
 This does nothing but open the stream and show it live with an FPS
 counter -- get this working reliably before anything else in this
