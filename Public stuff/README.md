@@ -15,3 +15,6 @@ subset of the class repo that's meant to be shared.
 - [Controls/](Controls/) — a live PD-control demo: a Single Motor acts as a
   hand-turned dial, and a Double Motor drives to match its position. Kp/Kd
   sliders let you watch overshoot and oscillation change in real time.
+- [virtualTesting/](virtualTesting/) — run `setup_test_env.py` to spin up a
+  disposable virtual environment with `legoeducation` installed and drop
+  into a `python3` REPL, no manual venv setup required.

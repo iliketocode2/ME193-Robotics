@@ -2,6 +2,7 @@
 Install first:
     pip install legoeducation
 Then copy lelib.py from the SimpleLE repo into this project's folder.
+
 """
 
 import time
