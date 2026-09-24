@@ -3,7 +3,12 @@
     "allow": [
       "mcp__claude_ai_Notion__notion-update-page",
       "mcp__claude_ai_Notion__notion-fetch",
-      "Bash(my_env/Scripts/python -c ' *)"
+      "Bash(my_env/Scripts/python -c ' *)",
+      "Bash(py -3.13 -m venv my_env_audio)",
+      "Bash(my_env_audio/Scripts/python --version)",
+      "Bash(my_env_audio/Scripts/python -m pip install --upgrade pip)",
+      "Bash(my_env_audio/Scripts/python -m pip install legoeducation pyaudio numpy matplotlib paho-mqtt)",
+      "Bash(my_env_audio/Scripts/python -c ' *)"
     ]
   }
 }
