@@ -2,12 +2,13 @@
 Install first:
     pip install legoeducation
 Then copy lelib.py from the SimpleLE repo into this project's folder.
+
 """
 
 import time
 
 import legoeducation as le
-from lelib import colorSensor, controller
+from lelib import colorSensor, controller, doubleMotor, singleMotor
 
 # --- Bluetooth card info for your hardware -------------------------------
 # Fill these in with the color/serial printed on your LEGO connection card.
@@ -20,6 +21,12 @@ CONTROLLER_CARD_COLOR = le.LEGO_COLOR_RED
 CONTROLLER_CARD_SERIAL = 3664
 
 POLL_DELAY_S = 0.1  # seconds between reads
+BLUE_OSCILLATION_PERIOD_S = 1.0
+
+motor = singleMotor()
+drive = doubleMotor()
+blue_direction = 50
+blue_last_switch = time.monotonic()
 
 
 
@@ -28,26 +35,37 @@ POLL_DELAY_S = 0.1  # seconds between reads
 
 def DoRed():
     print("red")
+    motor.run()
 
 
 
 def DoYellow():
     print("yellow")
+    motor.run(-50)
 
 
 
 def DoBlue():
+    global blue_direction, blue_last_switch
+
     print("blue")
+    now = time.monotonic()
+    if now - blue_last_switch >= BLUE_OSCILLATION_PERIOD_S:
+        blue_direction *= -1
+        blue_last_switch = now
+    motor.run(blue_direction)
 
 
 
 def DoTeal():
-    pass
+    print("teal")
+    drive.run_left(45)
 
 
 
 def DoGreen():
-    pass
+    print("green")
+    drive.run_right(45)
 
 
 
@@ -190,6 +208,9 @@ def main():
 
     ctl = controller()
     ctl.connect(card_serial=CONTROLLER_CARD_SERIAL, card_color=CONTROLLER_CARD_COLOR)
+
+    motor.connect(card_serial=CONTROLLER_CARD_SERIAL, card_color=CONTROLLER_CARD_COLOR)
+    drive.connect(card_serial=CONTROLLER_CARD_SERIAL, card_color=CONTROLLER_CARD_COLOR)
 
     try:
         while True:

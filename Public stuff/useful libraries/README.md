@@ -15,7 +15,7 @@ python3 -m venv .venv
 source .venv/bin/activate      # macOS/Linux
 .venv\Scripts\activate         # Windows
 
-pip install legoeducation
+pip install -r requirements.txt
 ```
 
 Then copy `lelib.py` from this folder into your own project folder — it's a
