@@ -30,6 +30,13 @@ blue_direction = 50
 blue_last_switch = time.monotonic()
 left_active = False   # is the left stick currently driving the left wheel?
 right_active = False  # is the right stick currently driving the right wheel?
+last_color = None     # color seen on the previous loop
+
+
+
+def beep():
+    """Beep the single motor's built-in speaker."""
+    motor.beep()
 
 
 
@@ -38,6 +45,9 @@ right_active = False  # is the right stick currently driving the right wheel?
 
 def DoRed():
     print("red")
+    # Beep once when red first appears, not on every 0.1 s poll.
+    if last_color != "Red":
+        beep()
     motor.run()
 
 
@@ -170,6 +180,8 @@ def DoRightReleased():
 
 def handle_color(color_name):
     """Big switch statement on the color sensor's detected color."""
+    global last_color
+
     match color_name:
         case "Red":
             DoRed()
@@ -195,6 +207,8 @@ def handle_color(color_name):
             DoNoColor()
         case _:
             DoUnknownColor()
+
+    last_color = color_name
 
 
 
