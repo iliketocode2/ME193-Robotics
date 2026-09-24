@@ -17,16 +17,19 @@ from lelib import colorSensor, controller, doubleMotor, singleMotor
 COLOR_SENSOR_CARD_COLOR = le.LEGO_COLOR_GREEN
 COLOR_SENSOR_CARD_SERIAL = 1126
 
-CONTROLLER_CARD_COLOR = le.LEGO_COLOR_RED
-CONTROLLER_CARD_SERIAL = 3664
+CONTROLLER_CARD_COLOR = le.LEGO_COLOR_GREEN
+CONTROLLER_CARD_SERIAL = 1126
 
 POLL_DELAY_S = 0.1  # seconds between reads
 BLUE_OSCILLATION_PERIOD_S = 1.0
+STICK_SPEED = 50  # wheel speed when a joystick is pushed up/down
 
 motor = singleMotor()
 drive = doubleMotor()
 blue_direction = 50
 blue_last_switch = time.monotonic()
+left_active = False   # is the left stick currently driving the left wheel?
+right_active = False  # is the right stick currently driving the right wheel?
 
 
 
@@ -70,67 +73,96 @@ def DoGreen():
 
 
 def DoPurple():
-    pass
+    print("purple")
+    drive.turn_left(90)
 
 
 
 def DoWhite():
-    pass
+    print("white")
+    motor.stop()
+    drive.motor_stop(motor=le.MOTOR_BOTH)
 
 
 
 def DoMagenta():
-    pass
+    print("magenta")
+    drive.run(50)
 
 
 
 def DoOrange():
-    pass
+    print("orange")
+    motor.spin(1)
 
 
 
 def DoAzure():
-    pass
+    print("azure")
+    drive.turn_right(90)
 
 
 
 def DoNoColor():
+    # Nothing under the sensor -- keep doing whatever the last color started.
     pass
 
 
 
 def DoUnknownColor():
-    pass
+    print("unknown color")
 
 
 
 def DoLeftUp():
-    pass
+    global left_active
+
+    left_active = True
+    drive.motor_run(direction=le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE, motor=le.MOTOR_LEFT, speed=STICK_SPEED)
 
 
 
 def DoLeftDown():
-    pass
+    global left_active
+
+    left_active = True
+    drive.motor_run(direction=le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE, motor=le.MOTOR_LEFT, speed=-STICK_SPEED)
 
 
 
 def DoLeftReleased():
-    pass
+    global left_active
+
+    # Only stop on the up/down -> released transition, so the color
+    # handlers can still drive the left wheel while the stick is idle.
+    if left_active:
+        left_active = False
+        drive.motor_stop(motor=le.MOTOR_LEFT)
 
 
 
 def DoRightUp():
-    pass
+    global right_active
+
+    right_active = True
+    drive.motor_run(direction=le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE, motor=le.MOTOR_RIGHT, speed=STICK_SPEED)
 
 
 
 def DoRightDown():
-    pass
+    global right_active
+
+    right_active = True
+    drive.motor_run(direction=le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE, motor=le.MOTOR_RIGHT, speed=-STICK_SPEED)
 
 
 
 def DoRightReleased():
-    pass
+    global right_active
+
+    if right_active:
+        right_active = False
+        drive.motor_stop(motor=le.MOTOR_RIGHT)
 
 
 
