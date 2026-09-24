@@ -1,0 +1,32 @@
+{
+  "sample_rate": 44100,
+  "block_size": 2048,
+  "tonal_ratio_gate": 6.0,
+  "noise_floor_rms": 0.04086,
+  "stop_band": [
+    1007,
+    1307
+  ],
+  "turn_band": [
+    1307,
+    1619
+  ],
+  "forward_band": [
+    1619,
+    1919
+  ],
+  "min_forward_speed": 30,
+  "max_speed": 90,
+  "ema_alpha": 0.3,
+  "turn_slope_deadzone_hz_s": 15.0,
+  "turn_slope_saturation_hz_s": 300.0,
+  "silence_timeout_s": 0.4,
+  "ramp_time_s": 0.3,
+  "pulse_max_duration_s": 0.4,
+  "goal_band": "forward",
+  "goal_window_s": 2.0,
+  "goal_pulse_count": 3,
+  "shield_band": "stop",
+  "shield_window_s": 1.2,
+  "shield_pulse_count": 2
+}

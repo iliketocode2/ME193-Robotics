@@ -41,15 +41,15 @@ from whistle_policy import DEFAULT_CONFIG, WhistlePolicy
 
 # --- Match-day placeholders -- fill these in before running -----------------
 ROLE = "ball"  # "ball" or "goalie" -- set to whatever role you're assigned on match day
-TEAM_NAME = "TEAM_NAME_PLACEHOLDER"  # used only for logging, not part of the MQTT protocol
+TEAM_NAME = "Cucurella"  # used only for logging, not part of the MQTT protocol
 
 # --- Hardware placeholders -- fill in with your LEGO Connection Card values --
-CAR_CARD_SERIAL = None  # doubleMotor (drive) -- None = first Double Motor found, ambiguous with >1 nearby
-CAR_CARD_COLOR = le.LEGO_COLOR_RED
-SHIELD_CARD_SERIAL = None  # singleMotor (cardboard shield arm)
-SHIELD_CARD_COLOR = le.LEGO_COLOR_RED
-SENSOR_CARD_SERIAL = None  # colorSensor (front-facing light sensor)
-SENSOR_CARD_COLOR = le.LEGO_COLOR_RED
+CAR_CARD_SERIAL = 1126  # doubleMotor (drive) -- None = first Double Motor found, ambiguous with >1 nearby
+CAR_CARD_COLOR = le.LEGO_COLOR_GREEN
+SHIELD_CARD_SERIAL = 1126  # singleMotor (cardboard shield arm)
+SHIELD_CARD_COLOR = le.LEGO_COLOR_GREEN
+SENSOR_CARD_SERIAL = 1126  # colorSensor (front-facing light sensor)
+SENSOR_CARD_COLOR = le.LEGO_COLOR_GREEN
 
 # --- Drive tuning -------------------------------------------------------------
 # Motor mounting is mirrored side-to-side on some chassis -- flip whichever
