@@ -2,9 +2,20 @@
 
 A LEGO Education "car" (Double Motor drive + a Single Motor "shield" arm
 with a cardboard square taped on) driven entirely by whistling into a
-laptop microphone — pitch controls speed/turn, short whistle rhythms
-trigger a shield toggle or a "goal" call — coordinated with an opponent
-robot over MQTT for a ball-vs-goalie match on topic `ME193/Rogers`.
+laptop microphone — pitch continuously sets speed and turn (a gradient:
+closer to your lowest whistle turns further left, closer to your highest
+turns further right), and a 3-pulse whistle rhythm calls a "goal" —
+coordinated with an opponent robot over MQTT for a ball-vs-goalie match on
+topic `ME193/Rogers`.
+
+A second person on a second computer can help drive the same physical car:
+one computer ("drive") is the one actually Bluetooth-connected to the
+robot; a second computer ("shield co-pilot") runs the exact same script
+with its own microphone and continuously relays its own pitch gradient
+over a dedicated MQTT control topic, which the drive computer applies to
+the Single Motor shield's position in real time — the same gradient
+control style as steering, just relayed over MQTT instead of BLE. See
+"Two-computer setup" below.
 
 ## Two virtual environments — read this first
 
@@ -42,17 +53,24 @@ Every command below runs through `my_env_audio`, **not** `my_env`.
   device-enumeration API (mirrors the shared `miclib.pick_mic()`'s UX, but
   `miclib.py` itself is `sounddevice`-based, which doesn't satisfy this
   assignment's "use PyAudio" requirement).
-- **`songs.py`** — `DEATH_SONG` / `SUCCESS_SONG` note lists and
-  `play_song()`, which plays them on the LEGO hub's own speaker via
-  `beep()`.
+- **`songs.py`** — `DEATH_SONG` / `SUCCESS_SONG` note lists, and `play_both()`,
+  which plays them on **two** outputs at once: the LEGO hub's own speaker
+  (`play_song()`, via `beep()`) and the computer's speaker (`play_computer_song()`,
+  via stdlib `winsound.Beep()`) on a background thread, so the cue is audible
+  even if you're not standing right next to the hub's small buzzer, and so a
+  working computer speaker confirms the trigger fired independent of any
+  hub/BLE audio issue.
 - **`calibrate.py`** — guided calibration: measures room noise, then your
   lowest and highest comfortable whistle notes, and writes
   `whistle_config.json`.
-- **`world_cup.py`** — the match script: connects the Double Motor, Single
-  Motor (shield), and Color Sensor (front light sensor); subscribes to
-  `ME193/Rogers`; runs the live whistle-control loop; shows the live
-  waveform/spectrum/decision on screen; handles the fail/goal MQTT protocol
-  and songs.
+- **`world_cup.py`** — the match script. Opens a small setup dialog first
+  (game role, "drive" vs. "shield co-pilot", team name), then either: runs
+  the full flow (connects the Double Motor, Single Motor, Color Sensor;
+  subscribes to `ME193/Rogers` + the team's control topic; drives; handles
+  the fail/goal MQTT protocol and songs) if you picked **drive**, or a much
+  lighter no-hardware flow that just whistles a shield toggle to the drive
+  computer if you picked **shield co-pilot**. Both modes show the live
+  waveform/spectrum/decision dashboard.
 
 ## Run order
 
@@ -62,23 +80,36 @@ my_env_audio\Scripts\python "Public stuff\projects\Project 3 - World Cup\calibra
 my_env_audio\Scripts\python "Public stuff\projects\Project 3 - World Cup\world_cup.py"
 ```
 
-Before running `world_cup.py`:
+Before running `world_cup.py` (on the **drive** computer, i.e. the one
+actually Bluetooth-connected to the robot):
 
-- Fill in `ROLE` (`"ball"` or `"goalie"`, assigned match day) and
-  `TEAM_NAME` at the top of the file.
 - Fill in `CAR_CARD_SERIAL`/`CAR_CARD_COLOR`,
   `SHIELD_CARD_SERIAL`/`SHIELD_CARD_COLOR`,
   `SENSOR_CARD_SERIAL`/`SENSOR_CARD_COLOR` from your three LEGO Connection
-  Cards (Double Motor, Single Motor, Color Sensor).
+  Cards (Double Motor, Single Motor, Color Sensor). (Role and team name are
+  no longer hardcoded here — see below.)
 - Calibrate `PROXIMITY_REFLECTION_THRESHOLD` on-site against the actual
-  opponent robot and match-day lighting — the default (200) is an
+  opponent robot and match-day lighting — the default (70) is an
   unverified placeholder, not something to trust as-is.
 - Watch the car actually drive once and flip `INVERT_LEFT_MOTOR` /
   `INVERT_RIGHT_MOTOR` if a wheel spins the wrong way (same convention as
   Project 1's `arm_race_control.py`).
+- Verify the shield's absolute position 0 actually corresponds to
+  "retracted" on the physical arm (`set_shield_position()`'s comment in
+  `world_cup.py`) — `motor_run_to_absolute_position()`'s "0" is whatever the
+  hub's own internal zero reference is, not necessarily where the arm
+  happened to be pointed at connect time. Adjust `SHIELD_SWING_DEGREES`
+  or manually re-zero the arm if "retracted"/"deployed" come out backwards
+  or offset.
 - Run `calibrate.py` in the same room, with the same mic, close to match
   time — ambient noise and your own whistle range are what it's tuned
-  against.
+  against. If using a shield co-pilot, they should run their own
+  `calibrate.py` too, against their own mic/room.
+
+Running `world_cup.py` (either computer) first opens a small setup dialog:
+pick **game role** (Ball/Goalie), pick **this computer controls**
+(Drive/Shield co-pilot), and type a **team name**. Everything else follows
+from those three choices — see "Two-computer setup" below.
 
 ## The required write-up
 
@@ -99,29 +130,32 @@ guess):
 
 - **STOP band** (your lowest comfortable whistle ± 150 Hz) → speed = 0.
 - **FORWARD band** (your highest comfortable whistle ± 150 Hz) → drive
-  forward, speed scaling linearly from 30% to 90% across the band.
-- **TURN band** (everything in between) → turn only, no forward motion.
-  Since a single frequency is one-dimensional, it can't by itself encode a
-  left/right choice — so turn *direction* comes from the pitch's recent
-  **slope** (Hz/second over the last ~300ms): a rising glissando turns
-  right, a falling one turns left, and a nearly flat pitch in this band is
-  treated as "no clear direction" and produces a small forward creep
-  instead of turning randomly.
+  forward, speed scaling linearly from 20% to 55% across the band (kept
+  deliberately gentle — see "motor speed" below).
+- **TURN band** (everything in between) → turn only, no forward motion, as
+  a **gradient of pitch position within the band**: the low edge of the
+  band is full left, the high edge is full right, the exact center is
+  straight, and everywhere in between scales linearly. So a steady whistle
+  a little above the stop band turns gently left, and a steady whistle a
+  little below the forward band turns sharply right — the turn amount
+  tracks *where* you're whistling, not how you got there (earlier versions
+  of this policy used the pitch's *slope*/rate of change instead, which
+  meant you had to actively slide your pitch to keep turning; a straight
+  gradient is easier to hold a specific turn amount with).
 
-On top of that continuous mapping, two **rhythmic** gestures are
-recognized from sequences of short (<0.4s) tonal pulses, so the same
-whistling channel carries both continuous proportional control and
-discrete commands:
+On top of that continuous mapping, a **rhythmic** gesture is recognized
+from sequences of short (<0.4s) tonal pulses in the forward band, so the
+same whistling channel carries both continuous proportional control and a
+discrete command:
 
 - **Three short pulses in the FORWARD band within 2 seconds** → the "made
   it in the goal" command (publishes to MQTT, plays the success song).
-- **Two short pulses in the STOP band within 1.2 seconds** → toggles the
-  cardboard shield (Single Motor swings between retracted/deployed). Using
-  a *different* band than the goal gesture (rather than just a different
-  pulse count) means a 3-pulse goal attempt can never accidentally fire the
-  2-pulse shield toggle partway through — see
-  `test_goal_and_shield_gestures_dont_cross_contaminate` in
-  `test_whistle_policy.py`.
+
+The shield (Single Motor) uses the identical gradient idea, just from a
+**second, independent whistle** — see "Two-computer setup": a co-pilot's
+own turn-band gradient continuously sets the shield's position (their
+lowest-band pitch retracts it, their highest-band pitch fully deploys it)
+instead of driving the car, relayed over MQTT rather than computed locally.
 
 ### What does your code do if no whistle is detected?
 
@@ -157,8 +191,8 @@ Three layers, from cheapest to most targeted:
 3. **EMA smoothing across blocks.** Even once a block passes both gates,
    the reported frequency is smoothed with an exponential moving average
    rather than trusted block-to-block, so a single noisy FFT estimate
-   doesn't jerk the turn-direction slope calculation or the reported HUD
-   frequency around.
+   doesn't jerk the turn/shield gradient or the reported HUD frequency
+   around.
 
 ## MQTT protocol on `ME193/Rogers`
 
@@ -188,6 +222,48 @@ the assignment explicitly requires this, and nothing here enforces it
 automatically. If the opponent's script uses different field names or
 values, neither side's fail/goal reactions will fire.
 
+## Two-computer setup
+
+Only one computer can hold the actual Bluetooth connections to the robot's
+three devices, but a second person can still help control it with their own
+whistle from a second computer:
+
+- **Drive** (pick this on the computer physically paired with the robot):
+  runs the full flow from the rest of this README. Also subscribes to a
+  second, team-scoped MQTT topic, `<MQTT_TOPIC>/control/<team name>` (e.g.
+  `ME193/Rogers/control/Cucurella`) — separate from the public game-event
+  topic so it doesn't collide with other teams' traffic, same
+  crosstalk-avoidance reasoning `MQTTLIB.md` gives for topic names in
+  general. A `{"shield_gradient": <-100..100>}` message on that topic sets
+  the shield's absolute position (linearly, -100 = fully retracted, +100 =
+  fully deployed) every time one arrives — continuous, not a one-shot toggle.
+- **Shield co-pilot** (pick this on the second computer): no BLE connection
+  at all — it just opens its own microphone, runs the same whistle policy,
+  and continuously publishes `{"shield_gradient": <cmd.turn_bias>}` to that
+  same control topic (about 20x/second, matching the control loop rate) —
+  literally the same turn-band gradient value the drive computer would use
+  for steering, just relayed instead of applied locally. Its dashboard
+  still shows its own waveform/spectrum/decision and a live MQTT feed
+  (though the continuous shield-gradient traffic itself isn't logged there
+  — at 20 messages/second it would drown out everything else useful in a
+  10-entry rolling log; the current commanded shield position is shown
+  directly in the decision panel instead), and mirrors the match's
+  LIVE/WAITING/GAME OVER status (read-only — it never itself starts/ends
+  the match or plays a song, since it has no local hardware to act with).
+  With no co-pilot connected, the drive car's shield defaults to fully
+  retracted (matching the "sensor must be open" rule) rather than sitting
+  at some arbitrary position.
+
+**Both computers must type the exact same team name** in the setup dialog —
+that's what makes the control topic match up between them. A shield
+co-pilot's own game-role choice only affects its own dashboard's display;
+the actual match outcome (fail/goal, songs, publishing to `MQTT_TOPIC`)
+is entirely owned by whichever instance is running as **drive**.
+
+This is a generic capability, not "goalie only" or "ball only" — either
+role's robot can have a remote shield co-pilot, since a shield is generic
+hardware, not part of the ball/goalie game logic itself.
+
 ## Hardware / concurrency notes
 
 - **`legoeducation`'s synchronous calls block their *calling* thread on a
@@ -204,15 +280,24 @@ values, neither side's fail/goal reactions will fire.
 - So there are three threads with a clear division of labor: **PyAudio's
   callback thread** (`audio_callback`) does only DSP (`policy.update()`,
   pure numpy/FFT) and writes results into a lock-guarded shared dict;
-  **`mqttlib`'s network thread** (`on_mqtt_message`) only reads/writes that
-  same dict; a **dedicated `run_control_loop()` thread**, polling every
-  `CONTROL_LOOP_PERIOD_S` (50ms — comfortably above any single BLE
-  round-trip), is the *only* place that ever calls `movement_move_tank`,
-  `motor_run_for_degrees`, `beep()` (via `play_song`), or `mqtt.publish()`.
-- The main thread only runs a `matplotlib` `FuncAnimation` that reads the
-  same lock-guarded state to draw the waveform, spectrum (with the
-  calibrated bands shaded), and a HUD text of the current decision — it
-  never touches BLE, MQTT, or audio directly.
+  **`mqttlib`'s network thread** (`on_mqtt_message` and, in drive mode,
+  `on_control_message`) only reads/writes that same dict; a **dedicated
+  `run_control_loop()` thread**, polling every `CONTROL_LOOP_PERIOD_S`
+  (50ms — comfortably above any single BLE round-trip), is the *only* place
+  that ever calls `movement_move_tank`, `motor_run_to_absolute_position`
+  (the shield, via `set_shield_position`), `beep()` (via `play_both`), or
+  `mqtt.publish()`. `play_both()` itself spawns one
+  extra short-lived background thread so the computer-speaker song and the
+  hub-speaker song play at the same time instead of back-to-back. The
+  shield co-pilot mode mirrors this same split with much less work per
+  thread (`copilot_audio_callback`/`run_copilot_loop`) since there's no BLE
+  hardware involved on that instance at all.
+- The main thread only runs a `matplotlib` `FuncAnimation` (a dashboard: game
+  status, waveform, spectrum with the calibrated bands shaded, the drive
+  command actually sent to the car, the front sensor reading vs. its
+  proximity threshold, the whistle decision, and a live MQTT sent/received
+  feed) that only *reads* the same lock-guarded state — it never touches
+  BLE, MQTT, or audio directly.
 - **`lelib.py`'s `doubleMotor.stop()` only stops the LEFT motor** —
   verified: it calls the raw `motor_stop()` with no `motor=` kwarg, which
   defaults to motor index 0 (left) in `legoeducation/device.py`
@@ -229,11 +314,21 @@ values, neither side's fail/goal reactions will fire.
 
 ## Status
 
-The DSP/policy logic (`test_whistle_policy.py`) passes under
+The DSP/policy logic (`test_whistle_policy.py`, including the gradient-turn
+tests: low/high/center-of-band and a partial-gradient check) passes under
 `my_env_audio`, and `world_cup.py`/`calibrate.py` import and syntax-check
-cleanly. **This has not yet been run against the physical car, shield
-motor, and color sensor** — that still needs to happen (with real
-Connection Card values filled in and a calibrated proximity threshold)
-before treating this as match-ready, per this repo's usual rule that
-nothing is "done" until it's actually run against the hardware at least
-once.
+cleanly. The dashboard (both "drive" and "shield" modes) has been rendered
+headlessly and exercised for one frame each without error, the new message
+handlers (`on_control_message`, `on_mqtt_message_readonly`) have been
+unit-checked directly against `shared` state, and `set_shield_position()`'s
+gradient-to-degrees math has been checked directly (-100→0°, 0→45°,
+100→90°). **None of this has been run against the physical car, shield
+motor, and color sensor, and the setup dialog and the two-computer
+control-topic relay have not been click-tested by a human or run across two
+real machines** — that all still needs to happen (with real Connection Card
+values filled in and a calibrated proximity threshold) before treating this
+as match-ready, per this repo's usual rule that nothing is "done" until
+it's actually run against the hardware at least once. In particular, the
+shield's absolute-position-0-means-retracted assumption and the new lower
+motor speeds (20-55% instead of 30-90%) still need a real drive to confirm
+they feel right.

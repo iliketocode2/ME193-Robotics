@@ -76,21 +76,36 @@ def test_forward_band_scales_with_pitch():
           cmd_high.forward_speed <= DEFAULT_CONFIG["max_speed"])
 
 
-def test_turn_direction_from_pitch_slope():
+def test_turn_is_a_gradient_of_pitch_position():
+    # +/-100Hz margin from the band edges, same FFT-bin-quantization reasoning
+    # as test_forward_band_scales_with_pitch.
     lo, hi = DEFAULT_CONFIG["turn_band"]
-    rising = np.linspace(lo + 100, hi - 100, 8)
+    mid = (lo + hi) / 2
 
-    policy, now, cmd = WhistlePolicy(), 0.0, None
-    for f in rising:
-        cmd = policy.update(tone(f), now=now)
+    policy_low, now, cmd_low = WhistlePolicy(), 0.0, None
+    for _ in range(5):
+        cmd_low = policy_low.update(tone(lo + 100), now=now)
         now += DT
-    check("rising pitch through turn band -> turns RIGHT (positive)", cmd.turn_bias > 0)
+    check("low end of turn band -> turns LEFT (negative)", cmd_low.turn_bias < 0)
 
-    policy, now, cmd = WhistlePolicy(), 0.0, None
-    for f in reversed(rising):
-        cmd = policy.update(tone(f), now=now)
+    policy_high, now, cmd_high = WhistlePolicy(), 0.0, None
+    for _ in range(5):
+        cmd_high = policy_high.update(tone(hi - 100), now=now)
         now += DT
-    check("falling pitch through turn band -> turns LEFT (negative)", cmd.turn_bias < 0)
+    check("high end of turn band -> turns RIGHT (positive)", cmd_high.turn_bias > 0)
+
+    policy_mid, now, cmd_mid = WhistlePolicy(), 0.0, None
+    for _ in range(5):
+        cmd_mid = policy_mid.update(tone(mid), now=now)
+        now += DT
+    check("center of turn band -> ~straight (near zero turn)", abs(cmd_mid.turn_bias) < 5)
+
+    policy_quarter, now, cmd_quarter = WhistlePolicy(), 0.0, None
+    for _ in range(5):
+        cmd_quarter = policy_quarter.update(tone(lo + (hi - lo) * 0.25), now=now)
+        now += DT
+    check("a steady pitch a quarter into the band turns less sharply than the low edge",
+          cmd_quarter.turn_bias < 0 and abs(cmd_quarter.turn_bias) < abs(cmd_low.turn_bias))
 
 
 def test_broadband_noise_is_masked():
@@ -132,45 +147,13 @@ def test_goal_gesture_three_high_pulses():
         cmd = policy.update(tone(hi - 100), now=now); now += DT
         cmd = policy.update(silence(), now=now); now += 0.15
     check("3 short high-band pulses -> goal_detected fires", cmd.goal_detected)
-    check("goal gesture never also fires the shield toggle", not cmd.shield_toggle)
-
-
-def test_shield_gesture_two_low_pulses():
-    lo, hi = DEFAULT_CONFIG["stop_band"]
-    mid = (lo + hi) / 2
-    policy, now, cmd = WhistlePolicy(), 0.0, None
-    for _ in range(2):
-        cmd = policy.update(tone(mid), now=now); now += DT
-        cmd = policy.update(silence(), now=now); now += 0.15
-    check("2 short low-band pulses -> shield_toggle fires", cmd.shield_toggle)
-    check("shield gesture never also fires goal_detected", not cmd.goal_detected)
-
-
-def test_goal_and_shield_gestures_dont_cross_contaminate():
-    """A 3-pulse high-band (goal) attempt must not accidentally fire the
-    2-pulse shield toggle partway through, and vice versa -- this is why
-    goal_band/shield_band are different bands, not just different counts."""
-    _, hi = DEFAULT_CONFIG["forward_band"][0], DEFAULT_CONFIG["forward_band"][1]
-    policy, now = WhistlePolicy(), 0.0
-    fired_shield_early = False
-    for i in range(3):
-        cmd = policy.update(tone(hi - 100), now=now); now += DT
-        cmd = policy.update(tone(hi - 100), now=now); now += DT
-        cmd = policy.update(silence(), now=now); now += 0.15
-        if i == 1 and cmd.shield_toggle:
-            fired_shield_early = True
-    check("2nd high pulse of a 3-pulse goal attempt does not fire shield_toggle",
-          not fired_shield_early)
-    check("3rd pulse completes the goal gesture", cmd.goal_detected)
 
 
 if __name__ == "__main__":
     test_stop_band()
     test_forward_band_scales_with_pitch()
-    test_turn_direction_from_pitch_slope()
+    test_turn_is_a_gradient_of_pitch_position()
     test_broadband_noise_is_masked()
     test_no_whistle_ramps_down_instead_of_cutting_instantly()
     test_goal_gesture_three_high_pulses()
-    test_shield_gesture_two_low_pulses()
-    test_goal_and_shield_gestures_dont_cross_contaminate()
     print("\nAll whistle_policy self-checks passed.")

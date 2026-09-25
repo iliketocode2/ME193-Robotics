@@ -14,7 +14,7 @@ Usage:
 
     policy = WhistlePolicy(config)   # config from calibrate.py's whistle_config.json
     cmd = policy.update(audio_block)   # audio_block: 1-D float32 numpy array
-    # cmd.forward_speed, cmd.turn_bias, cmd.shield_toggle, cmd.goal_detected, cmd.state
+    # cmd.forward_speed, cmd.turn_bias, cmd.goal_detected, cmd.state
 """
 
 import dataclasses
@@ -27,8 +27,12 @@ import numpy as np
 class Command:
     """One control decision, computed from a single audio block."""
     forward_speed: float        # -100..100, signed forward(+)/back(-) drive speed
-    turn_bias: float            # -100..100, signed turn: right(+) / left(-)
-    shield_toggle: bool         # True exactly once when the shield-toggle gesture fires
+    turn_bias: float            # -100..100, signed turn: right(+) / left(-). Within the
+                                 # turn band this is a straight linear gradient of pitch
+                                 # position (low edge of the band = full left, high edge =
+                                 # full right, center = straight) -- world_cup.py's shield
+                                 # co-pilot mode reuses this exact value as a continuous
+                                 # shield-position gradient instead of a turn command.
     goal_detected: bool         # True exactly once when the goal gesture fires
     state: str                  # human-readable label for the on-screen HUD
     frequency: float            # Hz, smoothed peak frequency this block; None = no tone
@@ -53,29 +57,26 @@ DEFAULT_CONFIG = {
     "noise_floor_rms": 0.01,       # calibrated ambient RMS floor; block RMS must also clear this
 
     "stop_band": (600, 1000),      # Hz -- a low, comfortable whistle -> STOP
-    "turn_band": (1000, 2200),     # Hz -- mid whistle -> TURN (direction from pitch slope)
+    "turn_band": (1000, 2200),     # Hz -- mid whistle -> TURN, a linear gradient of pitch
+                                    # position within the band: the low edge is full left,
+                                    # the high edge is full right, the center is straight.
     "forward_band": (2200, 4000),  # Hz -- high whistle -> FORWARD, speed scales with pitch
 
-    "min_forward_speed": 30,       # % speed at the bottom of forward_band
-    "max_speed": 90,               # % speed at the top of forward_band / max turn magnitude
+    "min_forward_speed": 20,       # % speed at the bottom of forward_band
+    "max_speed": 55,               # % speed at the top of forward_band / max turn magnitude
     "ema_alpha": 0.3,              # frequency smoothing: higher = less smoothing, more responsive
-
-    "turn_slope_deadzone_hz_s": 15.0,    # |slope| below this -> "flat pitch", gentle creep only
-    "turn_slope_saturation_hz_s": 300.0, # |slope| at/above this -> turn is fully maxed out
 
     "silence_timeout_s": 0.4,      # no tonal block for this long -> start ramping to a stop
     "ramp_time_s": 0.3,            # time to ramp speed/turn down to zero once the timeout hits
 
-    # Gesture recognition: short pulses in a specific band, counted in a rolling window.
-    # GOAL and SHIELD are deliberately different bands so a goal attempt (high whistles)
-    # can never be mistaken for a shield toggle (low whistles) mid-gesture.
+    # Gesture recognition: short pulses in the forward band, counted in a rolling
+    # window -- the "made it in the goal" command. (Shield control used to be a
+    # separate 2-pulse gesture here; it's now a continuous gradient -- see
+    # turn_bias's docstring above -- so there's nothing shield-specific left.)
     "pulse_max_duration_s": 0.4,   # a "pulse" must be shorter than this to count
     "goal_band": "forward",
     "goal_window_s": 2.0,
     "goal_pulse_count": 3,
-    "shield_band": "stop",
-    "shield_window_s": 1.2,
-    "shield_pulse_count": 2,
 }
 
 
@@ -138,7 +139,6 @@ class WhistlePolicy:
         self.detector = PitchDetector(
             self.cfg["sample_rate"], self.cfg["block_size"], self.cfg["ema_alpha"])
 
-        self._freq_history = []      # [(t, freq), ...] recent tonal blocks, for slope
         self._last_tone_time = None
         self._current_pulse_start = None
         self._current_pulse_band = None
@@ -156,21 +156,8 @@ class WhistlePolicy:
                 return band
         return None  # outside every expected whistle range -- treat like no tone at all
 
-    def _compute_slope(self):
-        """Hz/s over the recent tonal-frequency history -- the sign/magnitude used to
-        pick a turn direction, since a single instantaneous frequency is one-dimensional
-        and can't by itself encode "left" vs "right"."""
-        if len(self._freq_history) < 2:
-            return 0.0
-        t0, f0 = self._freq_history[0]
-        t1, f1 = self._freq_history[-1]
-        dt = t1 - t0
-        if dt <= 0:
-            return 0.0
-        return (f1 - f0) / dt
-
     def _track_pulses(self, has_whistle, band, now):
-        """Update pulse-start/pulse-end bookkeeping and return (goal_detected, shield_toggle)."""
+        """Update pulse-start/pulse-end bookkeeping and return goal_detected."""
         cfg = self.cfg
 
         if has_whistle:
@@ -184,26 +171,13 @@ class WhistlePolicy:
             self._current_pulse_start = None
             self._current_pulse_band = None
 
-        horizon = max(cfg["goal_window_s"], cfg["shield_window_s"])
-        self._recent_pulses = [(t, b) for t, b in self._recent_pulses if now - t <= horizon]
+        self._recent_pulses = [(t, b) for t, b in self._recent_pulses if now - t <= cfg["goal_window_s"]]
 
-        goal_detected = False
-        shield_toggle = False
-
-        goal_pulses = [t for t, b in self._recent_pulses
-                       if b == cfg["goal_band"] and now - t <= cfg["goal_window_s"]]
+        goal_pulses = [t for t, b in self._recent_pulses if b == cfg["goal_band"]]
         if len(goal_pulses) >= cfg["goal_pulse_count"]:
-            goal_detected = True
             self._recent_pulses.clear()
-
-        if not goal_detected:
-            shield_pulses = [t for t, b in self._recent_pulses
-                              if b == cfg["shield_band"] and now - t <= cfg["shield_window_s"]]
-            if len(shield_pulses) >= cfg["shield_pulse_count"]:
-                shield_toggle = True
-                self._recent_pulses.clear()
-
-        return goal_detected, shield_toggle
+            return True
+        return False
 
     def _drive_command(self, has_whistle, band, freq, now):
         """Return (forward_speed, turn_bias, state) for the continuous drive mapping."""
@@ -222,12 +196,12 @@ class WhistlePolicy:
 
         if has_whistle and band == "turn":
             self._ramp_start_time = None
-            slope = self._compute_slope()
-            if abs(slope) < cfg["turn_slope_deadzone_hz_s"]:
-                return cfg["min_forward_speed"] * 0.5, 0.0, "TURN (flat pitch -> creep)"
-            mag = min(1.0, abs(slope) / cfg["turn_slope_saturation_hz_s"])
-            turn = mag * cfg["max_speed"] * (1.0 if slope > 0 else -1.0)
-            direction = "RIGHT" if slope > 0 else "LEFT"
+            lo, hi = cfg["turn_band"]
+            # 0.0 at the band's low edge, 1.0 at its high edge, 0.5 (straight) at the
+            # center -- a direct gradient of pitch position, not a rate-of-change/slope.
+            frac = 0.5 if hi == lo else max(0.0, min(1.0, (freq - lo) / (hi - lo)))
+            turn = (frac - 0.5) * 2.0 * cfg["max_speed"]  # low edge -> -max_speed, high edge -> +max_speed
+            direction = "RIGHT" if turn > 0 else ("LEFT" if turn < 0 else "CENTER")
             return 0.0, turn, f"TURN {direction} {abs(turn):.0f}%"
 
         # No usable tone this block -- see the README's "no whistle detected" answer.
@@ -259,22 +233,17 @@ class WhistlePolicy:
 
         if has_whistle:
             self._last_tone_time = now
-            self._freq_history.append((now, freq))
-        self._freq_history = [(t, f) for t, f in self._freq_history if now - t <= 0.3]
 
-        goal_detected, shield_toggle = self._track_pulses(has_whistle, band, now)
+        goal_detected = self._track_pulses(has_whistle, band, now)
         forward, turn, state = self._drive_command(has_whistle, band, freq, now)
         self._last_forward, self._last_turn = forward, turn
 
         if goal_detected:
             state = "GOAL COMMAND!"
-        elif shield_toggle:
-            state = "SHIELD TOGGLE"
 
         return Command(
             forward_speed=forward,
             turn_bias=turn,
-            shield_toggle=shield_toggle,
             goal_detected=goal_detected,
             state=state,
             frequency=freq if has_whistle else None,
