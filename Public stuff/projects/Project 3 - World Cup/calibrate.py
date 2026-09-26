@@ -80,9 +80,16 @@ def main():
                 rms_values.append(float(np.sqrt(np.mean(np.square(block)))))
         finally:
             stream.close()
-        ambient_peak_rms = max(rms_values) if rms_values else 0.001
-        noise_floor_rms = max(ambient_peak_rms * 2.0, 0.005)  # 2x margin over the loudest ambient block
-        print(f"  Ambient RMS peak: {ambient_peak_rms:.4f} -> noise floor set to {noise_floor_rms:.4f}")
+        # The 90th percentile, not max(): a single one-off transient during this
+        # 2.5s window (a click, a cough, the Enter keystroke's own sound, a chair
+        # creak) would otherwise set the floor for the *entire match* at 2x that
+        # spike -- max() has no defense against one outlier block, which is why
+        # this kept producing wildly different floors across runs in the same
+        # room (0.06 one run, 0.5+ the next). The 90th percentile only responds
+        # to noise that's actually sustained across a real chunk of the window.
+        ambient_p90_rms = float(np.percentile(rms_values, 90)) if rms_values else 0.001
+        noise_floor_rms = max(ambient_p90_rms * 2.0, 0.005)  # 2x margin over that
+        print(f"  Ambient RMS (90th percentile): {ambient_p90_rms:.4f} -> noise floor set to {noise_floor_rms:.4f}")
 
         print("\n=== Step 2/3: your LOWEST comfortable whistle ===")
         prompt_ready("Whistle your lowest comfortable note and hold it steady.")

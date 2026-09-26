@@ -74,8 +74,20 @@ INVERT_RIGHT_MOTOR = True
 # motor_run_to_absolute_position() treats 0 as whatever the hub's own internal
 # zero reference is -- verify on the physical robot that "0" actually lines up
 # with the shield retracted, and adjust SHIELD_SWING_DEGREES/sign if not.
-SHIELD_SWING_DEGREES = 90  # how far the shield arm swings between retracted/deployed
-SHIELD_SPEED = 40          # % speed for shield moves -- see the general speed decrease below
+#
+# Deliberately tuned to feel snappier than driving: a swinging cardboard flap
+# isn't a safety concern the way a fast-turning drive wheel is, so there's no
+# reason to make it gentle. SHIELD_SPEED is the physical swing speed (higher
+# than the double motor's max_speed); SHIELD_MAX_TURN_SPEED/
+# SHIELD_TURN_DEADZONE_FRAC give the shield co-pilot's *own* WhistlePolicy
+# instance (see _run_as_copilot()) a much more sensitive gradient than the
+# drive's -- full -100..100 range, no dead zone -- so it reacts to a smaller
+# whistle-pitch change instead of needing the same wide "straight" zone/gentle
+# cap that's tuned for comfortable steering.
+SHIELD_SWING_DEGREES = 90   # how far the shield arm swings between retracted/deployed
+SHIELD_SPEED = 100          # % speed for shield moves -- fast, unlike the gentler drive speeds
+SHIELD_MAX_TURN_SPEED = 100     # shield co-pilot's own gradient cap: full range, not the drive's gentler one
+SHIELD_TURN_DEADZONE_FRAC = 0.0  # shield co-pilot's own deadzone: none -- react readily, don't require a wide "center" zone
 
 # --- Proximity ("caught") tuning ----------------------------------------------
 # LELIB.md and lelib.py's raw_reading() both document/assume reflection() as
@@ -110,6 +122,16 @@ else:
 
 SAMPLE_RATE = whistle_config["sample_rate"]
 BLOCK_SIZE = whistle_config["block_size"]
+
+# Same calibrated frequency bands, but a much more sensitive turn-band gradient
+# (see the "Shield tuning" comment above) -- used only by the shield co-pilot's
+# own WhistlePolicy instance, swapped in by _run_as_copilot() before its threads
+# start. The drive operator keeps using `whistle_config` as-is via `policy` below.
+shield_whistle_config = {
+    **whistle_config,
+    "max_turn_speed": SHIELD_MAX_TURN_SPEED,
+    "turn_deadzone_frac": SHIELD_TURN_DEADZONE_FRAC,
+}
 
 policy = WhistlePolicy(whistle_config)
 
@@ -798,12 +820,19 @@ def _run_as_drive_operator():
 
 def _run_as_copilot():
     """CONTROL_CHANNEL == 'shield': no BLE connection at all on this
-    computer. Opens the mic, runs the same WhistlePolicy locally purely to
-    read this whistler's own turn_bias gradient, and continuously relays it
-    to CONTROL_TOPIC for a drive-operator instance (on a different computer)
-    to apply to its shield. Also mirrors game status from MQTT_TOPIC,
-    read-only, for display."""
-    global mqtt
+    computer. Opens the mic, runs a WhistlePolicy tuned for shield
+    sensitivity (shield_whistle_config -- full gradient range, no dead
+    zone, unlike the drive's gentler tuning) purely to read this whistler's
+    own turn_bias gradient, and continuously relays it to CONTROL_TOPIC for
+    a drive-operator instance (on a different computer) to apply to its
+    shield. Also mirrors game status from MQTT_TOPIC, read-only, for
+    display."""
+    global mqtt, policy
+
+    # Swap the module-level `policy` (shared by copilot_audio_callback) to the
+    # shield-sensitive config before the audio stream starts -- must happen
+    # before any thread that reads `policy` is running.
+    policy = WhistlePolicy(shield_whistle_config)
 
     print(f"Running as SHIELD CO-PILOT for team '{TEAM_NAME}' -- no robot connection "
           f"on this computer.")

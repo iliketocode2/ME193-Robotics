@@ -162,15 +162,20 @@ discrete command:
 - **Three short pulses in the FORWARD band within 2 seconds** → the "made
   it in the goal" command (publishes to MQTT, plays the success song).
 
-The shield (Single Motor) uses the identical gradient idea, just from a
+The shield (Single Motor) uses the same gradient *idea*, just from a
 **second, independent whistle** — see "Two-computer setup": a co-pilot's
 own turn-band gradient continuously sets the shield's position (their
 lowest-band pitch retracts it, their highest-band pitch fully deploys it)
 instead of driving the car, relayed over MQTT rather than computed locally.
-Since it's the exact same underlying value, the shield also inherits the
-deadzone (holding at its mid-swing position while the co-pilot whistles
-near the center of their turn band) and the lower `max_turn_speed`-scaled
-range, rather than a separate tuning.
+It is **not** tuned the same as driving, on purpose: the shield co-pilot
+gets its own `WhistlePolicy` instance (`shield_whistle_config` in
+`world_cup.py`, swapped in by `_run_as_copilot()`) with the turn gradient's
+dead zone removed (`turn_deadzone_frac = 0.0`) and its magnitude cap raised
+to the full range (`max_turn_speed = 100`, vs. the drive's gentler `25`) —
+a swinging cardboard flap isn't a safety concern the way a fast-turning
+drive wheel is, so there's no reason to make it react as cautiously, and
+the physical swing itself is driven at `SHIELD_SPEED = 100` (vs. the double
+motor's `max_speed = 55`) so it's visibly quicker too.
 
 ### What does your code do if no whistle is detected?
 
@@ -207,10 +212,18 @@ Three layers, from cheapest to most targeted:
    modestly more permissive of loud ambient noise being mistaken for one —
    raise it back toward 6+ if a noisy room starts producing false triggers.
 2. **Calibrated ambient RMS floor.** `calibrate.py` records a few seconds
-   of silence and sets the floor to 2× the loudest ambient block observed,
-   so a block also has to actually be *loud enough*, not just tonal —
-   guards against a faint high-pitched electronic whine or hum being
-   mistaken for an intentional whistle.
+   of silence and sets the floor to 2× the **90th percentile** of the
+   ambient blocks' RMS, so a block also has to actually be *loud enough*,
+   not just tonal — guards against a faint high-pitched electronic whine or
+   hum being mistaken for an intentional whistle. Deliberately *not*
+   `max()` of the ambient blocks: a single one-off transient during that
+   window (a cough, a click, the Enter keystroke's own sound) would
+   otherwise set the floor for the entire match at 2x that one spike, which
+   is exactly what caused wildly different floors (and a "no whistle
+   detected" robot despite a clearly visible spectrogram peak) across
+   otherwise-identical calibration runs in the same room before this was
+   fixed — the 90th percentile only responds to noise that's actually
+   sustained across a real chunk of the window, not one outlier block.
 3. **EMA smoothing across blocks.** Even once a block passes both gates,
    the reported frequency is smoothed with an exponential moving average
    rather than trusted block-to-block, so a single noisy FFT estimate

@@ -2,18 +2,18 @@
   "sample_rate": 44100,
   "block_size": 2048,
   "tonal_ratio_gate": 4.5,
-  "noise_floor_rms": 0.06457,
+  "noise_floor_rms": 0.0837,
   "stop_band": [
-    842,
-    1142
+    1249,
+    1549
   ],
   "turn_band": [
-    1142,
-    1938
+    1549,
+    2545
   ],
   "forward_band": [
-    1938,
-    2238
+    2545,
+    2845
   ],
   "min_forward_speed": 20,
   "max_speed": 55,
