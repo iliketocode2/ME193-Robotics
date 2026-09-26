@@ -114,25 +114,35 @@ DEFAULT_CONFIG = {
 
 
 class PitchDetector:
-    """FFT-based peak-frequency + tonal-ratio estimator, one audio block at a time."""
+    """FFT-based peak-frequency + tonal-ratio estimator, one audio block at a
+    time -- purely per-block, no state/smoothing carried between calls. That's
+    deliberate: smoothing has to happen in WhistlePolicy instead (see its
+    `_smoothed_freq`), because only WhistlePolicy knows which blocks actually
+    pass the tonal-ratio/RMS gates. Smoothing every raw peak here regardless
+    of gating (an earlier version of this class did exactly that) let a
+    single noisy/gated-out block's spurious peak quietly drag the running
+    average off course -- so a held, genuinely steady tone could drift out of
+    its own band over time with no gap ever appearing in the "no whistle"
+    sense, only fixable by whistling a new, strong-enough frequency to
+    overwhelm the contaminated average. Keeping this class stateless and
+    resetting the smoothed estimate on every non-tonal block (in
+    WhistlePolicy.update()) avoids that entirely."""
 
-    def __init__(self, sample_rate, block_size, ema_alpha):
+    def __init__(self, sample_rate, block_size):
         self.sample_rate = sample_rate
         self.block_size = block_size
-        self.ema_alpha = ema_alpha
         self._window = np.hanning(block_size)
         self._freqs = np.fft.rfftfreq(block_size, d=1.0 / sample_rate)
-        self._smoothed_freq = None
 
     @property
     def freqs(self):
         return self._freqs
 
     def analyze(self, block):
-        """Return (smoothed_freq_or_None, tonal_ratio, rms, magnitude_spectrum) for one block.
-
-        `smoothed_freq` is None only when the block is silent enough that the
-        spectrum has no usable peak at all (all-zero input).
+        """Return (raw_freq_or_None, tonal_ratio, rms, magnitude_spectrum) for
+        one block, with no smoothing applied. `raw_freq` is None only when the
+        block is silent enough that the spectrum has no usable peak at all
+        (all-zero input).
         """
         if len(block) != self.block_size:
             block = np.resize(np.asarray(block, dtype=np.float64), self.block_size)
@@ -151,13 +161,7 @@ class PitchDetector:
         tonal_ratio = peak_mag / mean_mag
         raw_freq = float(self._freqs[peak_idx])
 
-        if self._smoothed_freq is None:
-            self._smoothed_freq = raw_freq
-        else:
-            self._smoothed_freq = (self.ema_alpha * raw_freq
-                                    + (1.0 - self.ema_alpha) * self._smoothed_freq)
-
-        return self._smoothed_freq, tonal_ratio, rms, spectrum
+        return raw_freq, tonal_ratio, rms, spectrum
 
 
 class WhistlePolicy:
@@ -169,9 +173,9 @@ class WhistlePolicy:
 
     def __init__(self, config=None):
         self.cfg = {**DEFAULT_CONFIG, **(config or {})}
-        self.detector = PitchDetector(
-            self.cfg["sample_rate"], self.cfg["block_size"], self.cfg["ema_alpha"])
+        self.detector = PitchDetector(self.cfg["sample_rate"], self.cfg["block_size"])
 
+        self._smoothed_freq = None  # only ever updated on a block that passes both gates -- see update()
         self._last_tone_time = None
         self._current_pulse_start = None
         self._current_pulse_band = None
@@ -269,8 +273,26 @@ class WhistlePolicy:
         now = time.monotonic() if now is None else now
         cfg = self.cfg
 
-        freq, tonal_ratio, rms, spectrum = self.detector.analyze(block)
-        is_tonal = freq is not None and tonal_ratio >= cfg["tonal_ratio_gate"] and rms >= cfg["noise_floor_rms"]
+        raw_freq, tonal_ratio, rms, spectrum = self.detector.analyze(block)
+        is_tonal = raw_freq is not None and tonal_ratio >= cfg["tonal_ratio_gate"] and rms >= cfg["noise_floor_rms"]
+
+        # Smoothing only ever incorporates a block that actually passed both
+        # gates, and resets on one that doesn't -- see PitchDetector's and
+        # this class's __init__ comments for why: blending in a gated-out
+        # block's raw peak (noise, a transient dip, whatever caused this one
+        # block to fail) would let it quietly drag the average off course for
+        # every *later* tonal block too, with nothing to ever undo the drift
+        # short of a strong new frequency overwhelming it.
+        if is_tonal:
+            if self._smoothed_freq is None:
+                self._smoothed_freq = raw_freq
+            else:
+                self._smoothed_freq = (cfg["ema_alpha"] * raw_freq
+                                        + (1.0 - cfg["ema_alpha"]) * self._smoothed_freq)
+        else:
+            self._smoothed_freq = None
+        freq = self._smoothed_freq
+
         band = self._band_of(freq) if is_tonal else None
         has_whistle = band is not None
 

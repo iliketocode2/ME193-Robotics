@@ -51,7 +51,7 @@ MAX_DISPLAY_HZ = max(4500, config["forward_band"][1] + 500)
 HISTORY_COLUMNS = 200  # ~9s of scrollback at ~46ms/block (2048 samples @ 44100Hz)
 DB_FLOOR = -80.0
 
-detector = PitchDetector(SAMPLE_RATE, BLOCK_SIZE, ema_alpha=config["ema_alpha"])
+detector = PitchDetector(SAMPLE_RATE, BLOCK_SIZE)
 freq_mask = detector.freqs <= MAX_DISPLAY_HZ
 display_freqs = detector.freqs[freq_mask]
 

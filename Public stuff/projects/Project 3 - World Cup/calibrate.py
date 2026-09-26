@@ -40,7 +40,7 @@ def record_phase(stream, label, duration_s):
     over every block and printing a live frequency readout. Returns the list
     of (frequency, tonal_ratio, rms) for every block that passed the
     tonal-ratio gate."""
-    detector = PitchDetector(SAMPLE_RATE, BLOCK_SIZE, ema_alpha=DEFAULT_CONFIG["ema_alpha"])
+    detector = PitchDetector(SAMPLE_RATE, BLOCK_SIZE)
     n_blocks = int(duration_s * SAMPLE_RATE / BLOCK_SIZE)
     samples = []
     for _ in range(n_blocks):

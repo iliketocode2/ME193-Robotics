@@ -265,11 +265,23 @@ Three layers, from cheapest to most targeted:
    otherwise-identical calibration runs in the same room before this was
    fixed — the 90th percentile only responds to noise that's actually
    sustained across a real chunk of the window, not one outlier block.
-3. **EMA smoothing across blocks.** Even once a block passes both gates,
-   the reported frequency is smoothed with an exponential moving average
-   rather than trusted block-to-block, so a single noisy FFT estimate
-   doesn't jerk the turn/shield gradient or the reported HUD frequency
-   around.
+3. **EMA smoothing across blocks — but only blocks that already passed both
+   gates.** The reported frequency is smoothed with an exponential moving
+   average rather than trusted block-to-block, so a single noisy FFT
+   estimate doesn't jerk the turn/shield gradient or the reported HUD
+   frequency around. This smoothing lives in `WhistlePolicy`, not
+   `PitchDetector`, specifically so a block that *fails* the gates (a
+   transient dip from mic noise, OS-level mic "enhancements"/AGC, whatever)
+   resets the smoothed estimate instead of blending its noise-derived peak
+   into it. An earlier version smoothed unconditionally in `PitchDetector`
+   regardless of gating, which let one bad block quietly drag the running
+   average off course for every *later* good block too — symptom: a held,
+   genuinely steady tone would drive for a while, then stop, and only
+   resume once a new frequency strong enough to overwhelm the contaminated
+   average came along, even though the original tone never actually
+   stopped. Fixed by moving the smoothing state into `WhistlePolicy.update()`
+   and resetting it on every non-tonal block rather than carrying it
+   through.
 
 ## MQTT protocol on `ME193/Rogers`
 
