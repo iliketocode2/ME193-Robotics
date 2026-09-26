@@ -1,12 +1,19 @@
 # Project 3 — World Cup
 
 A LEGO Education "car" (Double Motor drive + a Single Motor "shield" arm
-with a cardboard square taped on) driven entirely by whistling into a
-laptop microphone — pitch continuously sets speed and turn (a gradient:
-closer to your lowest whistle turns further left, closer to your highest
-turns further right), and a 3-pulse whistle rhythm calls a "goal" —
-coordinated with an opponent robot over MQTT for a ball-vs-goalie match on
-topic `ME193/Rogers`.
+with a cardboard square taped on) driven entirely by pitch into a laptop
+microphone — pitch continuously sets speed and turn (a gradient: lower
+turns further left, higher turns further right), and a 3-pulse rhythm
+calls a "goal" — coordinated with an opponent robot over MQTT for a
+ball-vs-goalie match on topic `ME193/Rogers`.
+
+The frequency bands are **fixed/hardcoded**, not calibrated per-person —
+see "Fixed frequency bands" below. This is meant to be played from a
+precise external tone source (a phone tone-generator app, for instance),
+not necessarily an actual whistle: a tone app can hit 700Hz or 4000Hz
+exactly and consistently, which is what makes hardcoded bands practical
+instead of needing `calibrate.py`'s per-whistler band-fitting. Whistling
+still works fine too, if you'd rather do that.
 
 A second person on a second computer can help drive the same physical car:
 one computer ("drive") is the one actually Bluetooth-connected to the
@@ -65,9 +72,11 @@ Every command below runs through `my_env_audio`, **not** `my_env`.
   `Beep()` has no volume parameter at all, so it can't be made louder;
   synthesizing the tone ourselves means we set the amplitude directly
   (`COMPUTER_VOLUME`, near full-scale by default).
-- **`calibrate.py`** — guided calibration: measures room noise, then your
-  lowest and highest comfortable whistle notes, and writes
-  `whistle_config.json`.
+- **`calibrate.py`** — **optional now** (see "Fixed frequency bands" below):
+  guided calibration that measures room noise, then your lowest and highest
+  comfortable whistle notes, and writes `whistle_config.json`. Still fully
+  functional if you'd rather calibrate to an actual whistle than hardcode
+  bands for a tone generator.
 - **`world_cup.py`** — the match script. Opens a small setup dialog first
   (game role, "drive" vs. "shield co-pilot", your team name, and optionally
   your opponent's team name), then either: runs the full flow (connects the
@@ -78,13 +87,44 @@ Every command below runs through `my_env_audio`, **not** `my_env`.
   you picked **shield co-pilot**. Both modes show the live
   waveform/spectrum/decision dashboard.
 
+## Fixed frequency bands (no calibration needed)
+
+`whistle_config.json` (and `whistle_policy.DEFAULT_CONFIG`, its fallback if
+that file is ever missing) now ship with fixed bands, meant for a precise
+external tone source rather than an actual whistle:
+
+| Band | Range | Meaning |
+|---|---|---|
+| STOP | 400-650 Hz | e.g. play ~500 Hz — stops the car / rests the shield at mid-swing |
+| TURN | 700-4000 Hz | left (700 Hz) → straight (~2350 Hz) → right (4000 Hz), a continuous gradient |
+| FORWARD | 4050-4650 Hz | speed scales with pitch across the range |
+
+`stop_band`/`forward_band` deliberately leave a ~50 Hz gap on either side
+of `turn_band`'s exact 700/4000 Hz edges rather than touching them: at this
+block size the FFT has ~21.5 Hz bins, so a tone dialed to exactly one of
+those shared boundary values can snap to either neighboring band
+unpredictably (verified directly — a test tone at exactly 700 Hz
+classified as TURN, not STOP, purely from bin quantization). The gap reads
+as a harmless "no whistle" instead of silently misfiring as the wrong
+command — if you're testing right at a boundary and get "no whistle
+detected," nudge a little further into the band rather than sitting
+exactly on the edge.
+
+This applies to **both** the drive's steering and the shield co-pilot's
+position gradient (same bands, different sensitivity tuning — see "Two-
+computer setup"). If you'd rather calibrate to an actual whistle instead,
+`calibrate.py` still works and will overwrite these with derived bands.
+
 ## Run order
 
 ```powershell
 my_env_audio\Scripts\python "Public stuff\projects\Project 3 - World Cup\test_whistle_policy.py"
-my_env_audio\Scripts\python "Public stuff\projects\Project 3 - World Cup\calibrate.py"
 my_env_audio\Scripts\python "Public stuff\projects\Project 3 - World Cup\world_cup.py"
 ```
+
+(Optionally run `calibrate.py` first if you'd rather calibrate to an
+actual whistle than use the fixed tone-generator bands above — see "Fixed
+frequency bands.")
 
 Before running `world_cup.py` (on the **drive** computer, i.e. the one
 actually Bluetooth-connected to the robot):
@@ -107,10 +147,11 @@ actually Bluetooth-connected to the robot):
   happened to be pointed at connect time. Adjust `SHIELD_SWING_DEGREES`
   or manually re-zero the arm if "retracted"/"deployed" come out backwards
   or offset.
-- Run `calibrate.py` in the same room, with the same mic, close to match
-  time — ambient noise and your own whistle range are what it's tuned
-  against. If using a shield co-pilot, they should run their own
-  `calibrate.py` too, against their own mic/room.
+- If using a tone generator (the default now — see "Fixed frequency
+  bands"), no calibration step is needed. If you'd rather whistle, run
+  `calibrate.py` in the same room, with the same mic, close to match time;
+  if using a shield co-pilot, they'd run their own too, against their own
+  mic/room.
 
 Running `world_cup.py` (either computer) first opens a small setup dialog:
 pick **game role** (Ball/Goalie), pick **this computer controls**
@@ -130,14 +171,14 @@ jitter. The peak's magnitude divided by the spectrum's mean magnitude — the
 (broadband) the block is; see the noise-masking answer below for why.
 
 If a block passes both the tonal-ratio gate and an RMS noise floor, its
-smoothed frequency is classified into one of three **calibrated** bands
-(from `calibrate.py`, derived from *your* actual whistle range, not a fixed
-guess):
+smoothed frequency is classified into one of three **fixed** bands (see
+"Fixed frequency bands" — `calibrate.py` can still derive these from an
+actual whistle range instead, if you'd rather not use a tone generator):
 
-- **STOP band** (your lowest comfortable whistle ± 150 Hz) → speed = 0.
-- **FORWARD band** (your highest comfortable whistle ± 150 Hz) → drive
-  forward, speed scaling linearly from 20% to 55% across the band (kept
-  deliberately gentle — see "motor speed" below).
+- **STOP band** (400-650 Hz) → speed = 0.
+- **FORWARD band** (4050-4650 Hz) → drive forward, speed scaling linearly
+  from 20% to 55% across the band (kept deliberately gentle — see "motor
+  speed" below).
 - **TURN band** (everything in between) → a **gradient of pitch position
   within the band**, capped at a much lower speed than driving straight
   (`max_turn_speed`, 25% by default vs. `max_speed`'s 55%, so turning is
@@ -383,4 +424,8 @@ as match-ready, per this repo's usual rule that nothing is "done" until
 it's actually run against the hardware at least once. In particular, the
 shield's absolute-position-0-means-retracted assumption and the new lower
 motor speeds (20-55% instead of 30-90%) still need a real drive to confirm
-they feel right.
+they feel right. The new fixed frequency bands (400-650/700-4000/4050-4650)
+and their boundary gaps have been checked directly with synthetic tones at
+500/700/2350/4000/4300 Hz for both the drive and shield policies (matching
+expected STOP/TURN-left/STRAIGHT/no-whistle-gap/FORWARD classification),
+but not yet against a real phone tone-generator app and a real microphone.

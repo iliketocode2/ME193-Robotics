@@ -4,16 +4,16 @@
   "tonal_ratio_gate": 4.5,
   "noise_floor_rms": 0.0837,
   "stop_band": [
-    1249,
-    1549
+    400,
+    650
   ],
   "turn_band": [
-    1549,
-    2545
+    700,
+    4000
   ],
   "forward_band": [
-    2545,
-    2845
+    4050,
+    4650
   ],
   "min_forward_speed": 20,
   "max_speed": 55,

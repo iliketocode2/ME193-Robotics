@@ -162,7 +162,11 @@ def test_no_whistle_ramps_down_instead_of_cutting_instantly():
     for _ in range(5):
         cmd = policy.update(tone(hi - 100), now=now)
         now += DT
-    check("driving fast right before going silent", cmd.forward_speed > 50)
+    # Proportional to max_speed, not a hardcoded absolute number -- max_speed
+    # and forward_band's width are both tunable, and a fixed threshold like
+    # "> 50" silently stops meaning "near max" if either one changes.
+    check("driving fast (most of the way to max_speed) right before going silent",
+          cmd.forward_speed > 0.75 * DEFAULT_CONFIG["max_speed"])
 
     cmd_right_after = policy.update(silence(), now=now)
     now += DT

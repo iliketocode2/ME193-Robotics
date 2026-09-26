@@ -42,10 +42,14 @@ class Command:
     freqs: np.ndarray           # frequency axis matching `spectrum`, for the live plot
 
 
-# Defaults are placeholders -- run calibrate.py before a real match and use the
-# whistle_config.json it writes instead of these. They're tuned for "a person
-# whistling into a laptop mic from a couple feet away in a normal room," not
-# for any specific whistler.
+# Bands are now fixed/hardcoded, not calibrated per-whistler -- these are meant
+# to be played from a precise external tone source (e.g. a phone tone-generator
+# app) rather than an actual human whistle, which is exactly what removes the
+# need for calibrate.py's per-user band-fitting: a tone app can hit 700Hz or
+# 4000Hz exactly and consistently, where a whistled pitch can't. calibrate.py
+# still exists and still works (e.g. for someone who'd rather actually whistle),
+# it's just no longer the primary/expected path -- whistle_config.json is a
+# plain hand-edited file now if you want to override these.
 DEFAULT_CONFIG = {
     "sample_rate": 44100,
     "block_size": 2048,            # ~46ms/block @ 44100Hz, ~21.5Hz frequency resolution
@@ -62,16 +66,26 @@ DEFAULT_CONFIG = {
                                     # very clean one -- at some cost of margin over noise)
     "noise_floor_rms": 0.01,       # calibrated ambient RMS floor; block RMS must also clear this
 
-    "stop_band": (600, 1000),      # Hz -- a low, comfortable whistle -> STOP
-    "turn_band": (1000, 2200),     # Hz -- mid whistle -> TURN, a linear gradient of pitch
-                                    # position within the band: the low edge is full left,
-                                    # the high edge is full right. A wide zone around the
-                                    # center (turn_deadzone_frac) counts as "straight" --
-                                    # not just one exact pitch, since whistling one precise
-                                    # frequency reliably is hard -- and gently creeps forward
-                                    # there instead of sitting still, so "going straight"
-                                    # doesn't require jumping all the way to forward_band.
-    "forward_band": (2200, 4000),  # Hz -- high whistle -> FORWARD, speed scales with pitch
+    "stop_band": (400, 650),       # Hz -- low tone (e.g. ~500Hz) -> STOP
+    "turn_band": (700, 4000),      # Hz -- mid tone -> TURN, a linear gradient of pitch
+                                    # position within the band: 700Hz is full left, 4000Hz is
+                                    # full right, the center (~2350Hz) is straight. A wide zone
+                                    # around that center (turn_deadzone_frac) counts as
+                                    # "straight" too, not just one exact pitch -- and gently
+                                    # creeps forward there instead of sitting still, so "going
+                                    # straight" doesn't require jumping all the way to
+                                    # forward_band. (The dead zone matters less with a precise
+                                    # tone source than it did for an actual whistle, but doesn't
+                                    # hurt to keep -- see turn_deadzone_frac.)
+    "forward_band": (4050, 4650),  # Hz -- high tone -> FORWARD, speed scales with pitch
+    # stop_band/forward_band deliberately leave a ~50Hz gap on either side of
+    # turn_band's exact 700/4000Hz edges rather than touching them -- with
+    # ~21.5Hz FFT bins at this block size, a tone dialed to exactly one of
+    # those shared boundary values can otherwise snap to either neighboring
+    # band unpredictably (verified: a 700Hz test tone classified as TURN, not
+    # STOP, purely from bin quantization). The gap is a silent "no whistle"
+    # zone instead -- safer than silently misclassifying a boundary tone as
+    # the wrong command.
 
     "min_forward_speed": 20,       # % speed at the bottom of forward_band, and while
                                     # straight/creeping in the turn band's deadzone
