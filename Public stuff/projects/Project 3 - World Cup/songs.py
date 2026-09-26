@@ -21,21 +21,33 @@ rest between notes; blocking=True makes each call wait for that blip to
 finish before the next one starts, which is what actually turns discrete
 beeps into a recognizable melody instead of them overlapping/racing.
 
-Computer side uses `winsound.Beep()` (Python stdlib, Windows-only -- fine
-here since this whole repo targets Windows, see CLAUDE.md's setup
-instructions). It takes an explicit duration in milliseconds and blocks the
-calling thread for that long, same blocking-in-sequence idea as the hub side.
+Computer side used to use `winsound.Beep()` (Python stdlib, Windows-only --
+fine here since this whole repo targets Windows, see CLAUDE.md's setup
+instructions), but `Beep()` has **no volume/amplitude parameter at all** --
+its loudness is whatever Windows' internal tone generator happens to use,
+not something callable code can turn up. To make the win/lose cue
+genuinely louder, this instead synthesizes each note as a plain sine wave
+at a controllable amplitude (`COMPUTER_VOLUME`, near full-scale) and plays
+it through `winsound.PlaySound(..., winsound.SND_MEMORY)` -- still stdlib,
+still Windows-only, but now the amplitude is ours to set. `PlaySound`
+without `SND_ASYNC` blocks until playback finishes, same blocking-in-
+sequence idea as the hub side's `beep(blocking=True)`.
 """
 
+import io
 import threading
 import time
+import wave
 import winsound
+
+import numpy as np
 
 import legoeducation as le
 
 REST_BETWEEN_NOTES_S = 0.05
 COMPUTER_NOTE_DURATION_MS = 180
-WINSOUND_MIN_HZ, WINSOUND_MAX_HZ = 37, 32767  # winsound.Beep's own valid range
+COMPUTER_SAMPLE_RATE = 44100
+COMPUTER_VOLUME = 0.95  # 0-1, near full-scale -- as loud as a single clean tone gets before clipping
 
 # Descending, off-key-ish -- meant to sound like a "whomp whomp" failure.
 DEATH_SONG = [523, 466, 415, 349, 311, 233]
@@ -57,20 +69,32 @@ def play_song(device, notes, rest_s=REST_BETWEEN_NOTES_S):
         time.sleep(rest_s)
 
 
-def play_computer_song(notes, duration_ms=COMPUTER_NOTE_DURATION_MS, rest_s=REST_BETWEEN_NOTES_S):
-    """Play `notes` through the computer's own speaker via winsound.Beep.
-    Frequencies outside winsound's valid range are skipped (clamped, not
-    silently distorted) rather than raising."""
+def _synthesize_tone_wav(frequency, duration_ms, sample_rate=COMPUTER_SAMPLE_RATE, amplitude=COMPUTER_VOLUME):
+    """A single-channel 16-bit PCM WAV, in memory, of one sine tone at a
+    controllable amplitude -- see the module docstring for why this replaced
+    winsound.Beep() (no volume control there at all)."""
+    n_samples = int(sample_rate * duration_ms / 1000)
+    t = np.arange(n_samples) / sample_rate
+    samples = (amplitude * np.sin(2 * np.pi * frequency * t) * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(samples.tobytes())
+    return buf.getvalue()
+
+
+def play_computer_song(notes, duration_ms=COMPUTER_NOTE_DURATION_MS, rest_s=REST_BETWEEN_NOTES_S,
+                        amplitude=COMPUTER_VOLUME):
+    """Play `notes` through the computer's own speaker, loud (see module
+    docstring) -- a synthesized sine tone per note via winsound.PlaySound."""
     for frequency in notes:
-        freq = int(round(frequency))
-        if not (WINSOUND_MIN_HZ <= freq <= WINSOUND_MAX_HZ):
-            print(f"[songs] Skipping computer note {freq}Hz -- outside winsound's "
-                  f"{WINSOUND_MIN_HZ}-{WINSOUND_MAX_HZ}Hz range.")
-            continue
         try:
-            winsound.Beep(freq, duration_ms)
+            wav_bytes = _synthesize_tone_wav(frequency, duration_ms, amplitude=amplitude)
+            winsound.PlaySound(wav_bytes, winsound.SND_MEMORY)
         except RuntimeError as e:
-            print(f"[songs] Skipping computer note {freq}Hz after an error: {e}")
+            print(f"[songs] Skipping computer note {frequency}Hz after an error: {e}")
         time.sleep(rest_s)
 
 

@@ -59,11 +59,24 @@ DEFAULT_CONFIG = {
     "stop_band": (600, 1000),      # Hz -- a low, comfortable whistle -> STOP
     "turn_band": (1000, 2200),     # Hz -- mid whistle -> TURN, a linear gradient of pitch
                                     # position within the band: the low edge is full left,
-                                    # the high edge is full right, the center is straight.
+                                    # the high edge is full right. A wide zone around the
+                                    # center (turn_deadzone_frac) counts as "straight" --
+                                    # not just one exact pitch, since whistling one precise
+                                    # frequency reliably is hard -- and gently creeps forward
+                                    # there instead of sitting still, so "going straight"
+                                    # doesn't require jumping all the way to forward_band.
     "forward_band": (2200, 4000),  # Hz -- high whistle -> FORWARD, speed scales with pitch
 
-    "min_forward_speed": 20,       # % speed at the bottom of forward_band
-    "max_speed": 55,               # % speed at the top of forward_band / max turn magnitude
+    "min_forward_speed": 20,       # % speed at the bottom of forward_band, and while
+                                    # straight/creeping in the turn band's deadzone
+    "max_speed": 55,               # % speed at the top of forward_band
+    "max_turn_speed": 25,          # % speed cap for turning -- deliberately much lower than
+                                    # max_speed so turns are gentle/controllable, not sharp
+    "turn_deadzone_frac": 0.35,    # fraction of each half of turn_band (from center outward)
+                                    # that counts as "straight" -- 0.35 means the middle 35%
+                                    # of the band is a dead zone, with the turn gradient
+                                    # ramping from 0 to max_turn_speed across the remaining
+                                    # 65%, split evenly left/right
     "ema_alpha": 0.3,              # frequency smoothing: higher = less smoothing, more responsive
 
     "silence_timeout_s": 0.4,      # no tonal block for this long -> start ramping to a stop
@@ -197,11 +210,21 @@ class WhistlePolicy:
         if has_whistle and band == "turn":
             self._ramp_start_time = None
             lo, hi = cfg["turn_band"]
-            # 0.0 at the band's low edge, 1.0 at its high edge, 0.5 (straight) at the
-            # center -- a direct gradient of pitch position, not a rate-of-change/slope.
-            frac = 0.5 if hi == lo else max(0.0, min(1.0, (freq - lo) / (hi - lo)))
-            turn = (frac - 0.5) * 2.0 * cfg["max_speed"]  # low edge -> -max_speed, high edge -> +max_speed
-            direction = "RIGHT" if turn > 0 else ("LEFT" if turn < 0 else "CENTER")
+            mid = (lo + hi) / 2.0
+            half_width = (hi - lo) / 2.0
+            deadzone_half = cfg["turn_deadzone_frac"] * half_width
+            offset = freq - mid  # signed distance from center: negative=low/left, positive=high/right
+
+            if half_width <= 0 or abs(offset) <= deadzone_half:
+                # Wide "straight" zone around the center, not a single exact pitch --
+                # creep forward gently rather than sit still, so this is a real
+                # "go straight" state, not just "don't turn."
+                return cfg["min_forward_speed"], 0.0, "STRAIGHT"
+
+            active_width = half_width - deadzone_half
+            magnitude = min(1.0, (abs(offset) - deadzone_half) / active_width)
+            turn = magnitude * cfg["max_turn_speed"] * (1.0 if offset > 0 else -1.0)
+            direction = "RIGHT" if turn > 0 else "LEFT"
             return 0.0, turn, f"TURN {direction} {abs(turn):.0f}%"
 
         # No usable tone this block -- see the README's "no whistle detected" answer.

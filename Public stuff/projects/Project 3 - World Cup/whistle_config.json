@@ -2,21 +2,23 @@
   "sample_rate": 44100,
   "block_size": 2048,
   "tonal_ratio_gate": 6.0,
-  "noise_floor_rms": 0.02241,
+  "noise_floor_rms": 0.06457,
   "stop_band": [
-    1031,
-    1331
+    842,
+    1142
   ],
   "turn_band": [
-    1331,
-    1957
+    1142,
+    1938
   ],
   "forward_band": [
-    1957,
-    2257
+    1938,
+    2238
   ],
   "min_forward_speed": 20,
   "max_speed": 55,
+  "max_turn_speed": 25,
+  "turn_deadzone_frac": 0.35,
   "ema_alpha": 0.3,
   "silence_timeout_s": 0.4,
   "ramp_time_s": 0.3,

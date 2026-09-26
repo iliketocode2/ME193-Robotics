@@ -47,6 +47,8 @@ from whistle_policy import DEFAULT_CONFIG, WhistlePolicy
 # not hardcoded here. See run_setup_dialog(). --------------------------------
 ROLE = None             # "ball" or "goalie"
 TEAM_NAME = None        # must be typed identically on a co-pilot's computer, if using one
+OPPONENT_TEAM_NAME = None  # the name their team enters as OWN TEAM_NAME on their computer;
+                            # blank = don't auto-react to anyone's fail/goal messages
 CONTROL_CHANNEL = None  # "drive" (connects to the robot) or "shield" (remote co-pilot, no hardware)
 CONTROL_TOPIC = None    # f"{MQTT_TOPIC}/control/{TEAM_NAME}" -- set once TEAM_NAME is known
 DEFAULT_TEAM_NAME = "Cucurella"  # just a prefill convenience for the dialog
@@ -211,8 +213,10 @@ def announce_result(song, message):
 
 def handle_caught():
     """This robot's own front sensor detected the opponent close up -- only
-    meaningful for the ball (see the README's proximity/fail rule)."""
-    _publish({"event": "fail", "team": ROLE})
+    meaningful for the ball (see the README's proximity/fail rule). Tags the
+    publish with this robot's own TEAM_NAME (not ROLE) so the opponent can
+    identify it by name -- see on_mqtt_message()."""
+    _publish({"event": "fail", "team": TEAM_NAME})
     with state_lock:
         shared["game_over_reason"] = "Caught! You failed."
     announce_result(DEATH_SONG, "Caught! You failed.")
@@ -220,8 +224,9 @@ def handle_caught():
 
 def handle_scored():
     """This robot's own whistle policy fired the goal gesture -- only
-    meaningful for the ball."""
-    _publish({"event": "goal", "team": ROLE})
+    meaningful for the ball. Tags the publish with this robot's own
+    TEAM_NAME (not ROLE) -- see handle_caught()'s comment."""
+    _publish({"event": "goal", "team": TEAM_NAME})
     with state_lock:
         shared["game_over_reason"] = "GOAL! You scored."
     announce_result(SUCCESS_SONG, "GOAL! You scored.")
@@ -244,22 +249,28 @@ def on_mqtt_message(topic, payload):
         return  # not "start" and not JSON -- ignore (e.g. unrelated traffic on a shared public broker)
 
     event, team = data.get("event"), data.get("team")
-    if team == ROLE:
+    if team == TEAM_NAME:
         return  # our own publish, echoed back by the broker -- already handled locally
+
+    if not OPPONENT_TEAM_NAME or team != OPPONENT_TEAM_NAME:
+        return  # not the team we're configured to react to -- e.g. a third team's traffic
 
     # Queue the result rather than calling announce_result() directly: this callback
     # runs on paho's own network thread, and announce_result() does a real BLE stop
     # plus a multi-second sequence of blocking beep() calls -- blocking paho's thread
     # for that long risks missing keepalives/other messages. The control loop thread
-    # picks this up within one CONTROL_LOOP_PERIOD_S tick.
-    if event == "fail" and team == "ball" and ROLE == "goalie":
-        print("[MQTT] Ball reported it failed.")
+    # picks this up within one CONTROL_LOOP_PERIOD_S tick. Symmetric and role-agnostic:
+    # whichever of us actually has a local trigger (today, only the ball's proximity
+    # sensor/goal whistle), the other one reacts oppositely just by being the
+    # configured opponent -- no hardcoded "ball"/"goalie" assumption needed here.
+    if event == "fail":
+        print(f"[MQTT] {OPPONENT_TEAM_NAME} reported it failed.")
         with state_lock:
-            shared["remote_result_pending"] = (SUCCESS_SONG, "The ball got caught -- goalie wins!")
-    elif event == "goal" and team == "ball" and ROLE == "goalie":
-        print("[MQTT] Ball reported a goal.")
+            shared["remote_result_pending"] = (SUCCESS_SONG, f"{OPPONENT_TEAM_NAME} got caught -- you win!")
+    elif event == "goal":
+        print(f"[MQTT] {OPPONENT_TEAM_NAME} reported a goal.")
         with state_lock:
-            shared["remote_result_pending"] = (DEATH_SONG, "The ball scored -- goalie loses!")
+            shared["remote_result_pending"] = (DEATH_SONG, f"{OPPONENT_TEAM_NAME} scored -- you lose!")
 
 
 def on_mqtt_message_readonly(topic, payload):
@@ -573,7 +584,9 @@ def run_live_plot(mode):
         else:
             color, label = "#555555", "WAITING FOR 'start'"
         ax_status.set_facecolor(color)
-        status_text.set_text(f"ROLE: {ROLE.upper()}   TEAM: {TEAM_NAME}   ●  {label}")
+        opponent_str = OPPONENT_TEAM_NAME or "none set"
+        status_text.set_text(
+            f"ROLE: {ROLE.upper()}   TEAM: {TEAM_NAME}   OPPONENT: {opponent_str}   ●  {label}")
 
         # waveform + spectrum
         wave_line.set_ydata(block)
@@ -637,11 +650,12 @@ def run_live_plot(mode):
 
 
 def run_setup_dialog():
-    """Collect role / control-channel / team name before anything else starts
-    (MQTT, BLE, audio) -- a small modal tkinter window, same pattern already
-    used in this repo for a startup prompt (mqtt_chat.py's username dialog).
-    Returns (role, channel, team_name). Closing the window (X) exits the
-    whole program instead of proceeding with nothing selected."""
+    """Collect role / control-channel / team name / opponent team name before
+    anything else starts (MQTT, BLE, audio) -- a small modal tkinter window,
+    same pattern already used in this repo for a startup prompt
+    (mqtt_chat.py's username dialog). Returns (role, channel, team_name,
+    opponent_team_name). Closing the window (X) exits the whole program
+    instead of proceeding with nothing selected."""
     result = {}
 
     root = tk.Tk()
@@ -651,6 +665,7 @@ def run_setup_dialog():
     role_var = tk.StringVar(value="ball")
     channel_var = tk.StringVar(value="drive")
     team_var = tk.StringVar(value=DEFAULT_TEAM_NAME)
+    opponent_var = tk.StringVar(value="")
 
     pad = {"padx": 16, "pady": (10, 2)}
 
@@ -669,20 +684,31 @@ def run_setup_dialog():
     team_entry = tk.Entry(root, textvariable=team_var, width=30)
     team_entry.grid(row=7, column=0, sticky="w", padx=32)
 
+    tk.Label(root, text="Opponent's team name (optional -- the name THEY enter above on"
+                        "\ntheir own computer; leave blank to skip auto win/lose reactions)",
+             font=("Segoe UI", 10, "bold"), justify="left").grid(row=8, column=0, sticky="w", **pad)
+    opponent_entry = tk.Entry(root, textvariable=opponent_var, width=30)
+    opponent_entry.grid(row=9, column=0, sticky="w", padx=32)
+
     error_label = tk.Label(root, text="", fg="red")
-    error_label.grid(row=8, column=0, sticky="w", padx=32)
+    error_label.grid(row=10, column=0, sticky="w", padx=32)
 
     def on_start():
         team = team_var.get().strip()
         if not team:
             error_label.config(text="Team name can't be empty.")
             return
+        opponent = opponent_var.get().strip()
+        if opponent and opponent == team:
+            error_label.config(text="Opponent's team name can't be the same as your own.")
+            return
         result["role"] = role_var.get()
         result["channel"] = channel_var.get()
         result["team_name"] = team
+        result["opponent_team_name"] = opponent  # "" means "don't auto-react"
         root.destroy()
 
-    tk.Button(root, text="Start", command=on_start, width=14).grid(row=9, column=0, pady=14)
+    tk.Button(root, text="Start", command=on_start, width=14).grid(row=11, column=0, pady=14)
 
     def on_close():
         root.destroy()  # result stays empty -- checked below
@@ -695,7 +721,7 @@ def run_setup_dialog():
         print("Setup cancelled -- exiting.")
         sys.exit(0)
 
-    return result["role"], result["channel"], result["team_name"]
+    return result["role"], result["channel"], result["team_name"], result["opponent_team_name"]
 
 
 def _run_as_drive_operator():
@@ -816,12 +842,13 @@ def _run_as_copilot():
 
 
 def main():
-    global ROLE, TEAM_NAME, CONTROL_CHANNEL, CONTROL_TOPIC
+    global ROLE, TEAM_NAME, OPPONENT_TEAM_NAME, CONTROL_CHANNEL, CONTROL_TOPIC
 
-    ROLE, CONTROL_CHANNEL, TEAM_NAME = run_setup_dialog()
+    ROLE, CONTROL_CHANNEL, TEAM_NAME, OPPONENT_TEAM_NAME = run_setup_dialog()
     CONTROL_TOPIC = f"{MQTT_TOPIC}/control/{TEAM_NAME}"
 
-    print(f"Role: {ROLE}   Channel: {CONTROL_CHANNEL}   Team: {TEAM_NAME}")
+    print(f"Role: {ROLE}   Channel: {CONTROL_CHANNEL}   Team: {TEAM_NAME}   "
+          f"Opponent: {OPPONENT_TEAM_NAME or '(none set -- no auto win/lose reactions)'}")
     print(f"MQTT game topic: {MQTT_TOPIC}   Control topic: {CONTROL_TOPIC}")
 
     if CONTROL_CHANNEL == "drive":

@@ -55,21 +55,27 @@ Every command below runs through `my_env_audio`, **not** `my_env`.
   assignment's "use PyAudio" requirement).
 - **`songs.py`** — `DEATH_SONG` / `SUCCESS_SONG` note lists, and `play_both()`,
   which plays them on **two** outputs at once: the LEGO hub's own speaker
-  (`play_song()`, via `beep()`) and the computer's speaker (`play_computer_song()`,
-  via stdlib `winsound.Beep()`) on a background thread, so the cue is audible
+  (`play_song()`, via `beep()`) and the computer's speaker
+  (`play_computer_song()`) on a background thread, so the cue is audible
   even if you're not standing right next to the hub's small buzzer, and so a
   working computer speaker confirms the trigger fired independent of any
-  hub/BLE audio issue.
+  hub/BLE audio issue. The computer side synthesizes each note as a sine
+  wave at a controllable amplitude and plays it via stdlib
+  `winsound.PlaySound(..., SND_MEMORY)`, rather than `winsound.Beep()` —
+  `Beep()` has no volume parameter at all, so it can't be made louder;
+  synthesizing the tone ourselves means we set the amplitude directly
+  (`COMPUTER_VOLUME`, near full-scale by default).
 - **`calibrate.py`** — guided calibration: measures room noise, then your
   lowest and highest comfortable whistle notes, and writes
   `whistle_config.json`.
 - **`world_cup.py`** — the match script. Opens a small setup dialog first
-  (game role, "drive" vs. "shield co-pilot", team name), then either: runs
-  the full flow (connects the Double Motor, Single Motor, Color Sensor;
-  subscribes to `ME193/Rogers` + the team's control topic; drives; handles
-  the fail/goal MQTT protocol and songs) if you picked **drive**, or a much
-  lighter no-hardware flow that just whistles a shield toggle to the drive
-  computer if you picked **shield co-pilot**. Both modes show the live
+  (game role, "drive" vs. "shield co-pilot", your team name, and optionally
+  your opponent's team name), then either: runs the full flow (connects the
+  Double Motor, Single Motor, Color Sensor; subscribes to `ME193/Rogers` +
+  the team's control topic; drives; handles the fail/goal MQTT protocol and
+  songs) if you picked **drive**, or a much lighter no-hardware flow that
+  continuously relays a shield-position gradient to the drive computer if
+  you picked **shield co-pilot**. Both modes show the live
   waveform/spectrum/decision dashboard.
 
 ## Run order
@@ -132,16 +138,21 @@ guess):
 - **FORWARD band** (your highest comfortable whistle ± 150 Hz) → drive
   forward, speed scaling linearly from 20% to 55% across the band (kept
   deliberately gentle — see "motor speed" below).
-- **TURN band** (everything in between) → turn only, no forward motion, as
-  a **gradient of pitch position within the band**: the low edge of the
-  band is full left, the high edge is full right, the exact center is
-  straight, and everywhere in between scales linearly. So a steady whistle
-  a little above the stop band turns gently left, and a steady whistle a
-  little below the forward band turns sharply right — the turn amount
-  tracks *where* you're whistling, not how you got there (earlier versions
-  of this policy used the pitch's *slope*/rate of change instead, which
-  meant you had to actively slide your pitch to keep turning; a straight
-  gradient is easier to hold a specific turn amount with).
+- **TURN band** (everything in between) → a **gradient of pitch position
+  within the band**, capped at a much lower speed than driving straight
+  (`max_turn_speed`, 25% by default vs. `max_speed`'s 55%, so turning is
+  always gentle/controllable, never sharp). The turn amount tracks *where*
+  you're whistling, not how you got there (earlier versions of this policy
+  used the pitch's *slope*/rate of change instead, which meant you had to
+  actively slide your pitch to keep turning; a straight gradient is easier
+  to hold a specific turn amount with). A wide zone around the exact center
+  (`turn_deadzone_frac`, the middle 35% of the band by default) all reads as
+  **straight** — not one exact pitch, since reliably whistling one precise
+  frequency is hard — and creeps forward gently there (at `min_forward_speed`)
+  rather than sitting still, so "go straight" doesn't require jumping all
+  the way to the forward band. Outside the deadzone, the turn gradient ramps
+  linearly from 0 up to `max_turn_speed` across the remaining band, in each
+  direction.
 
 On top of that continuous mapping, a **rhythmic** gesture is recognized
 from sequences of short (<0.4s) tonal pulses in the forward band, so the
@@ -156,6 +167,10 @@ The shield (Single Motor) uses the identical gradient idea, just from a
 own turn-band gradient continuously sets the shield's position (their
 lowest-band pitch retracts it, their highest-band pitch fully deploys it)
 instead of driving the car, relayed over MQTT rather than computed locally.
+Since it's the exact same underlying value, the shield also inherits the
+deadzone (holding at its mid-swing position while the co-pilot whistles
+near the center of their turn band) and the lower `max_turn_speed`-scaled
+range, rather than a separate tuning.
 
 ### What does your code do if no whistle is detected?
 
@@ -204,23 +219,39 @@ actively wrong here).
   whether whistle commands actually drive the motors; before it arrives,
   the live plot still runs (so you can see your whistle being decoded) but
   the car doesn't move.
-- **`{"event": "fail", "team": "ball"}`** — published by the ball itself
-  the moment its front sensor detects the opponent within
+- **`{"event": "fail", "team": "<your TEAM_NAME>"}`** — published by the
+  ball itself the moment its front sensor detects the opponent within
   `PROXIMITY_REFLECTION_THRESHOLD`. The ball stops and plays `DEATH_SONG`
-  locally; the goalie, on receiving this, plays `SUCCESS_SONG`.
-- **`{"event": "goal", "team": "ball"}`** — published by the ball the
-  moment its whistle policy fires the 3-pulse goal gesture. The ball plays
-  `SUCCESS_SONG` locally; the goalie, on receiving this, plays
-  `DEATH_SONG`.
-- Messages whose `"team"` matches your own `ROLE` are ignored — the public
-  broker echoes every publish back to the publisher too (see
-  `MQTTLIB.md`/`mqtt_chat.py`), so without this filter a robot would
-  re-trigger its own event from its own echo.
+  locally, and publishes this so its **opponent** (whoever entered this
+  ball's `TEAM_NAME` as their own **Opponent's team name** in the setup
+  dialog) plays `SUCCESS_SONG` on receiving it.
+- **`{"event": "goal", "team": "<your TEAM_NAME>"}`** — published by the
+  ball the moment its whistle policy fires the 3-pulse goal gesture. The
+  ball plays `SUCCESS_SONG` locally, and publishes this so its **opponent**
+  plays `DEATH_SONG` on receiving it.
+- The `"team"` field is your own `TEAM_NAME` (the name typed into the setup
+  dialog), **not** `ROLE` — that's what makes "subscribe to another team's
+  messages" possible: enter your opponent's `TEAM_NAME` as your own
+  **Opponent's team name** in the dialog, and `on_mqtt_message()` reacts the
+  *opposite* way to anything tagged with that name (their goal is your
+  loss, their fail is your win), regardless of which of you is "ball" or
+  "goalie." A message is ignored if it's tagged with your own `TEAM_NAME`
+  (the public broker echoes every publish back to the publisher too — see
+  `MQTTLIB.md`/`mqtt_chat.py` — so without this filter a robot would
+  re-trigger its own event from its own echo) or with any team name other
+  than the one you configured as your opponent.
+- **This is not redundant with the local whistle→publish flow above** even
+  though both eventually cause a song to play: the local flow is how *you*
+  report *your own* outcome (required by the assignment — "publish an MQTT
+  message that you failed"); the opponent-name reaction is how you find out
+  about *theirs*. They're the two complementary halves of the same
+  handshake, not two ways of doing the same thing.
 
-**This schema must be agreed with the opponent team before the match** —
-the assignment explicitly requires this, and nothing here enforces it
-automatically. If the opponent's script uses different field names or
-values, neither side's fail/goal reactions will fire.
+**Both your own `TEAM_NAME` and your opponent's must be agreed before the
+match** — the assignment explicitly requires this, and nothing here
+enforces it automatically. If you don't set an opponent name, this robot
+simply never auto-reacts to anyone else's fail/goal messages (the dashboard
+status bar shows "OPPONENT: none set" as a reminder).
 
 ## Two-computer setup
 
