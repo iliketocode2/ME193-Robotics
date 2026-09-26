@@ -21,21 +21,32 @@ rest between notes; blocking=True makes each call wait for that blip to
 finish before the next one starts, which is what actually turns discrete
 beeps into a recognizable melody instead of them overlapping/racing.
 
-Computer side uses `winsound.Beep()` (Python stdlib, Windows-only -- fine
-here since this whole repo targets Windows, see CLAUDE.md's setup
-instructions). It takes an explicit duration in milliseconds and blocks the
-calling thread for that long, same blocking-in-sequence idea as the hub side.
+Computer side uses `winsound.Beep()` on Windows (Python stdlib, Windows-only).
+It takes an explicit duration in milliseconds and blocks the calling thread
+for that long, same blocking-in-sequence idea as the hub side. On macOS/Linux,
+where winsound doesn't exist, each note is instead generated as a sine wave
+with numpy and played through a blocking PyAudio output stream (both already
+dependencies of this project) -- same notes, same duration, same rests.
 """
 
+import sys
 import threading
 import time
-import winsound
 
 import legoeducation as le
+
+if sys.platform == "win32":
+    import winsound
+else:
+    import numpy as np
+    import pyaudio
 
 REST_BETWEEN_NOTES_S = 0.05
 COMPUTER_NOTE_DURATION_MS = 180
 WINSOUND_MIN_HZ, WINSOUND_MAX_HZ = 37, 32767  # winsound.Beep's own valid range
+TONE_SAMPLE_RATE = 44100  # non-Windows fallback: output sample rate
+TONE_VOLUME = 0.3         # non-Windows fallback: 0.0-1.0 sine amplitude
+TONE_FADE_S = 0.005       # non-Windows fallback: fade in/out so notes don't click
 
 # Descending, off-key-ish -- meant to sound like a "whomp whomp" failure.
 DEATH_SONG = [523, 466, 415, 349, 311, 233]
@@ -57,10 +68,58 @@ def play_song(device, notes, rest_s=REST_BETWEEN_NOTES_S):
         time.sleep(rest_s)
 
 
+def _tone(frequency, duration_ms):
+    """One note as float32 samples: a sine wave with a short linear fade at
+    each end (an abrupt start/stop is audible as a click)."""
+    n = int(TONE_SAMPLE_RATE * duration_ms / 1000)
+    t = np.arange(n) / TONE_SAMPLE_RATE
+    wave = TONE_VOLUME * np.sin(2 * np.pi * frequency * t)
+    fade = min(int(TONE_SAMPLE_RATE * TONE_FADE_S), n // 2)
+    if fade:
+        ramp = np.linspace(0.0, 1.0, fade)
+        wave[:fade] *= ramp
+        wave[-fade:] *= ramp[::-1]
+    return wave.astype(np.float32)
+
+
+def _play_computer_song_pyaudio(notes, duration_ms, rest_s):
+    """Non-Windows version of play_computer_song(): writes each note to a
+    blocking PyAudio output stream, so each write waits for the note to
+    finish, like winsound.Beep. Uses its own PyAudio instance, separate from
+    world_cup.py's microphone stream."""
+    pa = pyaudio.PyAudio()
+    try:
+        stream = pa.open(format=pyaudio.paFloat32, channels=1, rate=TONE_SAMPLE_RATE, output=True)
+    except Exception as e:
+        print(f"[songs] Couldn't open the computer speaker, skipping computer song: {e}")
+        pa.terminate()
+        return
+    try:
+        for frequency in notes:
+            freq = int(round(frequency))
+            if not (WINSOUND_MIN_HZ <= freq <= TONE_SAMPLE_RATE // 2):
+                print(f"[songs] Skipping computer note {freq}Hz -- outside the playable "
+                      f"{WINSOUND_MIN_HZ}-{TONE_SAMPLE_RATE // 2}Hz range.")
+                continue
+            try:
+                stream.write(_tone(freq, duration_ms).tobytes())
+            except Exception as e:
+                print(f"[songs] Skipping computer note {freq}Hz after an error: {e}")
+            time.sleep(rest_s)
+    finally:
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
+
+
 def play_computer_song(notes, duration_ms=COMPUTER_NOTE_DURATION_MS, rest_s=REST_BETWEEN_NOTES_S):
-    """Play `notes` through the computer's own speaker via winsound.Beep.
+    """Play `notes` through the computer's own speaker: winsound.Beep on
+    Windows, a generated sine tone through PyAudio everywhere else.
     Frequencies outside winsound's valid range are skipped (clamped, not
     silently distorted) rather than raising."""
+    if sys.platform != "win32":
+        _play_computer_song_pyaudio(notes, duration_ms, rest_s)
+        return
     for frequency in notes:
         freq = int(round(frequency))
         if not (WINSOUND_MIN_HZ <= freq <= WINSOUND_MAX_HZ):
