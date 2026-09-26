@@ -196,8 +196,16 @@ Three layers, from cheapest to most targeted:
    footsteps, motor whir, and ambient room noise are broadband. Comparing
    the FFT peak's magnitude to the spectrum's *mean* magnitude
    (peak/mean) separates the two cleanly — empirically, white noise at
-   this block size tops out around a ratio of ~4, while a clean tone hits
-   ~450, so the default gate (6.0) has a wide margin on both sides.
+   this block size tops out around a ratio of ~3.9, while a clean tone
+   hits ~450 *regardless of its volume* (peak and mean scale together for a
+   noise-free tone). The default gate is `4.5` — low enough to still catch
+   a *quiet* whistle (whose ratio drifts down toward the noise ceiling as
+   real ambient noise becomes relatively more prominent at low volume, even
+   though a noise-free tone's ratio wouldn't budge), while staying clearly
+   above where pure noise tops out. This is a genuine trade-off, not a free
+   improvement: a lower gate is more permissive of quiet whistles and
+   modestly more permissive of loud ambient noise being mistaken for one —
+   raise it back toward 6+ if a noisy room starts producing false triggers.
 2. **Calibrated ambient RMS floor.** `calibrate.py` records a few seconds
    of silence and sets the floor to 2× the loudest ambient block observed,
    so a block also has to actually be *loud enough*, not just tonal —

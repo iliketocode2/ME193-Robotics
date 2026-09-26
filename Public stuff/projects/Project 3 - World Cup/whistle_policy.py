@@ -52,8 +52,14 @@ DEFAULT_CONFIG = {
 
     # A block only counts as "a whistle" if BOTH gates pass -- see whistle_policy's
     # module docstring / the project README's noise-masking answer.
-    "tonal_ratio_gate": 6.0,       # peak/mean spectral magnitude (empirically: white noise
-                                    # tops out ~4 at this block size, a clean tone hits ~450)
+    "tonal_ratio_gate": 4.5,       # peak/mean spectral magnitude (empirically: white noise
+                                    # tops out ~3.9 at this block size, a clean tone hits ~450
+                                    # regardless of volume -- but a *quiet* whistle sitting on
+                                    # top of real ambient noise drifts down toward that ~3.9
+                                    # ceiling as it gets quieter, so this is lower than a naive
+                                    # noise-vs-clean-tone comparison alone would suggest, to let
+                                    # a quiet-but-real whistle register instead of only a loud,
+                                    # very clean one -- at some cost of margin over noise)
     "noise_floor_rms": 0.01,       # calibrated ambient RMS floor; block RMS must also clear this
 
     "stop_band": (600, 1000),      # Hz -- a low, comfortable whistle -> STOP
