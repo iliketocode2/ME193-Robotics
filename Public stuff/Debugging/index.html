@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ME193 - MQTT Debugger</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  :root {
+    --bg: #d9c3a4;
+    --panel: #e8d5b8;
+    --field: #f3e6d0;
+    --border: #b99f7a;
+    --text: #3b2c1e;
+    --muted: #7a6650;
+    --accent: #a8622e;
+    --ok: #3f8c5c;
+    --bad: #c14b3a;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--accent);
+    color: #fff;
+    margin: -16px -16px 16px;
+    padding: 18px 24px;
+    border-radius: 0 0 14px 14px;
+  }
+  .logo-frame {
+    flex-shrink: 0;
+    background: #fff;
+    padding: 4px;
+    border-radius: 10px;
+    line-height: 0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  }
+  .logo-frame img { display: block; height: 56px; width: auto; border-radius: 6px; }
+  .topbar-title {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .topbar-title .school { opacity: 0.85; font-weight: 600; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  @media (min-width: 900px) {
+    .grid { grid-template-columns: 360px 1fr; align-items: start; }
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .panel + .panel { margin-top: 16px; }
+  .panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin: 10px 0 4px;
+  }
+  label:first-of-type { margin-top: 0; }
+  input[type=text], input[type=number], select, textarea {
+    width: 100%;
+    background: var(--field);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 7px 9px;
+    font: 13px/1.4 var(--mono);
+  }
+  textarea { resize: vertical; min-height: 54px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  .row.tight { gap: 6px; }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.secondary { background: var(--border); color: var(--text); }
+  button.danger { background: var(--bad); }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--bad);
+    flex-shrink: 0;
+  }
+  .dot.connected { background: var(--ok); }
+  .dot.connecting { background: #e6b422; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--field); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 6px 4px 10px;
+    font: 12px var(--mono); color: var(--text);
+  }
+  .chip button {
+    background: transparent; color: var(--muted);
+    padding: 0 6px; font-size: 14px; line-height: 1; font-weight: 400;
+  }
+  .chip button:hover { color: var(--bad); }
+  .log {
+    background: var(--field);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    height: 480px;
+    overflow-y: auto;
+    padding: 8px;
+    font: 12px/1.5 var(--mono);
+  }
+  .log-entry {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log-entry:last-child { border-bottom: none; }
+  .log-entry .meta {
+    color: var(--muted);
+    display: flex;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .log-entry .topic { color: var(--accent); font-weight: 600; }
+  .log-empty { color: var(--muted); padding: 8px; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .toolbar h2 { margin: 0; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <span class="logo-frame">
+    <img src="jumbo_mascot.png" alt="Jumbo the Tufts elephant mascot holding a robot">
+  </span>
+  <div class="topbar-title"><span class="school">ME193</span> &ndash; MQTT Debugger</div>
+</header>
+<p class="sub">Subscribe and publish to any topic on a public MQTT broker, straight from the browser (via MQTT-over-WebSockets). Defaults are set to read the minifig-tracking camera feed from <code>ClassTest/GreenMinifig_yolo/stream_minifig_mqtt.py</code>.</p>
+
+<div class="grid">
+  <div>
+    <div class="panel">
+      <h2>Broker</h2>
+      <label for="host">Host</label>
+      <input type="text" id="host" value="test.mosquitto.org">
+
+      <div class="row">
+        <div>
+          <label for="port">WebSocket port</label>
+          <input type="number" id="port" value="8081">
+        </div>
+        <div>
+          <label for="secure">Connection</label>
+          <select id="secure">
+            <option value="wss" selected>Secure (wss)</option>
+            <option value="ws">Insecure (ws)</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint">test.mosquitto.org serves WebSockets on 8080 (ws) / 8081 (wss).</p>
+
+      <label for="clientId">Client ID</label>
+      <input type="text" id="clientId">
+
+      <div class="row" style="margin-top: 12px;">
+        <button id="connectBtn">Connect</button>
+        <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+      </div>
+      <div class="status">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Subscribe</h2>
+      <label for="subTopic">Topic</label>
+      <div class="row tight">
+        <input type="text" id="subTopic" value="ME193/minifig">
+        <button id="subBtn" style="flex: 0 0 auto;" disabled>Subscribe</button>
+      </div>
+      <div class="chips" id="subChips"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Publish</h2>
+      <label for="pubTopic">Topic</label>
+      <input type="text" id="pubTopic" value="ME193/minifig">
+      <label for="pubMsg">Message</label>
+      <textarea id="pubMsg">{"x": 320, "y": 240, "w": 640, "h": 480, "bw": 40, "bh": 90}</textarea>
+      <div class="row">
+        <div>
+          <label for="pubQos">QoS</label>
+          <select id="pubQos">
+            <option value="0" selected>0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+          </select>
+        </div>
+        <div style="display: flex; align-items: flex-end; padding-bottom: 8px;">
+          <label style="display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text); font-size: 13px;">
+            <input type="checkbox" id="pubRetain" style="width: auto;"> Retain
+          </label>
+        </div>
+      </div>
+      <button id="pubBtn" style="margin-top: 10px; width: 100%;" disabled>Publish</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="toolbar">
+      <h2>Messages</h2>
+      <div class="row tight" style="flex: 0 0 auto;">
+        <label style="display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 12px;">
+          <input type="checkbox" id="autoscroll" checked style="width: auto;"> autoscroll
+        </label>
+        <button id="clearBtn" class="secondary">Clear</button>
+      </div>
+    </div>
+    <div class="log" id="log">
+      <div class="log-empty">No messages yet. Connect and subscribe to a topic to see traffic here.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let client = null;
+const subscriptions = new Set();
+
+const el = (id) => document.getElementById(id);
+const statusDot = el("statusDot");
+const statusText = el("statusText");
+const connectBtn = el("connectBtn");
+const disconnectBtn = el("disconnectBtn");
+const subBtn = el("subBtn");
+const pubBtn = el("pubBtn");
+const logEl = el("log");
+const subChips = el("subChips");
+
+el("clientId").value = "webconsole-" + Math.random().toString(16).slice(2, 10);
+
+function setStatus(state, text) {
+  statusDot.className = "dot" + (state ? " " + state : "");
+  statusText.textContent = text;
+}
+
+function setConnected(isConnected) {
+  connectBtn.disabled = isConnected;
+  disconnectBtn.disabled = !isConnected;
+  subBtn.disabled = !isConnected;
+  pubBtn.disabled = !isConnected;
+  el("host").disabled = isConnected;
+  el("port").disabled = isConnected;
+  el("secure").disabled = isConnected;
+  el("clientId").disabled = isConnected;
+}
+
+function renderChips() {
+  subChips.innerHTML = "";
+  if (subscriptions.size === 0) {
+    subChips.innerHTML = '<span class="hint">Not subscribed to anything yet.</span>';
+    return;
+  }
+  for (const topic of subscriptions) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.innerHTML = `<span>${escapeHtml(topic)}</span>`;
+    const unsub = document.createElement("button");
+    unsub.textContent = "×";
+    unsub.title = "Unsubscribe";
+    unsub.onclick = () => {
+      if (client && client.connected) client.unsubscribe(topic);
+      subscriptions.delete(topic);
+      renderChips();
+    };
+    chip.appendChild(unsub);
+    subChips.appendChild(chip);
+  }
+}
+renderChips();
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function formatPayload(raw) {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+function logMessage(topic, payload) {
+  const empty = logEl.querySelector(".log-empty");
+  if (empty) empty.remove();
+
+  const entry = document.createElement("div");
+  entry.className = "log-entry";
+  const time = new Date().toLocaleTimeString();
+  entry.innerHTML =
+    `<div class="meta"><span>${time}</span><span class="topic">${escapeHtml(topic)}</span></div>` +
+    `<div>${escapeHtml(formatPayload(payload))}</div>`;
+  logEl.appendChild(entry);
+
+  // Cap log length so the page doesn't grow unbounded on a fast feed.
+  while (logEl.children.length > 500) {
+    logEl.removeChild(logEl.firstChild);
+  }
+
+  if (el("autoscroll").checked) {
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+}
+
+el("clearBtn").onclick = () => {
+  logEl.innerHTML = '<div class="log-empty">No messages yet.</div>';
+};
+
+connectBtn.onclick = () => {
+  const host = el("host").value.trim();
+  const port = el("port").value.trim();
+  const protocol = el("secure").value;
+  const clientId = el("clientId").value.trim();
+  const url = `${protocol}://${host}:${port}/mqtt`;
+
+  setStatus("connecting", `Connecting to ${url}...`);
+  client = mqtt.connect(url, { clientId, reconnectPeriod: 2000 });
+
+  client.on("connect", () => {
+    setStatus("connected", `Connected to ${host}:${port}`);
+    setConnected(true);
+    // Re-subscribe to anything left over from a previous connection.
+    for (const topic of subscriptions) client.subscribe(topic);
+  });
+
+  client.on("reconnect", () => setStatus("connecting", "Reconnecting..."));
+
+  client.on("close", () => {
+    setStatus("", "Disconnected");
+    setConnected(false);
+  });
+
+  client.on("error", (err) => {
+    setStatus("", "Error: " + err.message);
+    console.error(err);
+  });
+
+  client.on("message", (topic, payload) => {
+    logMessage(topic, payload.toString());
+  });
+};
+
+disconnectBtn.onclick = () => {
+  if (client) client.end(true);
+  setStatus("", "Disconnected");
+  setConnected(false);
+};
+
+subBtn.onclick = () => {
+  const topic = el("subTopic").value.trim();
+  if (!topic || !client || !client.connected) return;
+  client.subscribe(topic, (err) => {
+    if (err) { alert("Subscribe failed: " + err.message); return; }
+    subscriptions.add(topic);
+    renderChips();
+  });
+};
+
+pubBtn.onclick = () => {
+  const topic = el("pubTopic").value.trim();
+  const message = el("pubMsg").value;
+  const qos = parseInt(el("pubQos").value, 10);
+  const retain = el("pubRetain").checked;
+  if (!topic || !client || !client.connected) return;
+  client.publish(topic, message, { qos, retain });
+};
+</script>
+
+</body>
+</html>

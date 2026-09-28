@@ -18,3 +18,6 @@ subset of the class repo that's meant to be shared.
 - [virtualTesting/](virtualTesting/) — run `setup_test_env.py` to spin up a
   disposable virtual environment with `legoeducation` installed and drop
   into a `python3` REPL, no manual venv setup required.
+- [Debugging/](Debugging/) — a single-page MQTT console: subscribe to and
+  publish on any topic, on any broker, from the browser. Open `index.html`
+  directly, no install needed.
