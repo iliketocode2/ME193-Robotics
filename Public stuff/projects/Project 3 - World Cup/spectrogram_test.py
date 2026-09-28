@@ -30,8 +30,8 @@ import pyaudio
 from matplotlib.animation import FuncAnimation
 
 from pyaudio_mic import pick_mic
-from tone_policy import (BAND_HALF_WIDTH_HZ, BLOCK_SIZE, DRIVE_TONES, SAMPLE_RATE,
-                         SHIELD_TONES, TONAL_RATIO_GATE, ToneDetector)
+from tone_policy import (BLOCK_SIZE, DRIVE_TONES, SAMPLE_RATE, SHIELD_TONES, TONAL_RATIO_GATE,
+                         ToneDetector, band_half_width)
 
 MAX_DISPLAY_HZ = 6500
 HISTORY_COLUMNS = 200  # ~9s of scrollback at ~46ms/block
@@ -65,7 +65,8 @@ def audio_callback(in_data, frame_count, time_info, status):
 
 def _shade_bands(ax, tones, color):
     for name, f in tones.items():
-        ax.axhspan(f - BAND_HALF_WIDTH_HZ, f + BAND_HALF_WIDTH_HZ, color=color, alpha=0.15)
+        hw = band_half_width(name)
+        ax.axhspan(f - hw, f + hw, color=color, alpha=0.15)
         ax.text(0.05, f, f"{name} {f}", color=color, fontsize=8, va="center")
 
 

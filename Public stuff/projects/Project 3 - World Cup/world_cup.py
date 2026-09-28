@@ -43,8 +43,8 @@ from mqttlib import MQTTClient  # noqa: E402
 
 from pyaudio_mic import pick_mic
 from songs import DEATH_SONG, SUCCESS_SONG, play_both
-from tone_policy import (BAND_HALF_WIDTH_HZ, BLOCK_SIZE, DRIVE_TONES, HOLD_S, SAMPLE_RATE,
-                         SHIELD_TONES, TONAL_RATIO_GATE, ToneDetector)
+from tone_policy import (BLOCK_SIZE, DRIVE_TONES, SAMPLE_RATE, SHIELD_TONES, TONAL_RATIO_GATE,
+                         ToneDetector, band_half_width)
 
 # --- Match-day settings -- chosen in the setup dialog (run_setup_dialog()) ---
 ROLE = None                # "ball" or "goalie"
@@ -87,8 +87,9 @@ MQTT_TOPIC = "ME193/Rogers"
 CONTROL_LOOP_PERIOD_S = 0.05
 # If the mic stops delivering audio (device unplugged, laptop asleep, a
 # crash in the callback), treat the last reading as "no tone" after this
-# long, so the car can't keep driving on a frozen "forward".
-STALE_READING_S = HOLD_S + 0.2
+# long, so the car can't keep driving on a frozen "forward". Readings
+# normally arrive every ~46ms; this allows for a few late ones.
+STALE_READING_S = 0.25
 
 # Wheel speeds (left, right) for each drive command, before INVERT_* flags.
 # None = no tone = stop. "goal" also holds still while it's being held.
@@ -380,11 +381,13 @@ def run_dashboard(mode):
     ax_spec.set_title("Spectrum -- bright bands are this computer's commands, grey is the other computer's",
                       fontsize=10)
     for name, f in own_tones.items():
-        ax_spec.axvspan(f - BAND_HALF_WIDTH_HZ, f + BAND_HALF_WIDTH_HZ, color="#4dff88", alpha=0.25)
+        hw = band_half_width(name)
+        ax_spec.axvspan(f - hw, f + hw, color="#4dff88", alpha=0.25)
         ax_spec.text(f, 1.01, f"{name}\n{f}", ha="center", va="bottom", fontsize=8,
                      transform=ax_spec.get_xaxis_transform())
-    for f in other_tones.values():
-        ax_spec.axvspan(f - BAND_HALF_WIDTH_HZ, f + BAND_HALF_WIDTH_HZ, color="#888888", alpha=0.15)
+    for name, f in other_tones.items():
+        hw = band_half_width(name)
+        ax_spec.axvspan(f - hw, f + hw, color="#888888", alpha=0.15)
 
     ax_info.axis("off")
     info_text = ax_info.text(0.0, 1.0, "", fontsize=11, va="top", family="monospace",

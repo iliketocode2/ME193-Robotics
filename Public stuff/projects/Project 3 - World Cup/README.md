@@ -20,12 +20,14 @@ Two computers, two phones:
 | Drive | **1000 Hz** | forward |
 | Drive | **1250 Hz** | turn left (in place) |
 | Drive | **1500 Hz** | turn right (in place) |
-| Drive | **1750 Hz** | hold ≥ 0.5 s → "goal" (ball only) |
-| Drive | *no tone* | stop |
+| Drive | **2300 Hz** (anything 2150–2450 counts) | hold ≥ 0.5 s → "goal" (ball only) |
+| Drive | *no tone, or out of range* | stop immediately |
 | Shield | **4250 Hz** | shield up |
 | Shield | **5600 Hz** | shield down (stays where it was last put) |
 
-A tone counts if it's within ±100 Hz of these, so play the exact number.
+A tone counts if it's within ±60 Hz of these (±150 Hz for "goal"), so play
+the exact number. The goal range can't get any wider: 2000 Hz (2× forward)
+and 2500 Hz (2× left) sit just outside it.
 The shield tones are all higher than the drive tones, and each computer
 only listens for its own tones, so the two phones can play at the same
 time without either computer reacting to the other one. The frequencies
@@ -33,7 +35,7 @@ were also picked so that no 2nd/3rd/4th harmonic of a drive tone lands
 within 200 Hz of any command. A loud phone speaker distorts a little, and
 without this spacing it could, for example, trigger "goal" or the shield.
 
-Frequencies, the ±100 Hz width, and the noise gate live at the top of
+Frequencies, the band widths, and the noise gate live at the top of
 `tone_policy.py`. Speeds, shield swing, and goal-hold time live at the top
 of `world_cup.py`.
 
@@ -104,18 +106,23 @@ room too loud — move the phone closer to the mic or turn it up.
 
 ### Describe the policy — how does it make decisions?
 
-Every ~46 ms audio block (2048 samples at 44.1 kHz) gets a Hann-windowed
-FFT. Then each of **this computer's own** command bands (±100 Hz around
-each tone) is checked separately. A band "hears" its command only if:
+Every ~46 ms a new audio block (2048 samples at 44.1 kHz) arrives, and a
+Hann-windowed FFT runs over the last **4096** samples (this block plus the
+one before), giving ~10.8 Hz bins. Then each of **this computer's own**
+command bands (±60 Hz around each tone, ±150 Hz for goal) is checked
+separately. A band "hears" its command only if:
 
 - the loudest point inside it is a real peak, not the band's edge (an edge
   maximum is just the spill-over from a strong tone outside the band), and
 - it passes the noise gate below.
 
-If several bands pass, the loudest one wins.
+If several bands pass, the command that's already active wins if it's one
+of them; otherwise the loudest one wins.
 
-A new command takes effect after it's heard in **2 blocks in a row**, so a
-single stray block can't jerk the robot. The drive computer maps the
+A new command takes effect after it's heard in **4 updates in a row
+(~185 ms)** with its peak staying within one FFT bin the whole time, so a
+stray sound can't jerk the robot. Once a command is active it only has to
+stay above a lower gate (8×) to keep going. The drive computer maps the
 command straight to wheel speeds: forward = both wheels at 60 %,
 left/right = wheels opposite at 40 % (turn in place). Motor commands are
 only sent to the robot when the command **changes**, not every loop tick.
@@ -125,19 +132,24 @@ the other is played. It publishes `{"shield": "up"|"down"}` on change (and
 re-sends every second in case a message is lost). The drive computer moves
 the Single Motor to 0° or 90° from its starting position when that changes.
 
-Goal: holding the 1750 Hz tone for 0.5 s publishes the goal message and
+Goal: holding the 2300 Hz tone for 0.5 s publishes the goal message and
 plays the success song (ball only). Needing a held, dedicated tone means a
 drive tone that drops out can't be mistaken for a goal.
 
 ### What does your code do if no tone is detected?
 
-Dropouts shorter than 0.3 s (`HOLD_S`) are ignored: the current command
-keeps going, so a brief glitch doesn't stutter the car. After 0.3 s of no
-tone, the command becomes "none" and the car stops. The car never keeps
-driving on a command nobody is playing. The shield stays where it was last
+The car stops right away. Forward, left, and right drop the moment their
+tone isn't heard in its range (`IMMEDIATE_STOP_TONES`), whether the tone
+stopped or drifted out of its band. The command becomes "none", which maps
+to `car.movement_stop()`. Because of the overlapping FFT window, that's
+within one update (~46–90 ms). The car never keeps driving on a command
+nobody is playing. If the *same* tone comes back within 0.3 s (`HOLD_S`), it
+resumes right away without the ~185 ms re-confirmation, so a brief glitch
+is a brief stop, not a long stutter. The goal tone keeps the 0.3 s grace
+period, so a blip doesn't reset a held goal. The shield stays where it was last
 put, since it's a position, not a motion. If the microphone stops delivering
 audio at all (device unplugged, laptop asleep), the last reading expires
-after 0.5 s and the car stops. Separately, any error in the drive part of
+after 0.25 s and the car stops. Separately, any error in the drive part of
 the control loop stops the car, and the car and shield are always stopped
 before disconnecting on exit.
 
@@ -147,14 +159,22 @@ before disconnecting on exit.
    around its own tones. That ignores low room rumble, most of a voice,
    and the other team member's phone, even when the other phone is louder.
 2. **Tonal-ratio gate.** A phone tone is one sharp spike. Talking, motors,
-   and room noise are spread across the spectrum. The peak must be at least
-   **8×** the spectrum's *median* level (`TONAL_RATIO_GATE`). White noise
-   never gets above ~4; a tone quieter than the room noise still clears 8.
+   and room noise are spread across the spectrum. A new command's peak must
+   be at least **12×** the spectrum's *median* level (`TONAL_RATIO_GATE`);
+   an active one only has to stay above **8×** (`SUSTAIN_RATIO_GATE`), so
+   a held tone doesn't flicker. The 4096-sample FFT makes a steady tone
+   stand ~1.4× higher above broadband noise than a 2048 one: white noise
+   never gets above ~4.2, and a tone quieter than the room noise reads ~17.
    The median is used instead of the mean, so the other phone's spike
    doesn't raise the bar.
 3. **Real peak + confirmation.** The peak has to be an actual peak inside
-   the band, not spill-over from a nearby sound. A new command also has to
-   hold for 2 blocks in a row before it's used.
+   the band, not spill-over from a nearby sound.
+4. **Steady pitch over time.** A new command has to be heard for 4 updates
+   in a row (~185 ms) with its peak staying within one ~10.8 Hz bin. A
+   phone tone doesn't move; voices, human whistles, squeaks, and clanks
+   either wander in pitch or are over too quickly. (Before this, a whistle
+   warbling ±40 Hz near 1000 Hz triggered "forward" in 59 of 60 blocks; now
+   it never does.)
 
 ## MQTT protocol on `ME193/Rogers`
 
@@ -191,7 +211,8 @@ Uses `mqttlib.MQTTClient` (`test.mosquitto.org`, `qos=0`, no retain).
 the other's tones (including when both play at once and the other phone is
 louder), harmonics, noise-only input, a tone quieter than the noise,
 dropouts, stray blocks, switching, heavily distorted tones (harmonics as
-loud as the tone), and loud tones just outside a band. The drive and co-pilot control loops
+loud as the tone), loud tones just outside a band, pitch-wandering
+"whistles", and short blips. The drive and co-pilot control loops
 have also been exercised with fake motors/MQTT to confirm the commands they
 send. **Not yet run against the physical robot or a real phone + mic** —
 that still needs to happen, including checking the speeds, turn direction,
