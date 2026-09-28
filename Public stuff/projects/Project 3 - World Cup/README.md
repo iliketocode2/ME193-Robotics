@@ -1,43 +1,51 @@
 # Project 3 — World Cup
 
-A LEGO Education "car" (Double Motor drive + a Single Motor "shield" arm
-with a cardboard square taped on) driven entirely by pitch into a laptop
-microphone — pitch continuously sets speed and turn (a gradient: lower
-turns further left, higher turns further right), and a 3-pulse rhythm
-calls a "goal" — coordinated with an opponent robot over MQTT for a
+A LEGO Education "car" (Double Motor drive + a Single Motor "shield" arm)
+controlled by **fixed pitches played from a phone tone-generator app** into
+a laptop microphone, coordinated with an opponent robot over MQTT for a
 ball-vs-goalie match on topic `ME193/Rogers`.
 
-The frequency bands are **fixed/hardcoded**, not calibrated per-person —
-see "Fixed frequency bands" below. This is meant to be played from a
-precise external tone source (a phone tone-generator app, for instance),
-not necessarily an actual whistle: a tone app can hit 700Hz or 4000Hz
-exactly and consistently, which is what makes hardcoded bands practical
-instead of needing `calibrate.py`'s per-whistler band-fitting. Whistling
-still works fine too, if you'd rather do that.
+Two computers, two phones:
 
-A second person on a second computer can help drive the same physical car:
-one computer ("drive") is the one actually Bluetooth-connected to the
-robot; a second computer ("shield co-pilot") runs the exact same script
-with its own microphone and continuously relays its own pitch gradient
-over a dedicated MQTT control topic, which the drive computer applies to
-the Single Motor shield's position in real time — the same gradient
-control style as steering, just relayed over MQTT instead of BLE. See
-"Two-computer setup" below.
+- **Drive computer** — Bluetooth-connected to the robot. Its phone plays
+  the drive tones (Double Motor).
+- **Shield co-pilot computer** — no robot connection. Its phone plays the
+  shield tones (Single Motor); the co-pilot relays them to the drive
+  computer over MQTT.
+
+## The tones
+
+| Computer | Tone | Does |
+|---|---|---|
+| Drive | **1000 Hz** | forward |
+| Drive | **1250 Hz** | turn left (in place) |
+| Drive | **1500 Hz** | turn right (in place) |
+| Drive | **1750 Hz** | hold ≥ 0.5 s → "goal" (ball only) |
+| Drive | *no tone* | stop |
+| Shield | **4250 Hz** | shield up |
+| Shield | **5600 Hz** | shield down (stays where it was last put) |
+
+A tone counts if it's within ±100 Hz of these, so play the exact number.
+The shield tones are all higher than the drive tones, and each computer
+only listens for its own tones, so the two phones can play at the same
+time without either computer reacting to the other one. The frequencies
+were also picked so that no 2nd/3rd/4th harmonic of a drive tone lands
+within 200 Hz of any command. A loud phone speaker distorts a little, and
+without this spacing it could, for example, trigger "goal" or the shield.
+
+Frequencies, the ±100 Hz width, and the noise gate live at the top of
+`tone_policy.py`. Speeds, shield swing, and goal-hold time live at the top
+of `world_cup.py`.
 
 ## Two virtual environments — read this first
 
-This project **must use PyAudio** (assignment requirement), and PyAudio
-has no prebuilt wheel for Python 3.14 (only through `cp313`) — building it
-from source also fails here because the PortAudio C headers aren't
-installed. Rather than fight that, this project runs in its own venv:
+This project **must use PyAudio** (assignment requirement), and PyAudio has
+no prebuilt wheel for Python 3.14, so this project runs in its own venv:
 
 | Venv | Python | Used for |
 |---|---|---|
-| `my_env/` | 3.14 | Everything else in this repo (unchanged). |
-| `my_env_audio/` | 3.13 | **Only this project.** `pyaudio`, `numpy`, `matplotlib`, `paho-mqtt`, and `legoeducation` all installed here too — this venv is fully self-contained for `calibrate.py`/`world_cup.py`. |
-
-Setup (already done once on this machine; included here so it's
-reproducible elsewhere):
+| `my_env/` | 3.14 | Everything else in this repo. |
+| `my_env_audio/` | 3.13 | **Only this project** (`pyaudio`, `numpy`, `matplotlib`, `paho-mqtt`, `legoeducation`). |
 
 ```powershell
 winget install Python.Python.3.13
@@ -46,398 +54,145 @@ my_env_audio\Scripts\python -m pip install --upgrade pip
 my_env_audio\Scripts\python -m pip install legoeducation pyaudio numpy matplotlib paho-mqtt
 ```
 
-Every command below runs through `my_env_audio`, **not** `my_env`.
-
 ## Files
 
-- **`whistle_policy.py`** — pure signal-processing + decision logic (FFT
-  pitch detection, noise gating, gesture recognition). No hardware, no I/O
-  — this is what `test_whistle_policy.py` exercises directly.
-- **`test_whistle_policy.py`** — synthetic-signal self-check (sine waves,
-  chirps, white noise, pulse trains) for the policy above. No microphone or
-  BLE hardware needed; run this any time the policy logic changes.
-- **`pyaudio_mic.py`** — microphone device picker built on PyAudio's own
-  device-enumeration API (mirrors the shared `miclib.pick_mic()`'s UX, but
-  `miclib.py` itself is `sounddevice`-based, which doesn't satisfy this
-  assignment's "use PyAudio" requirement).
-- **`songs.py`** — `DEATH_SONG` / `SUCCESS_SONG` note lists, and `play_both()`,
-  which plays them on **two** outputs at once: the LEGO hub's own speaker
-  (`play_song()`, via `beep()`) and the computer's speaker
-  (`play_computer_song()`) on a background thread, so the cue is audible
-  even if you're not standing right next to the hub's small buzzer, and so a
-  working computer speaker confirms the trigger fired independent of any
-  hub/BLE audio issue. The computer side synthesizes each note as a sine
-  wave at a controllable amplitude and plays it via stdlib
-  `winsound.PlaySound(..., SND_MEMORY)`, rather than `winsound.Beep()` —
-  `Beep()` has no volume parameter at all, so it can't be made louder;
-  synthesizing the tone ourselves means we set the amplitude directly
-  (`COMPUTER_VOLUME`, near full-scale by default).
-- **`calibrate.py`** — **optional now** (see "Fixed frequency bands" below):
-  guided calibration that measures room noise, then your lowest and highest
-  comfortable whistle notes, and writes `whistle_config.json`. Still fully
-  functional if you'd rather calibrate to an actual whistle than hardcode
-  bands for a tone generator.
-- **`world_cup.py`** — the match script. Opens a small setup dialog first
-  (game role, "drive" vs. "shield co-pilot", your team name, and optionally
-  your opponent's team name), then either: runs the full flow (connects the
-  Double Motor, Single Motor, Color Sensor; subscribes to `ME193/Rogers` +
-  the team's control topic; drives; handles the fail/goal MQTT protocol and
-  songs) if you picked **drive**, or a much lighter no-hardware flow that
-  continuously relays a shield-position gradient to the drive computer if
-  you picked **shield co-pilot**. Both modes show the live
-  waveform/spectrum/decision dashboard.
+- **`tone_policy.py`** — FFT tone detection: finds the strongest peak in
+  this computer's frequency range, checks it's a clean tone and not noise,
+  and names the command. No hardware, no I/O.
+- **`test_tone_policy.py`** — synthetic-signal self-check for the above (no
+  mic or robot needed). Run it any time `tone_policy.py` changes.
+- **`world_cup.py`** — the match script (setup dialog, motors, MQTT, dashboard).
+- **`pyaudio_mic.py`** — microphone picker built on PyAudio.
+- **`songs.py`** — win/lose melodies, played on the hub and the computer at once.
 
-## Fixed frequency bands (no calibration needed)
-
-`whistle_config.json` (and `whistle_policy.DEFAULT_CONFIG`, its fallback if
-that file is ever missing) now ship with fixed bands, meant for a precise
-external tone source rather than an actual whistle:
-
-| Band | Range | Meaning |
-|---|---|---|
-| STOP | 400-650 Hz | e.g. play ~500 Hz — stops the car / rests the shield at mid-swing |
-| TURN | 700-4000 Hz | left (700 Hz) → straight (~2350 Hz) → right (4000 Hz), a continuous gradient |
-| FORWARD | 4050-4650 Hz | speed scales with pitch across the range |
-
-`stop_band`/`forward_band` deliberately leave a ~50 Hz gap on either side
-of `turn_band`'s exact 700/4000 Hz edges rather than touching them: at this
-block size the FFT has ~21.5 Hz bins, so a tone dialed to exactly one of
-those shared boundary values can snap to either neighboring band
-unpredictably (verified directly — a test tone at exactly 700 Hz
-classified as TURN, not STOP, purely from bin quantization). The gap reads
-as a harmless "no whistle" instead of silently misfiring as the wrong
-command — if you're testing right at a boundary and get "no whistle
-detected," nudge a little further into the band rather than sitting
-exactly on the edge.
-
-This applies to **both** the drive's steering and the shield co-pilot's
-position gradient (same bands, different sensitivity tuning — see "Two-
-computer setup"). If you'd rather calibrate to an actual whistle instead,
-`calibrate.py` still works and will overwrite these with derived bands.
-
-## Run order
+## Run
 
 ```powershell
-my_env_audio\Scripts\python "Public stuff\projects\Project 3 - World Cup\test_whistle_policy.py"
+my_env_audio\Scripts\python "Public stuff\projects\Project 3 - World Cup\test_tone_policy.py"
 my_env_audio\Scripts\python "Public stuff\projects\Project 3 - World Cup\world_cup.py"
 ```
 
-(Optionally run `calibrate.py` first if you'd rather calibrate to an
-actual whistle than use the fixed tone-generator bands above — see "Fixed
-frequency bands.")
+Run `world_cup.py` on **both** computers. The setup dialog asks for the game
+role (Ball/Goalie), which computer this is (Drive / Shield co-pilot), your
+team name (**must be identical on both computers**), and optionally your
+opponent's team name.
 
-Before running `world_cup.py` (on the **drive** computer, i.e. the one
-actually Bluetooth-connected to the robot):
+Before a match, on the drive computer:
 
-- Fill in `CAR_CARD_SERIAL`/`CAR_CARD_COLOR`,
-  `SHIELD_CARD_SERIAL`/`SHIELD_CARD_COLOR`,
-  `SENSOR_CARD_SERIAL`/`SENSOR_CARD_COLOR` from your three LEGO Connection
-  Cards (Double Motor, Single Motor, Color Sensor). (Role and team name are
-  no longer hardcoded here — see below.)
-- Calibrate `PROXIMITY_REFLECTION_THRESHOLD` on-site against the actual
-  opponent robot and match-day lighting — the default (70) is an
-  unverified placeholder, not something to trust as-is.
-- Watch the car actually drive once and flip `INVERT_LEFT_MOTOR` /
-  `INVERT_RIGHT_MOTOR` if a wheel spins the wrong way (same convention as
-  Project 1's `arm_race_control.py`).
-- Verify the shield's absolute position 0 actually corresponds to
-  "retracted" on the physical arm (`set_shield_position()`'s comment in
-  `world_cup.py`) — `motor_run_to_absolute_position()`'s "0" is whatever the
-  hub's own internal zero reference is, not necessarily where the arm
-  happened to be pointed at connect time. Adjust `SHIELD_SWING_DEGREES`
-  or manually re-zero the arm if "retracted"/"deployed" come out backwards
-  or offset.
-- If using a tone generator (the default now — see "Fixed frequency
-  bands"), no calibration step is needed. If you'd rather whistle, run
-  `calibrate.py` in the same room, with the same mic, close to match time;
-  if using a shield co-pilot, they'd run their own too, against their own
-  mic/room.
+- Fill in the `*_CARD_SERIAL` / `*_CARD_COLOR` values in `world_cup.py`.
+- **Start with the shield arm DOWN.** Wherever the arm is when the script
+  connects counts as "down"; "up" swings it `SHIELD_UP_DEGREES` (90°) from
+  there. Make that negative if it swings the wrong way.
+- Watch the car drive once and flip `INVERT_LEFT_MOTOR` /
+  `INVERT_RIGHT_MOTOR` if a wheel spins the wrong way.
+- Calibrate `PROXIMITY_REFLECTION_THRESHOLD` (default 70, on a ~0-100
+  scale) against the real opponent robot and room lighting.
+- Motors only move once the match is **LIVE** (`start` on MQTT, or press
+  **s** in the dashboard to test locally; **r** resets).
+- On Windows, turn off the mic's "audio enhancements" / noise suppression
+  (Sound settings → the mic → Advanced). Some laptops treat a steady tone
+  as background noise and fade it out after a second or two.
 
-Running `world_cup.py` (either computer) first opens a small setup dialog:
-pick **game role** (Ball/Goalie), pick **this computer controls**
-(Drive/Shield co-pilot), and type a **team name**. Everything else follows
-from those three choices — see "Two-computer setup" below.
+The dashboard shows the live spectrum with this computer's command bands
+highlighted (green) and the other computer's greyed out, the detected peak
+and its tonal ratio, the current command, what the wheels/shield were last
+sent, and the MQTT feed. If the phone is playing but the command says
+NONE, look at the ratio: below the gate means the tone is too quiet or the
+room too loud — move the phone closer to the mic or turn it up.
 
 ## The required write-up
 
 ### Describe the policy — how does it make decisions?
 
-Every ~46ms audio block (2048 samples @ 44.1kHz) goes through
-`whistle_policy.PitchDetector`: a Hann-windowed FFT finds the spectral peak
-bin (skipping DC), giving a raw pitch estimate, which is then smoothed
-across blocks with an exponential moving average to remove frame-to-frame
-jitter. The peak's magnitude divided by the spectrum's mean magnitude — the
-**tonal ratio** — measures how "whistle-like" (narrowband) vs. "noise-like"
-(broadband) the block is; see the noise-masking answer below for why.
+Every ~46 ms audio block (2048 samples at 44.1 kHz) gets a Hann-windowed
+FFT. Then each of **this computer's own** command bands (±100 Hz around
+each tone) is checked separately. A band "hears" its command only if:
 
-If a block passes both the tonal-ratio gate and an RMS noise floor, its
-smoothed frequency is classified into one of three **fixed** bands (see
-"Fixed frequency bands" — `calibrate.py` can still derive these from an
-actual whistle range instead, if you'd rather not use a tone generator):
+- the loudest point inside it is a real peak, not the band's edge (an edge
+  maximum is just the spill-over from a strong tone outside the band), and
+- it passes the noise gate below.
 
-- **STOP band** (400-650 Hz) → speed = 0.
-- **FORWARD band** (4050-4650 Hz) → drive forward, speed scaling linearly
-  from 20% to 55% across the band (kept deliberately gentle — see "motor
-  speed" below).
-- **TURN band** (everything in between) → a **gradient of pitch position
-  within the band**, capped at a much lower speed than driving straight
-  (`max_turn_speed`, 25% by default vs. `max_speed`'s 55%, so turning is
-  always gentle/controllable, never sharp). The turn amount tracks *where*
-  you're whistling, not how you got there (earlier versions of this policy
-  used the pitch's *slope*/rate of change instead, which meant you had to
-  actively slide your pitch to keep turning; a straight gradient is easier
-  to hold a specific turn amount with). A wide zone around the exact center
-  (`turn_deadzone_frac`, the middle 35% of the band by default) all reads as
-  **straight** — not one exact pitch, since reliably whistling one precise
-  frequency is hard — and creeps forward gently there (at `min_forward_speed`)
-  rather than sitting still, so "go straight" doesn't require jumping all
-  the way to the forward band. Outside the deadzone, the turn gradient ramps
-  linearly from 0 up to `max_turn_speed` across the remaining band, in each
-  direction.
+If several bands pass, the loudest one wins.
 
-On top of that continuous mapping, a **rhythmic** gesture is recognized
-from sequences of short (<0.4s) tonal pulses in the forward band, so the
-same whistling channel carries both continuous proportional control and a
-discrete command:
+A new command takes effect after it's heard in **2 blocks in a row**, so a
+single stray block can't jerk the robot. The drive computer maps the
+command straight to wheel speeds: forward = both wheels at 60 %,
+left/right = wheels opposite at 40 % (turn in place). Motor commands are
+only sent to the robot when the command **changes**, not every loop tick.
 
-- **Three short pulses in the FORWARD band within 2 seconds** → the "made
-  it in the goal" command (publishes to MQTT, plays the success song).
+The shield co-pilot latches: the last up/down tone it heard sticks until
+the other is played. It publishes `{"shield": "up"|"down"}` on change (and
+re-sends every second in case a message is lost). The drive computer moves
+the Single Motor to 0° or 90° from its starting position when that changes.
 
-The shield (Single Motor) uses the same gradient *idea*, just from a
-**second, independent whistle** — see "Two-computer setup": a co-pilot's
-own turn-band gradient continuously sets the shield's position (their
-lowest-band pitch retracts it, their highest-band pitch fully deploys it)
-instead of driving the car, relayed over MQTT rather than computed locally.
-It is **not** tuned the same as driving, on purpose: the shield co-pilot
-gets its own `WhistlePolicy` instance (`shield_whistle_config` in
-`world_cup.py`, swapped in by `_run_as_copilot()`) with the turn gradient's
-dead zone removed (`turn_deadzone_frac = 0.0`) and its magnitude cap raised
-to the full range (`max_turn_speed = 100`, vs. the drive's gentler `25`) —
-a swinging cardboard flap isn't a safety concern the way a fast-turning
-drive wheel is, so there's no reason to make it react as cautiously, and
-the physical swing itself is driven at `SHIELD_SPEED = 100` (vs. the double
-motor's `max_speed = 55`) so it's visibly quicker too.
+Goal: holding the 1750 Hz tone for 0.5 s publishes the goal message and
+plays the success song (ball only). Needing a held, dedicated tone means a
+drive tone that drops out can't be mistaken for a goal.
 
-### What does your code do if no whistle is detected?
+### What does your code do if no tone is detected?
 
-It does **not** hold the last command forever, and it does **not** cut the
-motors instantly either. If no tonal block has been seen for longer than
-`silence_timeout_s` (0.4s — short lapses, like a breath between whistles,
-are tolerated), the current forward/turn command is ramped **linearly down
-to zero** over `ramp_time_s` (0.3s) rather than snapped to a stop. This
-avoids two failure modes: instantly killing the car on every tiny gap in
-the whistle (frustrating and jerky to drive), and — the more important
-one — a car that silently coasts at its last commanded speed indefinitely
-if the whistler stops for any reason (out of breath, dropped the whistle,
-etc.), which would be an actual safety problem on a moving robot. This is
-independent of, and in addition to, the hard `try/except -> car.stop()`
-wrapped around every control step in `world_cup.py`'s audio callback, and
-the `finally: car.stop(); car.disconnect()` that runs on any exit.
+Dropouts shorter than 0.3 s (`HOLD_S`) are ignored: the current command
+keeps going, so a brief glitch doesn't stutter the car. After 0.3 s of no
+tone, the command becomes "none" and the car stops. The car never keeps
+driving on a command nobody is playing. The shield stays where it was last
+put, since it's a position, not a motion. If the microphone stops delivering
+audio at all (device unplugged, laptop asleep), the last reading expires
+after 0.5 s and the car stops. Separately, any error in the drive part of
+the control loop stops the car, and the car and shield are always stopped
+before disconnecting on exit.
 
 ### How did you try to mask out unwanted noise?
 
-Three layers, from cheapest to most targeted:
-
-1. **Tonal-ratio gate.** A clean whistle is a narrow spectral spike; talking,
-   footsteps, motor whir, and ambient room noise are broadband. Comparing
-   the FFT peak's magnitude to the spectrum's *mean* magnitude
-   (peak/mean) separates the two cleanly — empirically, white noise at
-   this block size tops out around a ratio of ~3.9, while a clean tone
-   hits ~450 *regardless of its volume* (peak and mean scale together for a
-   noise-free tone). The default gate is `4.5` — low enough to still catch
-   a *quiet* whistle (whose ratio drifts down toward the noise ceiling as
-   real ambient noise becomes relatively more prominent at low volume, even
-   though a noise-free tone's ratio wouldn't budge), while staying clearly
-   above where pure noise tops out. This is a genuine trade-off, not a free
-   improvement: a lower gate is more permissive of quiet whistles and
-   modestly more permissive of loud ambient noise being mistaken for one —
-   raise it back toward 6+ if a noisy room starts producing false triggers.
-2. **Calibrated ambient RMS floor.** `calibrate.py` records a few seconds
-   of silence and sets the floor to 2× the **90th percentile** of the
-   ambient blocks' RMS, so a block also has to actually be *loud enough*,
-   not just tonal — guards against a faint high-pitched electronic whine or
-   hum being mistaken for an intentional whistle. Deliberately *not*
-   `max()` of the ambient blocks: a single one-off transient during that
-   window (a cough, a click, the Enter keystroke's own sound) would
-   otherwise set the floor for the entire match at 2x that one spike, which
-   is exactly what caused wildly different floors (and a "no whistle
-   detected" robot despite a clearly visible spectrogram peak) across
-   otherwise-identical calibration runs in the same room before this was
-   fixed — the 90th percentile only responds to noise that's actually
-   sustained across a real chunk of the window, not one outlier block.
-3. **EMA smoothing across blocks — but only blocks that already passed both
-   gates.** The reported frequency is smoothed with an exponential moving
-   average rather than trusted block-to-block, so a single noisy FFT
-   estimate doesn't jerk the turn/shield gradient or the reported HUD
-   frequency around. This smoothing lives in `WhistlePolicy`, not
-   `PitchDetector`, specifically so a block that *fails* the gates (a
-   transient dip from mic noise, OS-level mic "enhancements"/AGC, whatever)
-   resets the smoothed estimate instead of blending its noise-derived peak
-   into it. An earlier version smoothed unconditionally in `PitchDetector`
-   regardless of gating, which let one bad block quietly drag the running
-   average off course for every *later* good block too — symptom: a held,
-   genuinely steady tone would drive for a while, then stop, and only
-   resume once a new frequency strong enough to overwhelm the contaminated
-   average came along, even though the original tone never actually
-   stopped. Fixed by moving the smoothing state into `WhistlePolicy.update()`
-   and resetting it on every non-tonal block rather than carrying it
-   through.
+1. **Only its own bands.** Each computer only checks the narrow bands
+   around its own tones. That ignores low room rumble, most of a voice,
+   and the other team member's phone, even when the other phone is louder.
+2. **Tonal-ratio gate.** A phone tone is one sharp spike. Talking, motors,
+   and room noise are spread across the spectrum. The peak must be at least
+   **8×** the spectrum's *median* level (`TONAL_RATIO_GATE`). White noise
+   never gets above ~4; a tone quieter than the room noise still clears 8.
+   The median is used instead of the mean, so the other phone's spike
+   doesn't raise the bar.
+3. **Real peak + confirmation.** The peak has to be an actual peak inside
+   the band, not spill-over from a nearby sound. A new command also has to
+   hold for 2 blocks in a row before it's used.
 
 ## MQTT protocol on `ME193/Rogers`
 
-Uses `mqttlib.MQTTClient` (`test.mosquitto.org`, `qos=0`, no retain — see
-`MQTTLIB.md`'s own reasoning for why a stale retained game message would be
-actively wrong here).
+Uses `mqttlib.MQTTClient` (`test.mosquitto.org`, `qos=0`, no retain).
 
-- **`"start"`** — plain text (not JSON), sent by the instructor. Gates
-  whether whistle commands actually drive the motors; before it arrives,
-  the live plot still runs (so you can see your whistle being decoded) but
-  the car doesn't move.
-- **`{"event": "fail", "team": "<your TEAM_NAME>"}`** — published by the
-  ball itself the moment its front sensor detects the opponent within
-  `PROXIMITY_REFLECTION_THRESHOLD`. The ball stops and plays `DEATH_SONG`
-  locally, and publishes this so its **opponent** (whoever entered this
-  ball's `TEAM_NAME` as their own **Opponent's team name** in the setup
-  dialog) plays `SUCCESS_SONG` on receiving it.
-- **`{"event": "goal", "team": "<your TEAM_NAME>"}`** — published by the
-  ball the moment its whistle policy fires the 3-pulse goal gesture. The
-  ball plays `SUCCESS_SONG` locally, and publishes this so its **opponent**
-  plays `DEATH_SONG` on receiving it.
-- The `"team"` field is your own `TEAM_NAME` (the name typed into the setup
-  dialog), **not** `ROLE` — that's what makes "subscribe to another team's
-  messages" possible: enter your opponent's `TEAM_NAME` as your own
-  **Opponent's team name** in the dialog, and `on_mqtt_message()` reacts the
-  *opposite* way to anything tagged with that name (their goal is your
-  loss, their fail is your win), regardless of which of you is "ball" or
-  "goalie." A message is ignored if it's tagged with your own `TEAM_NAME`
-  (the public broker echoes every publish back to the publisher too — see
-  `MQTTLIB.md`/`mqtt_chat.py` — so without this filter a robot would
-  re-trigger its own event from its own echo) or with any team name other
-  than the one you configured as your opponent.
-- **This is not redundant with the local whistle→publish flow above** even
-  though both eventually cause a song to play: the local flow is how *you*
-  report *your own* outcome (required by the assignment — "publish an MQTT
-  message that you failed"); the opponent-name reaction is how you find out
-  about *theirs*. They're the two complementary halves of the same
-  handshake, not two ways of doing the same thing.
-
-**Both your own `TEAM_NAME` and your opponent's must be agreed before the
-match** — the assignment explicitly requires this, and nothing here
-enforces it automatically. If you don't set an opponent name, this robot
-simply never auto-reacts to anyone else's fail/goal messages (the dashboard
-status bar shows "OPPONENT: none set" as a reminder).
-
-## Two-computer setup
-
-Only one computer can hold the actual Bluetooth connections to the robot's
-three devices, but a second person can still help control it with their own
-whistle from a second computer:
-
-- **Drive** (pick this on the computer physically paired with the robot):
-  runs the full flow from the rest of this README. Also subscribes to a
-  second, team-scoped MQTT topic, `<MQTT_TOPIC>/control/<team name>` (e.g.
-  `ME193/Rogers/control/Cucurella`) — separate from the public game-event
-  topic so it doesn't collide with other teams' traffic, same
-  crosstalk-avoidance reasoning `MQTTLIB.md` gives for topic names in
-  general. A `{"shield_gradient": <-100..100>}` message on that topic sets
-  the shield's absolute position (linearly, -100 = fully retracted, +100 =
-  fully deployed) every time one arrives — continuous, not a one-shot toggle.
-- **Shield co-pilot** (pick this on the second computer): no BLE connection
-  at all — it just opens its own microphone, runs the same whistle policy,
-  and continuously publishes `{"shield_gradient": <cmd.turn_bias>}` to that
-  same control topic (about 20x/second, matching the control loop rate) —
-  literally the same turn-band gradient value the drive computer would use
-  for steering, just relayed instead of applied locally. Its dashboard
-  still shows its own waveform/spectrum/decision and a live MQTT feed
-  (though the continuous shield-gradient traffic itself isn't logged there
-  — at 20 messages/second it would drown out everything else useful in a
-  10-entry rolling log; the current commanded shield position is shown
-  directly in the decision panel instead), and mirrors the match's
-  LIVE/WAITING/GAME OVER status (read-only — it never itself starts/ends
-  the match or plays a song, since it has no local hardware to act with).
-  With no co-pilot connected, the drive car's shield defaults to fully
-  retracted (matching the "sensor must be open" rule) rather than sitting
-  at some arbitrary position.
-
-**Both computers must type the exact same team name** in the setup dialog —
-that's what makes the control topic match up between them. A shield
-co-pilot's own game-role choice only affects its own dashboard's display;
-the actual match outcome (fail/goal, songs, publishing to `MQTT_TOPIC`)
-is entirely owned by whichever instance is running as **drive**.
-
-This is a generic capability, not "goalie only" or "ball only" — either
-role's robot can have a remote shield co-pilot, since a shield is generic
-hardware, not part of the ball/goalie game logic itself.
+- **`"start"`** — plain text, from the instructor. Nothing moves before it.
+- **`{"event": "fail", "team": "<TEAM_NAME>"}`** — the ball publishes this
+  when its front sensor sees the opponent (reflection ≥ threshold), stops,
+  and plays `DEATH_SONG`.
+- **`{"event": "goal", "team": "<TEAM_NAME>"}`** — the ball publishes this
+  on the goal tone and plays `SUCCESS_SONG`.
+- If a message's `team` is the opponent's name you typed in the setup
+  dialog, you react the opposite way (their fail = you win, their goal =
+  you lose). Your own echoed messages and other teams' messages are
+  ignored. **Agree on both team names with your opponent before the match.**
+- Shield relay, team-scoped: `ME193/Rogers/control/<TEAM_NAME>` carries
+  `{"shield": "up"|"down"}` from the co-pilot to the drive computer.
 
 ## Hardware / concurrency notes
 
-- **`legoeducation`'s synchronous calls block their *calling* thread on a
-  real BLE round-trip regardless of their own `blocking=` kwarg** — verified
-  in `legoeducation/_platform.py`'s `_run_sync_cpython` (every call submits
-  to a background asyncio loop and then does `wrapper_future.result()`,
-  which blocks). `blocking=False` only skips waiting for a completion
-  *response* on top of that, it doesn't make the call non-blocking. That
-  means BLE calls cannot live on PyAudio's callback thread, whose ~46ms
-  block period leaves no room for a BLE round-trip — doing so risks
-  PortAudio reporting input overflow / dropping audio. This is a stricter
-  version of the exact lesson Project 2 documented after motor commands
-  stalled its camera loop.
-- So there are three threads with a clear division of labor: **PyAudio's
-  callback thread** (`audio_callback`) does only DSP (`policy.update()`,
-  pure numpy/FFT) and writes results into a lock-guarded shared dict;
-  **`mqttlib`'s network thread** (`on_mqtt_message` and, in drive mode,
-  `on_control_message`) only reads/writes that same dict; a **dedicated
-  `run_control_loop()` thread**, polling every `CONTROL_LOOP_PERIOD_S`
-  (50ms — comfortably above any single BLE round-trip), is the *only* place
-  that ever calls `movement_move_tank`, `motor_run_to_absolute_position`
-  (the shield, via `set_shield_position`), `beep()` (via `play_both`), or
-  `mqtt.publish()`. `play_both()` itself spawns one
-  extra short-lived background thread so the computer-speaker song and the
-  hub-speaker song play at the same time instead of back-to-back. The
-  shield co-pilot mode mirrors this same split with much less work per
-  thread (`copilot_audio_callback`/`run_copilot_loop`) since there's no BLE
-  hardware involved on that instance at all.
-- The main thread only runs a `matplotlib` `FuncAnimation` (a dashboard: game
-  status, waveform, spectrum with the calibrated bands shaded, the drive
-  command actually sent to the car, the front sensor reading vs. its
-  proximity threshold, the whistle decision, and a live MQTT sent/received
-  feed) that only *reads* the same lock-guarded state — it never touches
-  BLE, MQTT, or audio directly.
-- **`lelib.py`'s `doubleMotor.stop()` only stops the LEFT motor** —
-  verified: it calls the raw `motor_stop()` with no `motor=` kwarg, which
-  defaults to motor index 0 (left) in `legoeducation/device.py`
-  (`DEFAULT_MOTOR = 0`). This is a real bug in the *shared* library (not
-  modified here — it would affect every project in this repo that calls
-  `dm.stop()` expecting both wheels to stop), so `world_cup.py`
-  deliberately never calls it: every stop here uses the raw
-  `car.movement_stop()` instead, which is the correct whole-robot
-  counterpart to `movement_move_tank()`.
-- Every control step in `run_control_loop()` is wrapped in `try/except`
-  that calls `car.movement_stop()` on any error, and the whole hardware
-  section in `main()` is in a
-  `try/finally: car.movement_stop(); shield.stop(); <disconnect all three devices>`.
+- `legoeducation` calls block their calling thread on a real BLE
+  round-trip even with `blocking=False`, so **no BLE calls happen in the
+  PyAudio callback**. The audio callback only does the FFT. One control
+  loop thread (every 50 ms) does all motor/sensor/song calls and game-event
+  publishes. The MQTT thread only updates shared state, and the dashboard
+  only reads it.
+- `lelib`'s `doubleMotor.stop()` only stops the left motor (it calls
+  `motor_stop()` with the default motor index 0), so this script always
+  uses `car.movement_stop()` instead.
 
 ## Status
 
-The DSP/policy logic (`test_whistle_policy.py`, including the gradient-turn
-tests: low/high/center-of-band and a partial-gradient check) passes under
-`my_env_audio`, and `world_cup.py`/`calibrate.py` import and syntax-check
-cleanly. The dashboard (both "drive" and "shield" modes) has been rendered
-headlessly and exercised for one frame each without error, the new message
-handlers (`on_control_message`, `on_mqtt_message_readonly`) have been
-unit-checked directly against `shared` state, and `set_shield_position()`'s
-gradient-to-degrees math has been checked directly (-100→0°, 0→45°,
-100→90°). **None of this has been run against the physical car, shield
-motor, and color sensor, and the setup dialog and the two-computer
-control-topic relay have not been click-tested by a human or run across two
-real machines** — that all still needs to happen (with real Connection Card
-values filled in and a calibrated proximity threshold) before treating this
-as match-ready, per this repo's usual rule that nothing is "done" until
-it's actually run against the hardware at least once. In particular, the
-shield's absolute-position-0-means-retracted assumption and the new lower
-motor speeds (20-55% instead of 30-90%) still need a real drive to confirm
-they feel right. The new fixed frequency bands (400-650/700-4000/4050-4650)
-and their boundary gaps have been checked directly with synthetic tones at
-500/700/2350/4000/4300 Hz for both the drive and shield policies (matching
-expected STOP/TURN-left/STRAIGHT/no-whistle-gap/FORWARD classification),
-but not yet against a real phone tone-generator app and a real microphone.
+`test_tone_policy.py` passes. It covers every tone, each computer ignoring
+the other's tones (including when both play at once and the other phone is
+louder), harmonics, noise-only input, a tone quieter than the noise,
+dropouts, stray blocks, switching, heavily distorted tones (harmonics as
+loud as the tone), and loud tones just outside a band. The drive and co-pilot control loops
+have also been exercised with fake motors/MQTT to confirm the commands they
+send. **Not yet run against the physical robot or a real phone + mic** —
+that still needs to happen, including checking the speeds, turn direction,
+and shield swing direction feel right.

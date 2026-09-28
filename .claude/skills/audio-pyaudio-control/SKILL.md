@@ -9,9 +9,12 @@ This documents what was actually verified while building
 `Public stuff/projects/Project 3 - World Cup/` — a whistle-controlled robot
 using PyAudio specifically (some assignments require PyAudio by name,
 unlike the sounddevice-based `miclib.py` already in
-`Public stuff/useful libraries/`). Read `world_cup.py`, `calibrate.py`,
-`whistle_policy.py`, and `pyaudio_mic.py` there for the full working
-implementation this skill summarizes.
+`Public stuff/useful libraries/`). Read `world_cup.py`, `tone_policy.py`,
+and `pyaudio_mic.py` there for the full working implementation. That
+project has since switched from whistles + calibration to fixed
+phone-played tones (one exact frequency per command, each computer
+searching only its own range); the whistle/calibration notes below are
+kept as general background.
 
 ## The Python 3.14 blocker — check this before assuming PyAudio will just install
 
@@ -66,12 +69,15 @@ stream.start_stream()
 
 `audio_callback(in_data, frame_count, time_info, status)` runs on
 **PyAudio's own background thread**, not the thread that called
-`pa.open()`. In `world_cup.py` this callback thread *is* the real control
-loop: it decodes the block, runs the pitch/policy logic, and issues
-non-blocking BLE motor commands directly, all before returning
-`(None, pyaudio.paContinue)`. A separate thread (matplotlib's
-`FuncAnimation` on the main thread) only *reads* a lock-guarded shared
-state dict to draw a live display — it never touches audio or BLE itself.
+`pa.open()`. **Never issue BLE calls from it**: every `legoeducation` call
+blocks its calling thread on a real BLE round-trip even with
+`blocking=False`, which can drop audio. In `world_cup.py` the callback only
+runs the FFT/tone detection and writes the result (plus a timestamp) into
+a lock-guarded shared dict. A separate control-loop thread polls that dict
+every 50 ms and is the only place that talks to the motors. It treats a
+reading older than ~0.5 s as "no tone", so a stalled stream can't leave
+the car driving. matplotlib's `FuncAnimation` on the main thread only
+*reads* the same dict to draw the dashboard.
 This split exists for the same reason Project 2's README documents moving
 motor commands to their own thread: mixing a blocking call into a
 render/UI loop stalls it.

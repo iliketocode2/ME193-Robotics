@@ -1,29 +1,28 @@
 """
-spectrogram_test.py -- live scrolling spectrogram + noise-gate readout, for
-tuning whistle_policy's thresholds and sanity-checking the mic/room before
-running calibrate.py or world_cup.py. Same role as Project 2's
-apriltag_stream_test.py: a standalone sanity check for the raw signal, with
-no hardware/MQTT/game logic attached.
+spectrogram_test.py -- live scrolling spectrogram + tone-detector readout,
+for sanity-checking the mic, the room, and the phone tones before running
+world_cup.py. No robot, no MQTT, no game logic -- just the raw signal and
+what tone_policy.py makes of it.
 
 Shows, live:
   - a scrolling spectrogram (time x frequency, color = magnitude in dB),
-    with the calibrated STOP/TURN/FORWARD bands shaded so you can see where
-    your whistle actually lands relative to them
-  - the current smoothed pitch estimate and tonal ratio
-  - whether the current block passes whistle_policy's tonal-ratio + noise-
-    floor gates (i.e. would register as "a whistle") -- this is the tool to
-    use to "clean up" the audio input: whistle, talk, tap the table, run the
-    car's motors nearby, etc. and watch which sounds light up green
-    ("WHISTLE") vs. red ("no whistle / noise") to judge whether the gates
-    need retuning (edit tonal_ratio_gate / noise_floor_rms in
-    whistle_config.json, or rerun calibrate.py).
+    with every command band from tone_policy.py shaded (drive = green,
+    shield = orange) so you can see exactly where the phone's tone lands
+  - for BOTH the drive and the shield detector: what this block alone
+    matched, the debounced command world_cup.py would act on, and the peak
+    frequency + tonal ratio against TONAL_RATIO_GATE
+
+Use it to "clean up" the input: play each tone, talk, clap, run the motors
+nearby, play both phones at once, and check that only the right command
+lights up. If a real tone reads NONE, look at the ratio -- move the phone
+closer or turn it up. If noise triggers a command, raise TONAL_RATIO_GATE
+in tone_policy.py.
 
 Run (from my_env_audio -- NOT my_env, see this project's README):
     my_env_audio/Scripts/python "Public stuff/projects/Project 3 - World Cup/spectrogram_test.py"
 """
 
-import json
-import os
+import threading
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,61 +30,51 @@ import pyaudio
 from matplotlib.animation import FuncAnimation
 
 from pyaudio_mic import pick_mic
-from whistle_policy import DEFAULT_CONFIG, PitchDetector
+from tone_policy import (BAND_HALF_WIDTH_HZ, BLOCK_SIZE, DRIVE_TONES, SAMPLE_RATE,
+                         SHIELD_TONES, TONAL_RATIO_GATE, ToneDetector)
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "whistle_config.json")
-if os.path.exists(CONFIG_PATH):
-    with open(CONFIG_PATH) as f:
-        config = json.load(f)
-    print(f"Loaded calibrated config from {CONFIG_PATH}")
-else:
-    config = DEFAULT_CONFIG
-    print("No whistle_config.json found -- using DEFAULT_CONFIG placeholder thresholds "
-          "(run calibrate.py for real values).")
-
-SAMPLE_RATE = config["sample_rate"]
-BLOCK_SIZE = config["block_size"]
-TONAL_RATIO_GATE = config["tonal_ratio_gate"]
-NOISE_FLOOR_RMS = config["noise_floor_rms"]
-MAX_DISPLAY_HZ = max(4500, config["forward_band"][1] + 500)
-HISTORY_COLUMNS = 200  # ~9s of scrollback at ~46ms/block (2048 samples @ 44100Hz)
+MAX_DISPLAY_HZ = 6500
+HISTORY_COLUMNS = 200  # ~9s of scrollback at ~46ms/block
 DB_FLOOR = -80.0
 
-detector = PitchDetector(SAMPLE_RATE, BLOCK_SIZE)
-freq_mask = detector.freqs <= MAX_DISPLAY_HZ
-display_freqs = detector.freqs[freq_mask]
+detectors = {"drive": ToneDetector(DRIVE_TONES), "shield": ToneDetector(SHIELD_TONES)}
+freq_mask = detectors["drive"].freqs <= MAX_DISPLAY_HZ
 
-# Written by the PyAudio callback thread, read by matplotlib's animation on the
-# main thread. Unlike world_cup.py's shared game-state, nothing here drives
-# hardware, so a lock isn't needed for this read-only diagnostic display --
-# CPython's GIL makes each individual dict-key assignment atomic, and a
-# momentary torn read of the in-place spectrogram-shift is at worst a visual
-# glitch for one frame, not a correctness/safety issue.
+state_lock = threading.Lock()
 latest = {
-    "spectrogram": np.full((display_freqs.size, HISTORY_COLUMNS), DB_FLOOR),
-    "frequency": None,
-    "tonal_ratio": 0.0,
+    "spectrogram": np.full((int(freq_mask.sum()), HISTORY_COLUMNS), DB_FLOOR),
+    "readings": {"drive": None, "shield": None},
     "rms": 0.0,
-    "passes_gate": False,
 }
 
 
 def audio_callback(in_data, frame_count, time_info, status):
     block = np.frombuffer(in_data, dtype=np.float32)
-    freq, tonal_ratio, rms, spectrum = detector.analyze(block)
-    passes_gate = freq is not None and tonal_ratio >= TONAL_RATIO_GATE and rms >= NOISE_FLOOR_RMS
+    readings = {name: d.update(block) for name, d in detectors.items()}
+    db = np.clip(20 * np.log10(readings["drive"].spectrum[freq_mask] + 1e-6), DB_FLOOR, None)
+    rms = float(np.sqrt(np.mean(block.astype(np.float64) ** 2)))
 
-    db = np.clip(20 * np.log10(spectrum[freq_mask] + 1e-6), DB_FLOOR, None)
-    spectrogram = latest["spectrogram"]
-    spectrogram[:, :-1] = spectrogram[:, 1:]
-    spectrogram[:, -1] = db
-
-    latest["frequency"] = freq if passes_gate else None
-    latest["tonal_ratio"] = tonal_ratio
-    latest["rms"] = rms
-    latest["passes_gate"] = passes_gate
-
+    with state_lock:
+        spectrogram = latest["spectrogram"]
+        spectrogram[:, :-1] = spectrogram[:, 1:]
+        spectrogram[:, -1] = db
+        latest["readings"] = readings
+        latest["rms"] = rms
     return (None, pyaudio.paContinue)
+
+
+def _shade_bands(ax, tones, color):
+    for name, f in tones.items():
+        ax.axhspan(f - BAND_HALF_WIDTH_HZ, f + BAND_HALF_WIDTH_HZ, color=color, alpha=0.15)
+        ax.text(0.05, f, f"{name} {f}", color=color, fontsize=8, va="center")
+
+
+def _describe(label, reading):
+    if reading is None:
+        return f"{label}: --"
+    return (f"{label}: {(reading.tone or 'none').upper():<8} "
+            f"(this block: {reading.heard or '-'})   "
+            f"peak {reading.frequency:5.0f} Hz  ratio {reading.tonal_ratio:5.1f} / {TONAL_RATIO_GATE:.0f}")
 
 
 def main():
@@ -93,50 +82,44 @@ def main():
     device_index = pick_mic(pa)
 
     stream = pa.open(format=pyaudio.paFloat32, channels=1, rate=SAMPLE_RATE, input=True,
-                      input_device_index=device_index, frames_per_buffer=BLOCK_SIZE,
-                      stream_callback=audio_callback)
+                     input_device_index=device_index, frames_per_buffer=BLOCK_SIZE,
+                     stream_callback=audio_callback)
     stream.start_stream()
 
     try:
-        fig, ax = plt.subplots(figsize=(10, 6))
-        fig.canvas.manager.set_window_title("Whistle spectrogram test")
+        fig, ax = plt.subplots(figsize=(11, 7))
+        fig.canvas.manager.set_window_title("Tone spectrogram test")
 
         seconds_of_history = HISTORY_COLUMNS * BLOCK_SIZE / SAMPLE_RATE
         image = ax.imshow(latest["spectrogram"], aspect="auto", origin="lower",
-                           extent=(-seconds_of_history, 0, 0, MAX_DISPLAY_HZ),
-                           cmap="magma", vmin=DB_FLOOR, vmax=20)
+                          extent=(-seconds_of_history, 0, 0, MAX_DISPLAY_HZ),
+                          cmap="magma", vmin=DB_FLOOR, vmax=20)
         ax.set_xlabel("seconds ago")
         ax.set_ylabel("Hz")
-        ax.set_title("Live spectrogram (brighter = louder)")
+        ax.set_title("Live spectrogram (brighter = louder) -- green = drive bands, orange = shield bands")
         fig.colorbar(image, ax=ax, label="dB")
+        _shade_bands(ax, DRIVE_TONES, "#4dff88")
+        _shade_bands(ax, SHIELD_TONES, "#ffa94d")
 
-        band_colors = {"stop_band": "cyan", "turn_band": "white", "forward_band": "lime"}
-        for key, color in band_colors.items():
-            lo, hi = config[key]
-            ax.axhspan(lo, hi, color=color, alpha=0.12)
-            ax.axhline(lo, color=color, linewidth=0.5, alpha=0.6)
-            ax.axhline(hi, color=color, linewidth=0.5, alpha=0.6)
-            ax.text(-0.3, (lo + hi) / 2, key.replace("_band", ""), color=color,
-                    fontsize=8, va="center")
-
-        hud = fig.text(0.5, 0.01, "", ha="center", va="bottom", fontsize=12, fontweight="bold")
-        fig.tight_layout(rect=(0, 0.05, 1, 1))
+        hud_drive = fig.text(0.02, 0.045, "", fontsize=11, family="monospace", fontweight="bold")
+        hud_shield = fig.text(0.02, 0.015, "", fontsize=11, family="monospace", fontweight="bold")
+        fig.tight_layout(rect=(0, 0.08, 1, 1))
 
         def update(_frame):
-            image.set_data(latest["spectrogram"])
-            freq = latest["frequency"]
-            freq_str = f"{freq:.0f} Hz" if freq else "--"
-            passes = latest["passes_gate"]
-            hud.set_text(
-                f"freq={freq_str}   tonal ratio={latest['tonal_ratio']:.1f} (gate {TONAL_RATIO_GATE})"
-                f"   rms={latest['rms']:.4f} (floor {NOISE_FLOOR_RMS})"
-                f"   ->  {'WHISTLE' if passes else 'no whistle / noise'}")
-            hud.set_color("lime" if passes else "red")
-            return image, hud
+            with state_lock:
+                image.set_data(latest["spectrogram"].copy())
+                readings = dict(latest["readings"])
+                rms = latest["rms"]
+            for hud, name in ((hud_drive, "drive"), (hud_shield, "shield")):
+                reading = readings[name]
+                hud.set_text(_describe(f"{name.upper():<6}", reading)
+                             + (f"   rms {rms:.4f}" if name == "drive" else ""))
+                hud.set_color("lime" if reading is not None and reading.tone else "#ff6b6b")
+            return image, hud_drive, hud_shield
 
         ani = FuncAnimation(fig, update, interval=50, blit=False, cache_frame_data=False)
         plt.show()
-        del ani  # silence "unused variable" -- must stay alive only until plt.show() returns
+        del ani  # only needs to stay alive until plt.show() returns
     finally:
         stream.stop_stream()
         stream.close()
