@@ -18,8 +18,8 @@ Two computers, two phones:
 | Computer | Tone | Does |
 |---|---|---|
 | Drive | **1000 Hz** | forward |
-| Drive | **1250 Hz** | turn left (in place) |
-| Drive | **1500 Hz** | turn right (in place) |
+| Drive | **1250 Hz** | one 90° turn left (in place) |
+| Drive | **1500 Hz** | one 90° turn right (in place) |
 | Drive | **2300 Hz** (anything 2150–2450 counts) | hold ≥ 0.5 s → "goal" (ball only) |
 | Drive | *no tone, or out of range* | stop immediately |
 | Shield | **3250 Hz** | hold → shield spins "up" (continuously) |
@@ -70,6 +70,9 @@ my_env_audio\Scripts\python -m pip install legoeducation pyaudio numpy matplotli
 - **`world_cup.py`** — the match script (setup dialog, motors, MQTT, dashboard).
 - **`pyaudio_mic.py`** — microphone picker built on PyAudio.
 - **`songs.py`** — win/lose melodies, played on the hub and the computer at once.
+  On the computer, a win plays **`waka_waka_final.mp3`** and a loss plays
+  **`jb_sorry.mp3`** instead of the beeps (the hub still beeps); if an mp3
+  can't play, the computer falls back to the beeps.
 
 ## Run
 
@@ -90,7 +93,12 @@ Before a match, on the drive computer:
   longer for a bigger movement. Flip `INVERT_SHIELD` if "up" spins the
   wrong way.
 - Watch the car drive once and flip `INVERT_LEFT_MOTOR` /
-  `INVERT_RIGHT_MOTOR` if a wheel spins the wrong way.
+  `INVERT_RIGHT_MOTOR` if a wheel spins the wrong way, and
+  `SWAP_TURN_DIRECTIONS` if "left" turns the car right.
+- Check a turn is really ~90°. The turn uses the Double Motor's IMU; if the
+  hub is mounted on its side, its yaw axis may not be the vertical one --
+  set it with `car.imu_set_yaw_face(...)` after connecting. If a turn ever
+  takes the full 3 s timeout, the yaw isn't being read correctly.
 - Calibrate `PROXIMITY_REFLECTION_THRESHOLD` (default 70, on a ~0-100
   scale) against the real opponent robot and room lighting.
 - Motors only move once the match is **LIVE** (`start` on MQTT, or press
@@ -127,9 +135,16 @@ A new command takes effect after it's heard in **4 updates in a row
 (~185 ms)** with its peak staying within one FFT bin the whole time, so a
 stray sound can't jerk the robot. Once a command is active it only has to
 stay above a lower gate (8×) to keep going. The drive computer maps the
-command straight to wheel speeds: forward = both wheels at 60 %,
-left/right = wheels opposite at 40 % (turn in place). Motor commands are
-only sent to the robot when the command **changes**, not every loop tick.
+command to the wheels: forward = both wheels at 60 %, for as long as the
+tone plays. Left/right are **one-shot**: the moment the command becomes
+left or right, the car makes one 90° turn in place
+(`movement_turn_for_degrees`, which the Double Motor finishes using its own
+IMU) and then stops. Holding the tone doesn't keep turning; to turn again
+the tone has to go away for 0.3 s and come back, or switch to the other
+direction. The control loop watches the yaw to know when the turn is done
+(most of the 90° covered, then still for 0.3 s), with a 3 s timeout that
+stops the car if the yaw never confirms it. Motor commands are only sent to
+the robot when the command **changes**, not every loop tick.
 
 The shield works like the wheels: while the co-pilot hears "up" or "down",
 the Single Motor spins continuously (`motor_run`, 100 %) one way or the
@@ -144,7 +159,8 @@ drive tone that drops out can't be mistaken for a goal.
 
 ### What does your code do if no tone is detected?
 
-The car stops right away. Forward, left, and right drop the moment their
+The car stops right away. (A 90° turn that has already started always
+finishes. The turn is one command, not a held one.) Forward, left, and right drop the moment their
 tone isn't heard in its range (`IMMEDIATE_STOP_TONES`), whether the tone
 stopped or drifted out of its band. The command becomes "none", which maps
 to `car.movement_stop()`. Because of the overlapping FFT window, that's

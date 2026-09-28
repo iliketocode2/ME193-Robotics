@@ -34,9 +34,17 @@ purpose, so the win/lose cue is hard to miss), rather than relying on
     only stdlib), so the same generated samples are written to a blocking
     PyAudio output stream instead (PyAudio is already a dependency of this
     project, for the microphone input side).
+
+On the computer, winning and losing actually play mp3s instead of the beeps
+(the hub still beeps): play_win() plays WIN_MP3, play_lose() plays
+LOSE_MP3 -- see below.
 """
 
+import ctypes
 import io
+import os
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -50,6 +58,14 @@ if sys.platform == "win32":
     import winsound
 else:
     import pyaudio
+
+# Played on the COMPUTER when we win / lose, instead of the beeped
+# SUCCESS_SONG / DEATH_SONG (the hub still beeps those). Uses what each OS
+# already has, so no extra pip install: Windows' built-in MCI player (winmm)
+# or macOS's afplay; on Linux, whichever of ffplay/mpg123 is installed.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+WIN_MP3 = os.path.join(_HERE, "waka_waka_final.mp3")
+LOSE_MP3 = os.path.join(_HERE, "jb_sorry.mp3")
 
 REST_BETWEEN_NOTES_S = 0.05
 COMPUTER_NOTE_DURATION_MS = 180
@@ -159,6 +175,82 @@ def play_computer_song(notes, duration_ms=COMPUTER_NOTE_DURATION_MS, rest_s=REST
         _play_computer_song_windows(notes, duration_ms, rest_s, amplitude)
     else:
         _play_computer_song_pyaudio(notes, duration_ms, rest_s, amplitude)
+
+
+_MCI_ALIAS = "world_cup_win"
+_mp3_process = None  # non-Windows player subprocess, so a replay can stop the old one
+
+
+def _mci(command):
+    """Send one Windows MCI command string; raises RuntimeError on failure."""
+    buf = ctypes.create_unicode_buffer(256)
+    err = ctypes.windll.winmm.mciSendStringW(command, buf, len(buf), None)
+    if err:
+        msg = ctypes.create_unicode_buffer(256)
+        ctypes.windll.winmm.mciGetErrorStringW(err, msg, len(msg))
+        raise RuntimeError(f"MCI '{command}': {msg.value or err}")
+    return buf.value
+
+
+def stop_computer_mp3():
+    """Stop the win mp3 if it's playing (safe to call when it isn't)."""
+    global _mp3_process
+    if sys.platform == "win32":
+        try:
+            _mci(f"close {_MCI_ALIAS}")
+        except RuntimeError:
+            pass  # wasn't open
+    elif _mp3_process is not None:
+        _mp3_process.terminate()
+        _mp3_process = None
+
+
+def play_computer_mp3(path=WIN_MP3):
+    """Start playing `path` on the computer speaker WITHOUT waiting for it to
+    finish (the whole song keeps playing in the background). Returns True if
+    it started, False if it couldn't (missing file, no player) -- the caller
+    falls back to beeps then, so a win/loss is never silent."""
+    global _mp3_process
+    if not os.path.exists(path):
+        print(f"[songs] {path} not found")
+        return False
+    stop_computer_mp3()  # a second result (after an 'r' reset) replaces the old song instead of overlapping
+    try:
+        if sys.platform == "win32":
+            _mci(f'open "{path}" type mpegvideo alias {_MCI_ALIAS}')
+            _mci(f"play {_MCI_ALIAS}")
+            return True
+        player = (["afplay", path] if shutil.which("afplay")
+                  else ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path] if shutil.which("ffplay")
+                  else ["mpg123", "-q", path] if shutil.which("mpg123")
+                  else None)
+        if player is None:
+            print("[songs] No mp3 player found (afplay/ffplay/mpg123)")
+            return False
+        _mp3_process = subprocess.Popen(player, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except (RuntimeError, OSError) as e:
+        print(f"[songs] Couldn't play {os.path.basename(path)}: {e}")
+        return False
+
+
+def _play_mp3_and_beeps(device, mp3, notes):
+    """`mp3` on the computer, `notes` beeped on the hub. Falls back to the
+    beeped song on the computer too if the mp3 can't play."""
+    if play_computer_mp3(mp3):
+        play_song(device, notes)
+    else:
+        play_both(device, notes)
+
+
+def play_win(device):
+    """Win: WIN_MP3 on the computer, SUCCESS_SONG beeped on the hub."""
+    _play_mp3_and_beeps(device, WIN_MP3, SUCCESS_SONG)
+
+
+def play_lose(device):
+    """Loss: LOSE_MP3 on the computer, DEATH_SONG beeped on the hub."""
+    _play_mp3_and_beeps(device, LOSE_MP3, DEATH_SONG)
 
 
 def play_both(device, notes):

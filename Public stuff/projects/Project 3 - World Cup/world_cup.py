@@ -23,6 +23,7 @@ Run (from the my_env_audio venv -- NOT my_env, see README):
 """
 
 import json
+import math
 import os
 import sys
 import threading
@@ -44,7 +45,7 @@ from lelib import colorSensor, doubleMotor, singleMotor  # noqa: E402
 from mqttlib import MQTTClient  # noqa: E402
 
 from pyaudio_mic import pick_mic
-from songs import DEATH_SONG, SUCCESS_SONG, play_both
+from songs import DEATH_SONG, SUCCESS_SONG, play_lose, play_win
 from tone_policy import (BLOCK_SIZE, DRIVE_TONES, SAMPLE_RATE, SHIELD_TONES, TONAL_RATIO_GATE,
                          ToneDetector, band_half_width)
 
@@ -69,8 +70,26 @@ SENSOR_CARD_COLOR = le.LEGO_COLOR_GREEN
 INVERT_LEFT_MOTOR = True
 INVERT_RIGHT_MOTOR = True
 FORWARD_SPEED = 60  # % -- both wheels while the "forward" tone plays
-TURN_SPEED = 40     # % -- wheels spin opposite ways (turn in place) for "left"/"right"
 GOAL_HOLD_S = 0.5   # hold the "goal" tone this long to call a goal (ball only)
+
+# --- Turn tuning -------------------------------------------------------------------
+# "left"/"right" each make ONE in-place turn of TURN_DEGREES (the Double
+# Motor's own IMU-controlled movement_turn_for_degrees), then the car stops.
+# To turn again, the tone has to go away for TURN_REARM_S and come back (or
+# switch to the other direction) -- holding it doesn't keep turning.
+TURN_DEGREES = 90
+TURN_SPEED = 40               # %
+SWAP_TURN_DIRECTIONS = False  # flip if "left" turns the car right
+TURN_REARM_S = 0.3            # tone must be gone this long to count as a NEW command (a mic glitch isn't)
+# The turn counts as finished once the yaw has covered TURN_DONE_FRACTION of
+# the turn and then held still for TURN_SETTLE_S. The Double Motor reports
+# yaw only every ~100ms, so the settle window spans a few reports -- one late
+# report mustn't look like "stopped". Finishing never sends a stop (the
+# firmware ends its own turn); only TURN_TIMEOUT_S, the backstop for e.g. no
+# yaw readings, stops the car.
+TURN_DONE_FRACTION = 0.8
+TURN_SETTLE_S = 0.3
+TURN_TIMEOUT_S = 3.0
 
 # --- Shield tuning ----------------------------------------------------------------
 # The shield motor spins CONTINUOUSLY while "up" or "down" is held and stops
@@ -99,13 +118,13 @@ STALE_READING_S = 0.25
 
 # Wheel speeds (left, right) for each drive command, before INVERT_* flags.
 # None = no tone = stop. "goal" also holds still while it's being held.
+# "left"/"right" aren't here -- they're one-shot turns (start_turn()).
 DRIVE_COMMANDS = {
     None: (0, 0),
     "forward": (FORWARD_SPEED, FORWARD_SPEED),
-    "left": (-TURN_SPEED, TURN_SPEED),
-    "right": (TURN_SPEED, -TURN_SPEED),
     "goal": (0, 0),
 }
+TURN_COMMANDS = ("left", "right")
 
 # --- State shared between the audio callback, MQTT thread, control loop and
 # the dashboard. Only touched under state_lock. -------------------------------------
@@ -120,6 +139,7 @@ shared = {
     "shield_target": "stop",     # "up"/"down"/"stop". drive: latest from co-pilot. co-pilot: what it's sending.
     "shield_msg_time": 0.0,      # drive: time.monotonic() of the last message from the co-pilot
     "last_drive": (0, 0),        # last (left, right) actually sent to the car
+    "turn_status": "ready",      # dashboard text for the one-shot turns
     "last_proximity": None,
     "mqtt_log": deque(maxlen=10),
 }
@@ -143,12 +163,51 @@ def _publish(payload_dict):
 
 
 def drive_wheels(command):
-    left, right = DRIVE_COMMANDS[command]
+    left, right = DRIVE_COMMANDS[None if command in TURN_COMMANDS else command]
     if INVERT_LEFT_MOTOR:
         left = -left
     if INVERT_RIGHT_MOTOR:
         right = -right
     return left, right
+
+
+def _yaw_delta(yaw, start_yaw):
+    """|yaw - start_yaw| in degrees, wrapped to 0-180 (NaN if either is unknown)."""
+    return abs((yaw - start_yaw + 180) % 360 - 180)
+
+
+def start_turn(command):
+    """Send one IMU-controlled turn of TURN_DEGREES. Non-blocking: the
+    control loop keeps running (sensor, goal, shield) and watches the yaw
+    to see when it's done. Returns the turn's tracking state."""
+    left = (command == "left") != SWAP_TURN_DIRECTIONS
+    direction = le.MOVEMENT_TURN_DIRECTION_LEFT if left else le.MOVEMENT_TURN_DIRECTION_RIGHT
+    yaw = car.yaw()
+    car.movement_turn_for_degrees(TURN_DEGREES, direction=direction, speed=TURN_SPEED, blocking=False)
+    now = time.monotonic()
+    return {"command": command, "start_time": now, "start_yaw": yaw,
+            "last_yaw": yaw, "steady_since": now}
+
+
+def turn_finished(turn, now):
+    """True once the turn is done: yaw has covered most of it and stopped
+    changing, or TURN_TIMEOUT_S passed (then the car is stopped here)."""
+    yaw = car.yaw()
+    steady = not (math.isnan(yaw) or math.isnan(turn["last_yaw"])) and abs(yaw - turn["last_yaw"]) < 1.0
+    if not steady:
+        turn["last_yaw"], turn["steady_since"] = yaw, now
+    turned = _yaw_delta(yaw, turn["start_yaw"])
+    shown = "?" if math.isnan(turned) else f"{turned:.0f}"
+    with state_lock:
+        shared["turn_status"] = f"turning {turn['command']}  {shown} / {TURN_DEGREES} deg"
+    if turned >= TURN_DONE_FRACTION * TURN_DEGREES and now - turn["steady_since"] >= TURN_SETTLE_S:
+        return True
+    if now - turn["start_time"] >= TURN_TIMEOUT_S:
+        print(f"[turn] {turn['command']} didn't confirm within {TURN_TIMEOUT_S}s "
+              f"(yaw moved {shown} deg) -- stopping")
+        car.movement_stop()
+        return True
+    return False
 
 
 def announce_result(song, message):
@@ -164,7 +223,11 @@ def announce_result(song, message):
             stop()
         except Exception:
             pass
-    play_both(car, song)
+    # mp3 on the computer, the matching beeped song on the hub (see songs.py)
+    if song is SUCCESS_SONG:
+        play_win(car)
+    else:
+        play_lose(car)
 
 
 # --- MQTT ------------------------------------------------------------------------------
@@ -256,6 +319,9 @@ def run_drive_loop(stop_event):
     sent_shield = None
     goal_started = None  # when the current "goal" tone began, or None
     goal_fired = False
+    turn = None            # start_turn()'s state while a one-shot turn is running
+    last_turn = None       # the turn command that must be released before it can fire again
+    released_since = None  # when last_turn's tone was last seen gone
 
     while not stop_event.is_set():
         with state_lock:
@@ -272,19 +338,51 @@ def run_drive_loop(stop_event):
         try:
             if remote_result is not None:
                 announce_result(*remote_result)
-                sent_drive = (0, 0)
+                sent_drive, turn = (0, 0), None
                 continue
 
             command = reading.tone if (live and reading is not None) else None
-            wheels = drive_wheels(command)
-            if wheels != sent_drive:
-                if wheels == (0, 0):
-                    car.movement_stop()
-                else:
-                    car.movement_move_tank(*wheels, blocking=False)
-                sent_drive = wheels
+            now = time.monotonic()
+
+            # Re-arm: the tone behind the last turn has to be gone for
+            # TURN_REARM_S before that same turn can fire again.
+            if command == last_turn:
+                released_since = None
+            elif released_since is None:
+                released_since = now
+            if last_turn is not None and released_since is not None and now - released_since >= TURN_REARM_S:
+                last_turn = None
+
+            if turn is not None:
+                if not live:
+                    car.movement_stop()  # match ended/reset mid-turn
+                    turn, sent_drive = None, (0, 0)
+                elif turn_finished(turn, now):
+                    turn = None
+                    # The firmware stops the car itself at the end of the turn, so
+                    # count it as stopped -- sending a stop now could cut a turn
+                    # short if "finished" was judged a little early.
+                    sent_drive = (0, 0)
+
+            if turn is None and command in TURN_COMMANDS and command != last_turn:
+                turn = start_turn(command)
+                last_turn, released_since = command, None
+                sent_drive = None
                 with state_lock:
-                    shared["last_drive"] = wheels
+                    shared["last_drive"] = (0, 0)
+            elif turn is None:
+                wheels = drive_wheels(command)
+                if wheels != sent_drive:
+                    if wheels == (0, 0):
+                        car.movement_stop()
+                    else:
+                        car.movement_move_tank(*wheels, blocking=False)
+                    sent_drive = wheels
+                    with state_lock:
+                        shared["last_drive"] = wheels
+                with state_lock:
+                    shared["turn_status"] = (f"{last_turn} done -- release the tone to turn again"
+                                             if last_turn else "ready")
 
             # Shield and sensor get their own try: a failure there shouldn't
             # stop the car and make a held drive tone stutter.
@@ -316,13 +414,13 @@ def run_drive_loop(stop_event):
                     goal_fired = True
                     _publish({"event": "goal", "team": TEAM_NAME})
                     announce_result(SUCCESS_SONG, "GOAL! You scored.")
-                    sent_drive = (0, 0)
+                    sent_drive, turn = (0, 0), None
             else:
                 goal_started, goal_fired = None, False
                 if reflection is not None and reflection >= PROXIMITY_REFLECTION_THRESHOLD:
                     _publish({"event": "fail", "team": TEAM_NAME})
                     announce_result(DEATH_SONG, "Caught! You failed.")
-                    sent_drive = (0, 0)
+                    sent_drive, turn = (0, 0), None
         except Exception as e:
             print(f"[control loop] Error, stopping car and shield: {e}")
             for stop in (car.movement_stop, shield.stop):
@@ -330,7 +428,7 @@ def run_drive_loop(stop_event):
                     stop()
                 except Exception:
                     pass
-            sent_drive, sent_shield = (0, 0), "stop"
+            sent_drive, sent_shield, turn = (0, 0), "stop", None
         finally:
             stop_event.wait(CONTROL_LOOP_PERIOD_S)
 
@@ -434,6 +532,7 @@ def run_dashboard(mode):
             over = shared["game_over"]
             reason = shared["game_over_reason"]
             last_drive = shared["last_drive"]
+            turn_status = shared["turn_status"]
             shield_target = shared["shield_target"]
             proximity = shared["last_proximity"]
             log = list(shared["mqtt_log"])
@@ -457,6 +556,7 @@ def run_dashboard(mode):
             lines.append(f"Command:  {(reading.tone or 'none').upper()}")
         if mode == "drive":
             lines.append(f"Wheels:   L={last_drive[0]:+d}%  R={last_drive[1]:+d}%")
+            lines.append(f"Turn:     {turn_status}")
             lines.append(f"Shield:   {shield_target} (from co-pilot)")
             prox = "--" if proximity is None else f"{proximity}"
             lines.append(f"Sensor:   {prox}  (caught at >= {PROXIMITY_REFLECTION_THRESHOLD})")
