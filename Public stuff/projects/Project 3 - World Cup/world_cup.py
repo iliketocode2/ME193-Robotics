@@ -7,8 +7,10 @@ Play fixed pitches from a phone tone-generator app into the laptop mic
 (see tone_policy.py for the exact frequencies):
     - DRIVE computer (connected to the robot): forward / left / right,
       plus a held "goal" tone. No tone = stop.
-    - SHIELD co-pilot computer (no robot connection): "up" / "down" for
-      the Single Motor shield, relayed to the drive computer over MQTT.
+    - SHIELD co-pilot computer (no robot connection): "up" / "down" spin
+      the Single Motor shield continuously one way or the other while the
+      tone is held (no tone = shield stops), relayed to the drive computer
+      over MQTT.
       The shield tones are all higher than the drive tones, and each
       computer only listens inside its own range, so the two phones never
       interfere.
@@ -71,12 +73,16 @@ TURN_SPEED = 40     # % -- wheels spin opposite ways (turn in place) for "left"/
 GOAL_HOLD_S = 0.5   # hold the "goal" tone this long to call a goal (ball only)
 
 # --- Shield tuning ----------------------------------------------------------------
-# The arm's position when the script connects counts as "down" (0). Start
-# every match with the arm DOWN, out of the sensor's way. "up" rotates it
-# SHIELD_UP_DEGREES from there -- make this negative if it swings the wrong way.
-SHIELD_UP_DEGREES = 90
-SHIELD_SPEED = 100
-SHIELD_RESEND_S = 1.0  # co-pilot re-sends its shield state this often, in case an MQTT message is lost
+# The shield motor spins CONTINUOUSLY while "up" or "down" is held and stops
+# when the tone stops -- hold longer for a bigger movement. Flip
+# INVERT_SHIELD if "up" spins the wrong way.
+INVERT_SHIELD = False
+SHIELD_SPEED = 100      # % -- the motor's own speed setting (always positive; direction picks the way)
+SHIELD_RESEND_S = 0.25  # co-pilot re-sends its shield state this often, in case an MQTT message is lost
+# Dead-man: the drive computer stops the shield if it hears nothing from the
+# co-pilot for this long, so a lost "stop" message or a crashed co-pilot
+# can't leave it spinning.
+SHIELD_TIMEOUT_S = 1.0
 
 # --- Proximity ("caught") -----------------------------------------------------------
 # reflection() reads roughly 0-100 on real hardware. Calibrate on-site
@@ -111,7 +117,8 @@ shared = {
     "game_over": False,
     "game_over_reason": None,
     "remote_result_pending": None,  # (song, message) queued by on_mqtt_message
-    "shield_target": "down",     # drive: latest from co-pilot. co-pilot: what it's sending.
+    "shield_target": "stop",     # "up"/"down"/"stop". drive: latest from co-pilot. co-pilot: what it's sending.
+    "shield_msg_time": 0.0,      # drive: time.monotonic() of the last message from the co-pilot
     "last_drive": (0, 0),        # last (left, right) actually sent to the car
     "last_proximity": None,
     "mqtt_log": deque(maxlen=10),
@@ -152,10 +159,11 @@ def announce_result(song, message):
         shared["game_over_reason"] = message
         shared["last_drive"] = (0, 0)
     print(f"[GAME] {message}")
-    try:
-        car.movement_stop()  # not lelib's car.stop(), which only stops the left motor
-    except Exception:
-        pass
+    for stop in (car.movement_stop, shield.stop):  # not lelib's car.stop(), which only stops the left motor
+        try:
+            stop()
+        except Exception:
+            pass
     play_both(car, song)
 
 
@@ -205,15 +213,26 @@ def on_mqtt_message(topic, payload):
 
 
 def on_control_message(topic, payload):
-    """Drive computer: {"shield": "up"|"down"} from the co-pilot."""
+    """Drive computer: {"shield": "up"|"down"|"stop"} from the co-pilot."""
     try:
         data = json.loads(payload)
     except ValueError:
         return
     target = data.get("shield") if isinstance(data, dict) else None
-    if target in SHIELD_TONES:
+    if target in SHIELD_TONES or target == "stop":
         with state_lock:
             shared["shield_target"] = target
+            shared["shield_msg_time"] = time.monotonic()
+
+
+def run_shield(command):
+    """Spin the shield continuously for "up"/"down", stop it for "stop"."""
+    if command == "stop":
+        shield.stop()
+        return
+    clockwise = (command == "up") != INVERT_SHIELD
+    direction = le.MOTOR_MOVE_DIRECTION_CLOCKWISE if clockwise else le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE
+    shield.motor_run(direction=direction, speed=SHIELD_SPEED, blocking=False)
 
 
 # --- Audio -------------------------------------------------------------------------------
@@ -247,6 +266,8 @@ def run_drive_loop(stop_event):
             remote_result = shared["remote_result_pending"]
             shared["remote_result_pending"] = None
             shield_target = shared["shield_target"]
+            if time.monotonic() - shared["shield_msg_time"] > SHIELD_TIMEOUT_S:
+                shield_target = "stop"  # co-pilot went quiet -- don't leave the shield spinning
 
         try:
             if remote_result is not None:
@@ -269,16 +290,22 @@ def run_drive_loop(stop_event):
             # stop the car and make a held drive tone stutter.
             reflection = None
             try:
-                if live and shield_target != sent_shield:
-                    position = SHIELD_UP_DEGREES if shield_target == "up" else 0
-                    shield.motor_run_to_relative_position(position, speed=SHIELD_SPEED, blocking=False)
-                    sent_shield = shield_target
+                # Once shutdown starts, only ever stop -- never start the shield
+                # after main() has already sent its cleanup stop.
+                shield_command = shield_target if live and not stop_event.is_set() else "stop"
+                if shield_command != sent_shield:
+                    sent_shield = shield_command  # set first: a failing command isn't retried every tick
+                    try:
+                        run_shield(shield_command)
+                    except Exception:
+                        if shield_command == "stop":
+                            sent_shield = None  # a failed STOP must be retried -- the shield may still be spinning
+                        raise
                 reflection = sensor.reflection()
                 with state_lock:
                     shared["last_proximity"] = reflection
             except Exception as e:
                 print(f"[control loop] Shield/sensor error: {e}")
-                sent_shield = shield_target  # don't retry every tick
 
             if not live or ROLE != "ball":
                 continue
@@ -297,20 +324,21 @@ def run_drive_loop(stop_event):
                     announce_result(DEATH_SONG, "Caught! You failed.")
                     sent_drive = (0, 0)
         except Exception as e:
-            print(f"[control loop] Error, stopping car: {e}")
-            try:
-                car.movement_stop()
-            except Exception:
-                pass
-            sent_drive = (0, 0)
+            print(f"[control loop] Error, stopping car and shield: {e}")
+            for stop in (car.movement_stop, shield.stop):
+                try:
+                    stop()
+                except Exception:
+                    pass
+            sent_drive, sent_shield = (0, 0), "stop"
         finally:
             stop_event.wait(CONTROL_LOOP_PERIOD_S)
 
 
 def run_copilot_loop(stop_event):
-    """Shield co-pilot: the last "up"/"down" tone heard sticks until the
-    other one is played. Publishes on change, and every SHIELD_RESEND_S."""
-    target = "down"
+    """Shield co-pilot: "up"/"down" while that tone is held, "stop" the
+    moment it isn't. Publishes on change, and every SHIELD_RESEND_S."""
+    target = "stop"
     last_sent_target, last_sent_time = None, 0.0
 
     while not stop_event.is_set():
@@ -318,8 +346,7 @@ def run_copilot_loop(stop_event):
             reading = shared["reading"]
             if time.monotonic() - shared["reading_time"] > STALE_READING_S:
                 reading = None
-        if reading is not None and reading.tone in SHIELD_TONES:
-            target = reading.tone
+        target = reading.tone if reading is not None and reading.tone in SHIELD_TONES else "stop"
 
         now = time.monotonic()
         if target != last_sent_target or now - last_sent_time >= SHIELD_RESEND_S:
@@ -541,8 +568,6 @@ def _run_as_drive():
         sensor.connect(card_serial=SENSOR_CARD_SERIAL, card_color=SENSOR_CARD_COLOR)
         if not (car.connected and shield.connected and sensor.connected):
             raise ConnectionError("One or more devices did not connect.")
-
-        shield.motor_reset_relative_position()  # wherever the arm is now = "down"
 
         loop_thread = threading.Thread(target=run_drive_loop, args=(stop_event,), daemon=True)
         loop_thread.start()

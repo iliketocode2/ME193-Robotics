@@ -81,6 +81,20 @@ for name, f in DRIVE_TONES.items():
     readings = feed(ToneDetector(SHIELD_TONES), [distorted(f) for _ in range(10)])
     check(f"harmonics of {name} ({f} Hz) don't move the shield", all(r.tone is None for r in readings))
 
+# The goal tone anywhere in its range -- distorted -- never moves the shield
+# (its 2x harmonic spans 4300-4900Hz, which is why the shield tones sit lower).
+for f in (DRIVE_TONES["goal"] - band_half_width("goal"), DRIVE_TONES["goal"] + band_half_width("goal")):
+    readings = feed(ToneDetector(SHIELD_TONES), [distorted(f) for _ in range(10)])
+    check(f"harmonics of goal played at {f} Hz don't move the shield", all(r.tone is None for r in readings))
+
+# The shield spins continuously while its tone is held, so it must stop the
+# moment the tone does.
+for name in SHIELD_TONES:
+    blocks = [tone(SHIELD_TONES[name]) for _ in range(8)] + [np.zeros(BLOCK_SIZE)] * 5
+    readings = feed(ToneDetector(SHIELD_TONES), blocks)
+    check(f"silence -> shield '{name}' stops within one update",
+          readings[7].tone == name and all(r.tone is None for r in readings[9:]))
+
 # A loud tone just OUTSIDE a band doesn't leak into it.
 for tones in (DRIVE_TONES, SHIELD_TONES):
     for name, f in tones.items():

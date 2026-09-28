@@ -35,13 +35,13 @@ FFT_SIZE = 2 * BLOCK_SIZE
 # within band_half_width(name) of one of them (BAND_HALF_WIDTH_HZ, unless
 # BAND_HALF_WIDTHS_HZ gives that command its own).
 #
-# The shield tones sit well above the drive tones. All of them were picked
-# so that no 2nd/3rd/4th harmonic of a drive tone (a loud phone speaker
-# distorts a little) lands within 200Hz of ANY command -- e.g. "goal" (2300)
-# sits 300Hz above 2x1000 and 200Hz below 2x1250, its own 2x (4600) is 350Hz
-# clear of "up" (4250), and 3x1500 = 4500 / 4x1000 = 4000 are both 250Hz
-# clear of "up". Re-check that if you change these (2500 would NOT work --
-# it's exactly 2x "left").
+# The shield tones sit above the drive tones. All of them were picked so
+# that no 2nd/3rd/4th harmonic of a drive tone (a loud phone speaker
+# distorts a little) lands within 200Hz of ANY command -- anywhere in the
+# goal's 2150-2450 range included. E.g. "goal" (2300) sits between 2x1000
+# and 2x1250; the shield tones sit in the clean gap between 3000 (2x1500,
+# 3x1000) and 3750 (3x1250), well below the goal's 2x (4300-4900). Re-check
+# that if you change these (2500 would NOT work -- it's exactly 2x "left").
 DRIVE_TONES = {
     "forward": 1000,
     "left": 1250,
@@ -49,8 +49,8 @@ DRIVE_TONES = {
     "goal": 2300,
 }
 SHIELD_TONES = {
-    "up": 4250,
-    "down": 5600,
+    "up": 3250,
+    "down": 3500,
 }
 BAND_HALF_WIDTH_HZ = 60  # phone tones are exact; a narrow band gives noise fewer bins to land in
 # "goal" gets a wider range (2150-2450Hz) so it's easy to hit. It can't grow
@@ -85,11 +85,11 @@ STABLE_BINS = 1
 HOLD_S = 0.3  # keep the current tone active through dropouts shorter than this
 
 # These commands drop the INSTANT their tone isn't heard in range -- no
-# HOLD_S grace -- so the car stops exactly when the tone stops or drifts out
-# of its band. To keep a momentary dropout from making the car stutter, the
+# HOLD_S grace -- so the car (and the continuously-spinning shield) stops
+# exactly when the tone stops or drifts out of its band. To keep a momentary dropout from making the car stutter, the
 # SAME tone coming back within HOLD_S resumes right away, without waiting
 # CONFIRM_BLOCKS again. "goal" keeps HOLD_S so a held goal isn't reset by a blip.
-IMMEDIATE_STOP_TONES = {"forward", "left", "right"}
+IMMEDIATE_STOP_TONES = {"forward", "left", "right", "up", "down"}
 
 
 def band_half_width(name):

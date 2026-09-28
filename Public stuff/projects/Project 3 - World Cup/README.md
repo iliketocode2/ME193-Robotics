@@ -22,8 +22,9 @@ Two computers, two phones:
 | Drive | **1500 Hz** | turn right (in place) |
 | Drive | **2300 Hz** (anything 2150–2450 counts) | hold ≥ 0.5 s → "goal" (ball only) |
 | Drive | *no tone, or out of range* | stop immediately |
-| Shield | **4250 Hz** | shield up |
-| Shield | **5600 Hz** | shield down (stays where it was last put) |
+| Shield | **3250 Hz** | hold → shield spins "up" (continuously) |
+| Shield | **3500 Hz** | hold → shield spins "down" (continuously) |
+| Shield | *no tone, or out of range* | shield stops immediately |
 
 A tone counts if it's within ±60 Hz of these (±150 Hz for "goal"), so play
 the exact number. The goal range can't get any wider: 2000 Hz (2× forward)
@@ -32,11 +33,14 @@ The shield tones are all higher than the drive tones, and each computer
 only listens for its own tones, so the two phones can play at the same
 time without either computer reacting to the other one. The frequencies
 were also picked so that no 2nd/3rd/4th harmonic of a drive tone lands
-within 200 Hz of any command. A loud phone speaker distorts a little, and
+within 200 Hz of any command, anywhere in the goal's range included. The
+shield tones sit in the clean gap between 3000 Hz (2× right, 3× forward)
+and 3750 Hz (3× left); an earlier "up" at 4250 Hz was only 50 Hz from the
+2× harmonic of a goal tone played at 2150 Hz. A loud phone speaker distorts a little, and
 without this spacing it could, for example, trigger "goal" or the shield.
 
 Frequencies, the band widths, and the noise gate live at the top of
-`tone_policy.py`. Speeds, shield swing, and goal-hold time live at the top
+`tone_policy.py`. Speeds, shield speed/direction, and goal-hold time live at the top
 of `world_cup.py`.
 
 ## Two virtual environments — read this first
@@ -82,9 +86,9 @@ opponent's team name.
 Before a match, on the drive computer:
 
 - Fill in the `*_CARD_SERIAL` / `*_CARD_COLOR` values in `world_cup.py`.
-- **Start with the shield arm DOWN.** Wherever the arm is when the script
-  connects counts as "down"; "up" swings it `SHIELD_UP_DEGREES` (90°) from
-  there. Make that negative if it swings the wrong way.
+- The shield spins continuously while "up" or "down" is held, so hold
+  longer for a bigger movement. Flip `INVERT_SHIELD` if "up" spins the
+  wrong way.
 - Watch the car drive once and flip `INVERT_LEFT_MOTOR` /
   `INVERT_RIGHT_MOTOR` if a wheel spins the wrong way.
 - Calibrate `PROXIMITY_REFLECTION_THRESHOLD` (default 70, on a ~0-100
@@ -127,10 +131,12 @@ command straight to wheel speeds: forward = both wheels at 60 %,
 left/right = wheels opposite at 40 % (turn in place). Motor commands are
 only sent to the robot when the command **changes**, not every loop tick.
 
-The shield co-pilot latches: the last up/down tone it heard sticks until
-the other is played. It publishes `{"shield": "up"|"down"}` on change (and
-re-sends every second in case a message is lost). The drive computer moves
-the Single Motor to 0° or 90° from its starting position when that changes.
+The shield works like the wheels: while the co-pilot hears "up" or "down",
+the Single Motor spins continuously (`motor_run`, 100 %) one way or the
+other, and the moment the tone stops, it stops. The co-pilot publishes
+`{"shield": "up"|"down"|"stop"}` on change and re-sends it every 0.25 s in
+case a message is lost. As a dead-man switch, the drive computer stops the
+shield if it hears nothing from the co-pilot for 1 s.
 
 Goal: holding the 2300 Hz tone for 0.5 s publishes the goal message and
 plays the success song (ball only). Needing a held, dedicated tone means a
@@ -146,8 +152,8 @@ within one update (~46–90 ms). The car never keeps driving on a command
 nobody is playing. If the *same* tone comes back within 0.3 s (`HOLD_S`), it
 resumes right away without the ~185 ms re-confirmation, so a brief glitch
 is a brief stop, not a long stutter. The goal tone keeps the 0.3 s grace
-period, so a blip doesn't reset a held goal. The shield stays where it was last
-put, since it's a position, not a motion. If the microphone stops delivering
+period, so a blip doesn't reset a held goal. The shield stops the same way,
+and also stops if the co-pilot goes quiet for 1 s. If the microphone stops delivering
 audio at all (device unplugged, laptop asleep), the last reading expires
 after 0.25 s and the car stops. Separately, any error in the drive part of
 the control loop stops the car, and the car and shield are always stopped
@@ -191,7 +197,7 @@ Uses `mqttlib.MQTTClient` (`test.mosquitto.org`, `qos=0`, no retain).
   you lose). Your own echoed messages and other teams' messages are
   ignored. **Agree on both team names with your opponent before the match.**
 - Shield relay, team-scoped: `ME193/Rogers/control/<TEAM_NAME>` carries
-  `{"shield": "up"|"down"}` from the co-pilot to the drive computer.
+  `{"shield": "up"|"down"|"stop"}` from the co-pilot to the drive computer.
 
 ## Hardware / concurrency notes
 
@@ -216,4 +222,4 @@ loud as the tone), loud tones just outside a band, pitch-wandering
 have also been exercised with fake motors/MQTT to confirm the commands they
 send. **Not yet run against the physical robot or a real phone + mic** —
 that still needs to happen, including checking the speeds, turn direction,
-and shield swing direction feel right.
+and shield spin direction feel right.

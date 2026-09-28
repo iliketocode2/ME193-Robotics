@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "useful l
 
 from mqttlib import MQTTClient
 
-TOPIC = "ME193"
+TOPIC = "ME193/Rogers"
 
 
 def on_message(topic, payload):
@@ -31,7 +31,7 @@ with MQTTClient() as client:
     client.subscribe(TOPIC, on_message)
     time.sleep(1)  # give the subscription time to reach the broker
 
-    client.publish(TOPIC, "WOAH I LOVE PIZZA")
-    print(f"Published 'WOAH I LOVE PIZZA' to '{TOPIC}' on test.mosquitto.org")
+    client.publish(TOPIC, "start")
+    print(f"Published 'start' to '{TOPIC}' on test.mosquitto.org")
 
     time.sleep(1)  # give the message time to come back before disconnecting
