@@ -14,12 +14,19 @@ your own messages apart from everyone else's, since the broker echoes
 every publish back to every subscriber -- see MQTTLIB.md's "Reading
 back your own publish" section).
 
+It also shows the World Cup match feed (GAME_TOPIC, what world_cup.py
+publishes on) as centered notices -- "Cucurella scored!", "Match
+started", or any other team's raw result message -- so the chat doubles
+as a scoreboard. That feed is read-only: what you type still goes to
+TOPIC.
+
 Run:
     python "Public stuff/projects/mqtt_chat/mqtt_chat.py"
 """
 
 import json
 import os
+import re
 import sys
 import tkinter as tk
 from tkinter import simpledialog
@@ -44,6 +51,44 @@ from mqttlib import MQTTClient
 # "?" sender, via the fallback in _handle_message below.
 TOPIC = "ME193"
 
+# The World Cup match topic (see Project 3's world_cup.py). Subscribed as
+# its exact name, NOT a "ME193/#" wildcard -- that would also pull in the
+# shield relay on "ME193/Rogers/control/<team>", which a co-pilot re-sends
+# 4x a second during a match.
+GAME_TOPIC = "ME193/Rogers"
+# Some teams' code puts the topic in the message text itself, e.g.
+# "[ME193/Rogers] start" or "[ME193/Ryan] start". A leading [...] tag like
+# that is dropped before a match message is read.
+_TOPIC_TAG = re.compile(r"^\s*\[[^\]]*\]\s*")
+
+
+def strip_topic_tag(text):
+    """'[ME193/Ryan] start' -> 'start'; text without a leading [...] tag is unchanged."""
+    return _TOPIC_TAG.sub("", text, count=1).strip()
+
+
+def parse_match_message(text):
+    """("goal"|"fail", team) for world_cup.py's event JSON, ("start", None)
+    for a start message, else None. A leading [topic] tag is ignored."""
+    text = strip_topic_tag(text)
+    if text.lower() == "start":
+        return "start", None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if isinstance(data, dict) and data.get("event") in ("goal", "fail"):
+        return data["event"], data.get("team", "?")
+    return None
+
+
+NOTICE_COLORS = {  # (background, text) for match-feed notices
+    "goal": ("#d4f5dc", "#135c25"),
+    "fail": ("#fbdada", "#7a1616"),
+    "start": ("#fff1c2", "#6b4f00"),
+    "other": ("#f0f0f0", "#444444"),
+}
+
 BG_COLOR = "#ffffff"
 MY_BUBBLE_COLOR = "#0b93f6"
 MY_TEXT_COLOR = "white"
@@ -61,7 +106,7 @@ class ChatApp:
         root.geometry("420x560")
         root.configure(bg=BG_COLOR)
 
-        tk.Label(root, text=f"Topic: {TOPIC}  (public broker -- see MQTTLIB.md)",
+        tk.Label(root, text=f"Chat: {TOPIC}   Match feed: {GAME_TOPIC}  (public broker -- see MQTTLIB.md)",
                  bg=BG_COLOR, fg="#888888", font=("Segoe UI", 8)).pack(side="top", pady=(6, 0))
 
         # Scrollable message area: a Canvas holding a Frame that grows
@@ -97,6 +142,7 @@ class ChatApp:
         # network thread, not Tkinter's main thread -- see
         # _on_mqtt_message below for why that matters.
         self.client.subscribe(TOPIC, self._on_mqtt_message)
+        self.client.subscribe(GAME_TOPIC, self._on_game_message)
 
     def _on_send(self, event=None):
         text = self.entry.get().strip()
@@ -112,11 +158,45 @@ class ChatApp:
         # instead of touching widgets directly from here.
         self.root.after(0, self._handle_message, payload)
 
+    def _on_game_message(self, topic, payload):
+        self.root.after(0, self._handle_game_message, payload)  # same UI-thread handoff as above
+
+    def _handle_game_message(self, payload):
+        """world_cup.py's {"event": "goal"|"fail", "team": ...}, the
+        instructor's plain "start", or anything else another team's code
+        publishes (shown as-is, since their format may differ from ours)."""
+        match = parse_match_message(payload)
+        if match is None:
+            self._add_notice(f"{GAME_TOPIC}:  {payload.strip()}", "other")
+            return
+        kind, team = match
+        if kind == "goal":
+            self._add_notice(f"⚽  {team} scored!", "goal")
+        elif kind == "fail":
+            self._add_notice(f"☠  {team} got caught", "fail")
+        else:
+            self._add_notice("▶  Match started", "start")
+
+    def _add_notice(self, text, kind):
+        """A centered, colored line for match-feed messages -- visibly not a
+        chat bubble, so nobody mistakes it for something a person typed."""
+        bg, fg = NOTICE_COLORS[kind]
+        row = tk.Frame(self.messages_frame, bg=BG_COLOR)
+        row.pack(fill="x", padx=4, pady=4)
+        tk.Label(row, text=text, bg=bg, fg=fg, wraplength=320, justify="center",
+                 font=("Segoe UI", 10, "bold"), padx=10, pady=4).pack(anchor="center")
+        self.root.after_idle(lambda: self.canvas.yview_moveto(1.0))
+
     def _handle_message(self, payload):
         try:
             data = json.loads(payload)
             sender, text = data["sender"], data["text"]
         except (ValueError, KeyError, TypeError):
+            # A tagged match message ("[ME193/Ryan] start") sent to the chat
+            # topic is shown as a match notice, not an anonymous bubble.
+            if _TOPIC_TAG.match(payload) and parse_match_message(payload):
+                self._handle_game_message(payload)
+                return
             sender, text = "?", payload  # tolerate a plain-text sender, e.g. mqtt_test.py
         self._add_bubble(sender, text, is_me=(sender == self.username))
 

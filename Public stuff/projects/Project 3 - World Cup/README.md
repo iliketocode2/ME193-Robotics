@@ -84,7 +84,9 @@ my_env_audio\Scripts\python "Public stuff\projects\Project 3 - World Cup\world_c
 Run `world_cup.py` on **both** computers. The setup dialog asks for the game
 role (Ball/Goalie), which computer this is (Drive / Shield co-pilot), your
 team name (**must be identical on both computers**), and optionally your
-opponent's team name.
+opponent's team name and the exact messages they publish when they win and
+lose (for opponents whose code doesn't use our format). The dialog also
+shows the two messages *we* publish, so you can read them to the opponent.
 
 Before a match, on the drive computer:
 
@@ -203,6 +205,10 @@ before disconnecting on exit.
 Uses `mqttlib.MQTTClient` (`test.mosquitto.org`, `qos=0`, no retain).
 
 - **`"start"`** — plain text, from the instructor. Nothing moves before it.
+- **Topic tags in the text are ignored.** Some teams' code puts the topic
+  in the message itself, e.g. `[ME193/Rogers] start` or
+  `[ME193/Ryan] start`. A leading `[...]` tag is dropped before any message
+  (start, goal/fail, or a typed opponent message) is read.
 - **`{"event": "fail", "team": "<TEAM_NAME>"}`** — the ball publishes this
   when its front sensor sees the opponent (reflection ≥ threshold), stops,
   and plays `DEATH_SONG`.
@@ -212,6 +218,14 @@ Uses `mqttlib.MQTTClient` (`test.mosquitto.org`, `qos=0`, no retain).
   dialog, you react the opposite way (their fail = you win, their goal =
   you lose). Your own echoed messages and other teams' messages are
   ignored. **Agree on both team names with your opponent before the match.**
+- **Opponents with a different format:** type their exact win and lose
+  messages into the setup dialog. Matching ignores case and surrounding
+  spaces, and JSON matches regardless of spacing or key order. Their win
+  message = you lose (death song), their lose message = you win. Blank
+  fields fall back to the JSON format above. Once the match is decided,
+  further result messages are ignored, so a second song never plays.
+- `mqtt_chat.py` (Public stuff/projects/mqtt_chat) shows this topic as a
+  live match feed next to the chat.
 - Shield relay, team-scoped: `ME193/Rogers/control/<TEAM_NAME>` carries
   `{"shield": "up"|"down"|"stop"}` from the co-pilot to the drive computer.
 

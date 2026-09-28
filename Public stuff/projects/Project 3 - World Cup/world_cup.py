@@ -25,6 +25,7 @@ Run (from the my_env_audio venv -- NOT my_env, see README):
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -53,6 +54,12 @@ from tone_policy import (BLOCK_SIZE, DRIVE_TONES, SAMPLE_RATE, SHIELD_TONES, TON
 ROLE = None                # "ball" or "goalie"
 TEAM_NAME = None           # must be typed identically on the co-pilot's computer
 OPPONENT_TEAM_NAME = None  # blank = don't react to anyone's fail/goal messages
+# The exact text the opponent publishes on MQTT_TOPIC when THEY win (we lose)
+# and when THEY lose (we win) -- for opponents whose code uses different
+# messages than ours. Blank = listen for our own format instead:
+# {"event": "goal"|"fail", "team": OPPONENT_TEAM_NAME}.
+OPPONENT_WIN_MESSAGE = ""
+OPPONENT_LOSE_MESSAGE = ""
 CONTROL_CHANNEL = None     # "drive" (connects to the robot) or "shield" (co-pilot, no hardware)
 CONTROL_TOPIC = None       # f"{MQTT_TOPIC}/control/{TEAM_NAME}"
 DEFAULT_TEAM_NAME = "Cucurella"
@@ -156,6 +163,59 @@ def _log_mqtt(direction, payload):
         shared["mqtt_log"].append({"t": time.time(), "dir": direction, "payload": payload})
 
 
+def our_messages(team):
+    """What this script publishes when we score / get caught (ball only)."""
+    return {"goal": json.dumps({"event": "goal", "team": team}),
+            "fail": json.dumps({"event": "fail", "team": team})}
+
+
+# Some teams' code puts the topic in the message text itself, e.g.
+# "[ME193/Rogers] start" or "[ME193/Ryan] start". A leading [...] tag like
+# that is dropped before a message is read.
+_TOPIC_TAG = re.compile(r"^\s*\[[^\]]*\]\s*")
+
+
+def strip_topic_tag(text):
+    """'[ME193/Ryan] start' -> 'start'; text without a leading [...] tag is unchanged."""
+    return _TOPIC_TAG.sub("", text, count=1).strip()
+
+
+def _same_message(a, b):
+    """True if two MQTT payloads say the same thing: equal as JSON if both
+    parse, otherwise equal as text ignoring case and surrounding spaces.
+    A leading [topic] tag on either one is ignored."""
+    a, b = strip_topic_tag(a), strip_topic_tag(b)
+    try:
+        return json.loads(a) == json.loads(b)
+    except ValueError:
+        return a.casefold() == b.casefold()
+
+
+def _event_json(text):
+    """(event, team) if `text` is our {"event": "goal"|"fail", "team": ...}
+    format, else (None, None)."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None, None
+    if not isinstance(data, dict) or data.get("event") not in ("fail", "goal"):
+        return None, None
+    return data.get("event"), data.get("team")
+
+
+def classify_opponent(text):
+    """"won" / "lost" if `text` is the opponent announcing they won / lost,
+    else None. Checks the typed-in messages first, then our JSON format."""
+    if OPPONENT_WIN_MESSAGE and _same_message(text, OPPONENT_WIN_MESSAGE):
+        return "won"
+    if OPPONENT_LOSE_MESSAGE and _same_message(text, OPPONENT_LOSE_MESSAGE):
+        return "lost"
+    event, team = _event_json(text)
+    if event and OPPONENT_TEAM_NAME and team == OPPONENT_TEAM_NAME:
+        return "won" if event == "goal" else "lost"
+    return None
+
+
 def _publish(payload_dict):
     text = json.dumps(payload_dict)
     mqtt.publish(MQTT_TOPIC, text)
@@ -235,8 +295,8 @@ def announce_result(song, message):
 def on_mqtt_message(topic, payload):
     """Game topic. On the drive computer this can end the match; on the
     co-pilot it only updates the dashboard."""
-    text = payload.strip()
-    _log_mqtt("recv", text)
+    _log_mqtt("recv", payload.strip())
+    text = strip_topic_tag(payload)
 
     if text.lower() == "start":
         with state_lock:
@@ -245,34 +305,32 @@ def on_mqtt_message(topic, payload):
         print("[MQTT] Match started!")
         return
 
-    try:
-        data = json.loads(text)
-    except ValueError:
-        return
-    if not isinstance(data, dict):
-        return
-    event, team = data.get("event"), data.get("team")
-    if event not in ("fail", "goal"):
-        return
+    event, team = _event_json(text)
+    own = event is not None and team == TEAM_NAME  # our own publish echoed back by the broker
+    opponent = classify_opponent(text)
+    opponent_label = OPPONENT_TEAM_NAME or "Opponent"
 
     if CONTROL_CHANNEL == "shield":
-        with state_lock:
-            shared["game_over"] = True
-            shared["game_active"] = False
-            shared["game_over_reason"] = f"{team}: {event}"
+        # The co-pilot has no robot -- it just shows the match is over.
+        if own or opponent:
+            reason = f"{team}: {event}" if own else f"{opponent_label} {opponent}"
+            with state_lock:
+                shared["game_over"] = True
+                shared["game_active"] = False
+                shared["game_over_reason"] = reason
         return
 
-    if team == TEAM_NAME:
-        return  # our own publish echoed back by the broker
-    if not OPPONENT_TEAM_NAME or team != OPPONENT_TEAM_NAME:
+    if own or opponent is None:
         return
 
     # Queue it -- the control loop does the BLE stop + song, not paho's thread.
     with state_lock:
-        if event == "fail":
-            shared["remote_result_pending"] = (SUCCESS_SONG, f"{OPPONENT_TEAM_NAME} got caught -- you win!")
+        if shared["game_over"]:
+            return  # the match is already decided -- don't play a second song
+        if opponent == "lost":
+            shared["remote_result_pending"] = (SUCCESS_SONG, f"{opponent_label} lost -- you win!")
         else:
-            shared["remote_result_pending"] = (DEATH_SONG, f"{OPPONENT_TEAM_NAME} scored -- you lose!")
+            shared["remote_result_pending"] = (DEATH_SONG, f"{opponent_label} won -- you lose!")
 
 
 def on_control_message(topic, payload):
@@ -588,6 +646,9 @@ def run_setup_dialog():
     channel_var = tk.StringVar(value="drive")
     team_var = tk.StringVar(value=DEFAULT_TEAM_NAME)
     opponent_var = tk.StringVar(value="")
+    opp_win_var = tk.StringVar(value="")
+    opp_lose_var = tk.StringVar(value="")
+    ours_var = tk.StringVar()
     pad = {"padx": 16, "pady": (10, 2)}
     bold = ("Segoe UI", 10, "bold")
 
@@ -610,21 +671,53 @@ def run_setup_dialog():
         row=8, column=0, sticky="w", **pad)
     tk.Entry(root, textvariable=opponent_var, width=30).grid(row=9, column=0, sticky="w", padx=32)
 
+    tk.Label(root, text="Opponent's WIN message -- they scored / beat you (optional)", font=bold).grid(
+        row=10, column=0, sticky="w", **pad)
+    tk.Entry(root, textvariable=opp_win_var, width=60).grid(row=11, column=0, sticky="w", padx=32)
+    tk.Label(root, text="Opponent's LOSE message -- they got caught / lost (optional)", font=bold).grid(
+        row=12, column=0, sticky="w", **pad)
+    tk.Entry(root, textvariable=opp_lose_var, width=60).grid(row=13, column=0, sticky="w", padx=32)
+    tk.Label(root, fg="#666666", justify="left",
+             text=f"Type exactly what they publish on {MQTT_TOPIC}. Blank = listen for\n"
+                  '{"event": "goal"/"fail", "team": "<opponent\'s team name>"} instead.').grid(
+        row=14, column=0, sticky="w", padx=32)
+
+    tk.Label(root, text="Tell your opponent -- we publish (ball only):", font=bold).grid(
+        row=15, column=0, sticky="w", **pad)
+    tk.Label(root, textvariable=ours_var, font=("Consolas", 9), justify="left").grid(
+        row=16, column=0, sticky="w", padx=32)
+
+    def show_ours(*_):
+        ours = our_messages(team_var.get().strip() or "?")
+        ours_var.set(f"we win:  {ours['goal']}\nwe lose: {ours['fail']}")
+    team_var.trace_add("write", show_ours)
+    show_ours()
+
     error_label = tk.Label(root, text="", fg="red")
-    error_label.grid(row=10, column=0, sticky="w", padx=32)
+    error_label.grid(row=17, column=0, sticky="w", padx=32)
 
     def on_start():
         team, opponent = team_var.get().strip(), opponent_var.get().strip()
+        opp_win, opp_lose = opp_win_var.get().strip(), opp_lose_var.get().strip()
         if not team:
             error_label.config(text="Team name can't be empty.")
             return
         if opponent == team:
             error_label.config(text="Opponent's team name can't be the same as your own.")
             return
-        result.update(role=role_var.get(), channel=channel_var.get(), team=team, opponent=opponent)
+        if opp_win and opp_lose and _same_message(opp_win, opp_lose):
+            error_label.config(text="The opponent's win and lose messages can't be the same.")
+            return
+        # If an opponent message matched one of ours, our own echoed publish
+        # would look like the opponent's result.
+        if any(m and _same_message(m, ours) for m in (opp_win, opp_lose) for ours in our_messages(team).values()):
+            error_label.config(text="An opponent message can't be the same as one of ours.")
+            return
+        result.update(role=role_var.get(), channel=channel_var.get(), team=team, opponent=opponent,
+                      opp_win=opp_win, opp_lose=opp_lose)
         root.destroy()
 
-    tk.Button(root, text="Start", command=on_start, width=14).grid(row=11, column=0, pady=14)
+    tk.Button(root, text="Start", command=on_start, width=14).grid(row=18, column=0, pady=14)
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     team_entry.focus_set()
     root.mainloop()
@@ -632,7 +725,8 @@ def run_setup_dialog():
     if not result:
         print("Setup cancelled -- exiting.")
         sys.exit(0)
-    return result["role"], result["channel"], result["team"], result["opponent"]
+    return (result["role"], result["channel"], result["team"], result["opponent"],
+            result["opp_win"], result["opp_lose"])
 
 
 def _open_stream(pa, device_index):
@@ -721,14 +815,18 @@ def _run_as_copilot():
 
 def main():
     global ROLE, CONTROL_CHANNEL, TEAM_NAME, OPPONENT_TEAM_NAME, CONTROL_TOPIC, detector
+    global OPPONENT_WIN_MESSAGE, OPPONENT_LOSE_MESSAGE
 
-    ROLE, CONTROL_CHANNEL, TEAM_NAME, OPPONENT_TEAM_NAME = run_setup_dialog()
+    (ROLE, CONTROL_CHANNEL, TEAM_NAME, OPPONENT_TEAM_NAME,
+     OPPONENT_WIN_MESSAGE, OPPONENT_LOSE_MESSAGE) = run_setup_dialog()
     CONTROL_TOPIC = f"{MQTT_TOPIC}/control/{TEAM_NAME}"
     tones = DRIVE_TONES if CONTROL_CHANNEL == "drive" else SHIELD_TONES
     detector = ToneDetector(tones)
 
     print(f"Role: {ROLE}   Computer: {CONTROL_CHANNEL}   Team: {TEAM_NAME}   "
           f"Opponent: {OPPONENT_TEAM_NAME or '(none)'}")
+    print(f"Listening for opponent WIN:  {OPPONENT_WIN_MESSAGE or '(our JSON format)'}")
+    print(f"Listening for opponent LOSE: {OPPONENT_LOSE_MESSAGE or '(our JSON format)'}")
     print("Play these tones from your phone:")
     for name, freq in tones.items():
         print(f"  {freq:>5} Hz  ->  {name}")
