@@ -21,8 +21,8 @@ cap, start_ms = pick_camera()
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `width`   | `1280`  | Requested frame width in pixels |
-| `height`  | `720`   | Requested frame height in pixels |
+| `width`   | `640`   | Requested frame width in pixels |
+| `height`  | `480`   | Requested frame height in pixels |
 
 **Returns**
 
@@ -120,6 +120,24 @@ cap, start_ms = pick_camera(width=1920, height=1080) # full HD if your camera su
 ## Notes
 
 - **macOS only** — camera names come from `system_profiler SPCameraDataType`. On other platforms names fall back to `"Camera 0"`, `"Camera 1"`, etc., and everything else still works.
-- **AVFoundation backend** — the camera is opened with `cv2.CAP_AVFOUNDATION` first, then falls back to the default OpenCV backend if that fails. This avoids a common macOS issue where `cap.read()` returns empty frames.
+- **Backend selection is platform-aware** — macOS opens with `cv2.CAP_AVFOUNDATION` first (avoids a common macOS issue where `cap.read()` returns empty frames); Windows opens with `cv2.CAP_DSHOW` first, falling back to `cv2.CAP_MSMF`. Both fall back to the default OpenCV backend if their preferred one fails.
+- **FOURCC is forced to MJPG** on whatever backend opens successfully. Without this, `cv2.CAP_DSHOW` on Windows can hand back a raw/uncompressed buffer (commonly YUY2) that OpenCV decodes incorrectly as BGR — the visible symptom is a black frame full of horizontal noise bars, not an exception. Some webcam drivers ignore the FOURCC request entirely (harmless no-op); if `cap.get(cv2.CAP_PROP_FOURCC)` after opening still doesn't match, that's the driver's choice, not a bug here.
 - **Warm-up** — a 0.5 s pause after opening lets the camera sensor initialise before the first frame is read, preventing black or garbled first frames.
 - **`start_ms`** — if you are not using MediaPipe you can ignore this value with `cap, _ = pick_camera()`.
+
+### Windows-specific gotcha: valid-looking frames that are all black
+
+If `pick_camera()` runs without errors — camera found, opens, correct
+resolution — but every frame is solid black (not noisy/corrupted, just
+black), this is almost always a **Windows Camera privacy setting**, not
+a bug in this file: Windows silently substitutes a black frame instead
+of raising an error when an app lacks camera permission, so OpenCV sees
+a perfectly valid-shaped, all-zero image and has no way to detect the
+difference.
+
+Fix: **Settings → Privacy & security → Camera** — turn on "Camera
+access", and specifically **"Let desktop apps access your camera"**
+(a terminal-launched Python script is a desktop app, not a Store app —
+this exact toggle is the one that's usually off). Also check for a
+physical lens cover/privacy shutter, and confirm the stock Windows
+Camera app shows a real picture to rule out a hardware issue first.

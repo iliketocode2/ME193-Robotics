@@ -1,0 +1,36 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PY=my_env/Scripts/python.exe; [ -f \"$PY\" ] || PY=my_env/bin/python; \"$PY\" .claude/hooks/py-syntax-check.py",
+            "statusMessage": "Syntax-checking edited .py file"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PY=my_env/Scripts/python.exe; [ -f \"$PY\" ] || PY=my_env/bin/python; \"$PY\" .claude/hooks/block-my-env-edits.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PY=my_env/Scripts/python.exe; [ -f \"$PY\" ] || PY=my_env/bin/python; \"$PY\" .claude/hooks/block-large-git-files.py"
+          }
+        ]
+      }
+    ]
+  }
+}
