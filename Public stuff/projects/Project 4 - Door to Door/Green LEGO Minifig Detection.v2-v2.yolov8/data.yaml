@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['green LEGO minifig']
+
+roboflow:
+  workspace: william-goldman
+  project: green-lego-minifig-detection
+  version: 2
+  license: Private
+  url: https://app.roboflow.com/william-goldman/green-lego-minifig-detection/2
