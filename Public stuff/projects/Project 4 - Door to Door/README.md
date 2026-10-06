@@ -14,7 +14,7 @@ The blue minifig uses the same pipeline on its own topic.
 | File | What it does |
 |---|---|
 | `Green LEGO Minifig Detection.v1-…yolov8/` | Dataset: 37 webcam photos (26 train / 7 valid / 4 test), boxes drawn in Roboflow, exported as YOLOv8 at 512×512. |
-| `train_minifig.py` | Trains the model **locally** with Ultralytics. It fine-tunes COCO-pretrained `yolo11n` on the dataset, prints test-split precision/recall/mAP, and saves `<repo>/models/minifig_yolo.pt`. |
+| `train_minifig.py` | Trains the model **locally** with Ultralytics. It fine-tunes COCO-pretrained `yolo11n` on the dataset, prints test-split precision/recall/mAP, and saves `<repo>/models/minifig_yolo.pt`. It uses the Intel Arc GPU automatically when the `+xpu` PyTorch build is installed (about 8 s/epoch, versus 35–120 s/epoch on the CPU, which throttles under sustained load), and falls back to the CPU otherwise. `DATASETS` can list several Roboflow exports (e.g. a green one and a blue one): they're merged into one dataset with classes matched by name, every label is checked, and box counts per class and split are printed before training. Final val/test scores are computed on the CPU and broken down per class. |
 | `minifig_tracker.py` | Live loop: webcam → YOLO → policy → MQTT. Quit with `q`, `Esc`, or by closing the window; any of these sends a final stop first. |
 | `tracker_ui.py` | The dashboard window (drawing only, no logic). It shows the live feed with detection boxes, the stop zone and direction arrows; a position track; a status card per color (status, error, confidence, motor command); a preview of the UNO Q LED matrix; and the exact MQTT payloads being sent. |
 
@@ -23,7 +23,9 @@ Roboflow was used only for labeling and export. Training, inference, and the con
 ## Setup / run
 
 ```bash
-my_env\Scripts\python -m pip install ultralytics      # pulls in torch (CPU build is fine)
+my_env\Scripts\python -m pip install ultralytics      # pulls in torch (CPU build)
+# Optional, much faster training on an Intel Arc laptop GPU (replaces the CPU torch build):
+my_env\Scripts\python -m pip install torch==2.14.1+xpu torchvision==0.29.1+xpu --index-url https://download.pytorch.org/whl/xpu --extra-index-url https://pypi.org/simple
 my_env\Scripts\python "Public stuff/projects/Project 4 - Door to Door/train_minifig.py"
 my_env\Scripts\python "Public stuff/projects/Project 4 - Door to Door/minifig_tracker.py"
 ```
