@@ -5,3 +5,4 @@ mediapipe==0.10.35        # arm_race_control.py -- hand-pose tracking
 sounddevice==0.5.6        # miclib.py -- audio device listing
 paho-mqtt==2.1.0          # mqttlib.py -- MQTT publish/subscribe
 ultralytics==8.4.171      # Project 4 -- YOLO object detection (pulls in torch)
+websockets==17.2          # Project 5 -- Python game server -> Three.js browser renderer
