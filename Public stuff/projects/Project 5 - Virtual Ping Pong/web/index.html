@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rogers Cup Ping-Pong</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <!-- in-game HUD -->
+  <div id="hud" class="hidden">
+    <div class="pill" id="streakPill"><span class="label">STREAK</span><span id="streak">0</span><span id="fire"></span></div>
+    <div class="pill right" id="recordPill">
+      <span class="label">RECORD</span><span id="record">0.0</span>
+      <span class="mqtt"><i id="mqttDot"></i><span id="topic"></span></span>
+    </div>
+  </div>
+
+  <!-- select screen -->
+  <div id="select" class="hidden">
+    <h1 class="logo">ROGERS <span>CUP</span></h1>
+    <p class="sub">Hold an opponent's <b>AprilTag</b> up to the camera</p>
+    <div id="cards"></div>
+    <div id="confirm" class="confirm">Choose your opponent</div>
+    <div class="inset"><img id="camInset" alt=""><span>camera</span></div>
+  </div>
+
+  <div id="banner" class="banner hidden"></div>
+  <div id="subBanner" class="subbanner hidden"></div>
+  <div id="bubble" class="bubble hidden"></div>
+  <div id="hint" class="hint"></div>
+  <div id="debug" class="debug hidden"></div>
+  <div id="conn" class="conn">Connecting to game&hellip;<small>start <code>pingpong.py</code></small></div>
+
+  <script type="module" src="game.js"></script>
+</body>
+</html>

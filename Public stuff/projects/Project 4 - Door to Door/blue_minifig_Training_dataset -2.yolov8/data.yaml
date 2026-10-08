@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['Training-dataset-2']
+
+roboflow:
+  workspace: courtland-doyle
+  project: training-dataset-2
+  version: dataset
+  license: Private
+  url: https://app.roboflow.com/courtland-doyle/training-dataset-2/dataset

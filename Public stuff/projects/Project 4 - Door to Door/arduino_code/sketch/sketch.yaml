@@ -1,0 +1,10 @@
+profiles:
+  default:
+    fqbn: 
+    platforms:
+      - platform: arduino:zephyr
+    libraries:
+      - ArduinoJson (7.4.3)
+      - Cytron Motor Drivers Library (1.0.1)
+
+default_profile: default
