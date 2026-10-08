@@ -1,5 +1,5 @@
 """Advertise an Arduino UNO Q over mDNS, equivalent to:
-dns-sd -P "Fred2" _arduino._tcp local 80 Fred2.local 10.5.12.199 board=unoq ...
+dns-sd -P "<BOARD_NAME>" _arduino._tcp local 80 <BOARD_NAME>.local <BOARD_IP> board=unoq ...
 Requires: pip install zeroconf
 """
 import socket
@@ -7,12 +7,15 @@ import time
 
 from zeroconf import ServiceInfo, Zeroconf
 
+BOARD_NAME = "Fred2"
+BOARD_IP = "10.247.137.180"
+
 info = ServiceInfo(
     type_="_arduino._tcp.local.",
-    name="Fred2._arduino._tcp.local.",
-    addresses=[socket.inet_aton("10.247.137.180")],
+    name=f"{BOARD_NAME}._arduino._tcp.local.",
+    addresses=[socket.inet_aton(BOARD_IP)],
     port=80,
-    server="Fred2.local.",
+    server=f"{BOARD_NAME}.local.",
     properties={
         "board": "unoq",
         "vid": "0x2341",
@@ -24,7 +27,7 @@ info = ServiceInfo(
 
 zc = Zeroconf()
 zc.register_service(info)
-print("Advertising Fred2 (10.247.137.180). Press Ctrl+C to stop.")
+print(f"Advertising {BOARD_NAME} ({BOARD_IP}). Press Ctrl+C to stop.")
 try:
     while True:
         time.sleep(1)

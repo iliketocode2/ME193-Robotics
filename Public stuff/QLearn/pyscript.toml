@@ -1,0 +1,8 @@
+name = "QLearn-Activities"
+packages = [ "legoeducation==1.0.6","numpy",]
+
+[files]
+"./qlearn.py" = ""
+
+[js_modules.main]
+"./ble.js" = "ble"

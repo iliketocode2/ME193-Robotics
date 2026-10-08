@@ -1,0 +1,1892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pascal's Q-Learning Visualizer</title>
+<link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+<style>
+  :root {
+    --bg-color: #f8fafc;
+    --card-bg: #ffffff;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --success: #10b981;
+    --danger: #ef4444;
+    --border: #e2e8f0;
+    --radius: 12px;
+  }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+  }
+  .header {
+    text-align: center;
+    margin-bottom: 30px;
+  }
+  .header h1 { margin: 0; font-size: 2.5rem; color: var(--accent); }
+  .header p { margin: 10px 0 0; color: var(--text-secondary); }
+
+  .container {
+    display: flex;
+    gap: 20px;
+    width: 100%;
+    max-width: 1200px;
+  }
+
+  .panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  .sidebar { flex: 0 0 220px; min-width: 220px; max-width: 220px; }
+  .main-content { flex: 3; }
+
+  /* Device Connections */
+  .device-card {
+    background: #f1f5f9;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .device-info { display: flex; align-items: center; gap: 10px; }
+  .status-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--danger); }
+  .status-dot.connected { background: var(--success); }
+
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  button:hover:not(:disabled) { background: var(--accent-hover); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.danger { background: var(--danger); }
+  button.danger:hover:not(:disabled) { background: #dc2626; }
+  button.success { background: var(--success); }
+  button.success:hover:not(:disabled) { background: #059669; }
+
+  select {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-family: inherit;
+    font-size: 0.95rem;
+    background: white;
+  }
+
+  .qtable-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .qtable-header-row h2 { margin: 0; }
+  .state-count-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .state-count-control label { font-size: 0.9rem; font-weight: 500; color: var(--text-secondary); }
+  .qtable-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  /* Resizable Q-Table wrapper: drag the bottom-right corner to grow/shrink */
+  .table-resize-wrapper {
+    position: relative;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px;
+    width: 100%;
+    min-width: 340px;
+    min-height: 180px;
+    max-width: 100%;
+  }
+
+  /* Q-Table */
+  table {
+    width: 100%;
+    height: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+  }
+  th, td {
+    padding: 12px;
+    text-align: center;
+    border: 1px solid var(--border);
+  }
+  th { background: #f1f5f9; color: var(--text-secondary); font-weight: 600; }
+  /* Matches the <b> state-name cells' look (monospace, bold, primary text
+     color) instead of the muted/Inter default header style above. */
+  .action-header-label {
+    font-family: monospace;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  /* White background for the Move to LEFT/RIGHT (etc.) header cells,
+     overriding the default th background. */
+  th.action-value-header {
+    background: #ffffff;
+  }
+  /* Matches the "State (Yaw)" axis-label's look (font, weight, color,
+     background) for the "Actions" group header text. */
+  th.axis-style-header {
+    background: #f8fafc;
+  }
+  .axis-header-text {
+    font-family: monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+  /* Small "physically execute this action" button in the Q-table header.
+     Separate visual language (outline style, small) from the main action
+     buttons in the sidebar, since it does something narrower and riskier
+     (direct motor command, no Q-table update). */
+  .execute-action-btn {
+    display: block;
+    margin: 6px auto 0;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 4px;
+  }
+  .execute-action-btn:hover:not(:disabled) {
+    background: var(--accent);
+    color: white;
+  }
+  .execute-action-btn:disabled {
+    border-color: var(--border);
+    color: var(--text-secondary);
+  }
+  td { font-family: monospace; font-size: 1.1rem; transition: background 0.3s; }
+
+  .state-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .state-cell .yaw-condition {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .state-cell input[type="number"] {
+    width: 60px;
+    padding: 3px 5px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.9rem;
+  }
+
+  /* Vertical axis-label column, sits to the left of the actual per-row
+     state names in both the Q-table and the Rewards table. */
+  .axis-label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    text-align: center;
+    vertical-align: middle;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    background: #f8fafc;
+  }
+
+  /* Previous/next state row highlighting, applied to just the state-name cell
+     so it never fights with the per-value background coloring in updateCell(). */
+  .state-cell.row-from {
+    background: rgba(59, 130, 246, 0.14);
+    border-radius: 6px;
+    transition: background 0.4s ease;
+  }
+  .state-cell.row-to {
+    background: rgba(30, 64, 175, 0.24);
+    border-radius: 6px;
+    transition: background 0.4s ease;
+  }
+
+  /* Shades the action column header (e.g. "Move to LEFT") that was just
+     executed, matching the .state-cell.row-from light-blue tint — a visual
+     complement showing which action drove the current transition. */
+  th.action-value-header.active-action {
+    background: rgba(59, 130, 246, 0.14);
+    transition: background 0.4s ease;
+  }
+
+  /* Pulse animation on the single (state, action) cell that just got updated */
+  @keyframes cellPulse {
+    0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.65); }
+    70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+  }
+  td.cell-updating {
+    animation: cellPulse 0.9s ease-out;
+  }
+
+  /* Live Bellman-update readout */
+  .bellman-box {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-top: 15px;
+  }
+  .bellman-label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+  .bellman-eq {
+    font-family: monospace;
+    font-size: 1rem;
+    line-height: 1.7;
+    color: var(--text-primary);
+  }
+  .bellman-eq .t-old { color: #64748b; }
+  .bellman-eq .t-alpha { color: #3b82f6; }
+  .bellman-eq .t-gamma { color: #3b82f6; }
+  .bellman-eq .t-nextq { color: #8b5cf6; }
+  .bellman-eq .t-new { font-weight: 700; }
+
+  /* CSS-only hover tooltip, used instead of the native title attribute
+     since that can be delayed or suppressed in some embedding contexts. */
+  .tooltip-trigger {
+    position: relative;
+    display: inline-block;
+    cursor: help;
+  }
+  .tooltip-trigger .tooltip-text {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    bottom: 125%;
+    left: 0;
+    z-index: 20;
+    width: 260px;
+    background: #0f172a;
+    color: white;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.8rem;
+    font-weight: 400;
+    line-height: 1.4;
+    padding: 8px 10px;
+    border-radius: 6px;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+  .tooltip-trigger:hover .tooltip-text {
+    visibility: visible;
+    opacity: 1;
+  }
+  /* Used for tooltips inside the Q-table header, where the default
+     above-trigger position would land outside the table and get clipped
+     by the table wrapper's overflow: auto. Pinned to the start of the
+     trigger word. */
+  .tooltip-trigger.tooltip-below .tooltip-text {
+    bottom: auto;
+    top: 125%;
+    left: 0;
+  }
+  .tooltip-trigger.tooltip-align-end .tooltip-text {
+    left: auto;
+    right: 0;
+  }
+
+  .tooltip-trigger.tooltip-align-center .tooltip-text {
+    right: auto;          /* Clear right alignment */
+    left: 50%;            /* Move the left edge to the horizontal midpoint */
+    transform: translateX(-50%); /* Shift back left by half of its own width */
+  }
+  /* Small "?" bubble placed next to a label, instead of making the whole
+     label itself the hover target — more discoverable as "there's help
+     here" than an invisible hover zone over plain text. */
+  .help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--border);
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: 700;
+    vertical-align: middle;
+    margin-left: 6px;
+    flex-shrink: 0;
+  }
+  .help-icon:hover {
+    background: var(--accent);
+    color: white;
+  }
+  /* .axis-label rotates its whole subtree 180deg (that's how its own text
+     reads correctly in vertical-rl mode) — without this, the help-icon and
+     its tooltip popup would inherit that rotation and render upside-down /
+     mispositioned. Counter-rotating here and resetting to horizontal
+     writing-mode cancels it out so this specific icon renders normally. */
+  .axis-label .help-icon {
+    writing-mode: horizontal-tb;
+    transform: rotate(180deg);
+  }
+  /* The floating JS-positioned tooltip (below) handles display for this
+     icon instead — suppress the normal nested CSS popup here so they don't
+     both try to show at once. */
+  .axis-label .help-icon:hover .tooltip-text {
+    visibility: hidden;
+    opacity: 0;
+  }
+  .floating-tooltip {
+    position: fixed;
+    z-index: 1000;
+    background: #0f172a;
+    color: white;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.8rem;
+    font-weight: 400;
+    line-height: 1.4;
+    padding: 8px 10px;
+    border-radius: 6px;
+    width: 260px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .floating-tooltip.visible {
+    opacity: 1;
+  }
+
+  /* Terminal */
+  .terminal {
+    background: #000;
+    color: #10b981;
+    font-family: monospace;
+    padding: 15px;
+    border-radius: var(--radius);
+    height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+  }
+  .terminal div { margin-bottom: 5px; }
+
+  .controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .slider-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .slider-group label {
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+  .slider-group input[type="range"] {
+    width: 100%;
+  }
+
+  /* Collapsible settings panel */
+  .panel-header-static h2 {
+    margin: 0;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+  }
+  .panel-header h2 {
+    margin: 0;
+  }
+  .panel-header:hover h2 {
+    color: var(--accent);
+  }
+  .panel-header .chevron {
+    display: inline-block;
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    transition: transform 0.2s ease;
+  }
+  .panel.collapsed .chevron {
+    transform: rotate(-90deg);
+  }
+  .panel.collapsed .panel-body {
+    display: none;
+  }
+
+  /* Sub-sections within a Settings panel (Turn Settings, Rewards
+     Configuration, etc.) — each collapses independently so the whole panel
+     doesn't dump every control on screen at once. */
+  .subsection {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+  }
+  .subsection:last-of-type {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 0;
+  }
+  .subsection-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    margin-bottom: 10px;
+  }
+  .subsection-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-primary);
+  }
+  .subsection-header:hover h3 {
+    color: var(--accent);
+  }
+  .subsection-header .chevron {
+    font-size: 0.7em;
+    color: var(--text-secondary);
+    transition: transform 0.2s ease;
+  }
+  .subsection.collapsed .subsection-header {
+    margin-bottom: 0;
+  }
+  .subsection.collapsed .chevron {
+    transform: rotate(-90deg);
+  }
+  .subsection.collapsed .subsection-body {
+    display: none;
+  }
+
+  /* Page tabs (Tabular Q-Learning vs Line Following) */
+  .tab-bar {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    max-width: 1200px;
+    margin-bottom: 20px;
+  }
+  .tab-btn {
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .tab-btn:hover:not(:disabled) {
+    background: #f1f5f9;
+    color: var(--text-primary);
+  }
+  .tab-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .page-content {
+    display: flex;
+    gap: 20px;
+    flex: 1;
+    min-width: 0;
+  }
+  .page-content.hidden {
+    display: none;
+  }
+
+  /* Current Yaw modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal-overlay.hidden {
+    display: none;
+  }
+  .modal-box {
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: 280px;
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 6px;
+  }
+  .modal-close:hover {
+    color: var(--text-primary);
+  }
+  .yaw-readout {
+    font-family: monospace;
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+</style>
+</head>
+<body>
+
+<div id="ble-warning" style="display:none; background:#fef2f2; color:#991b1b; border-bottom:1px solid #fecaca; padding:12px 16px; text-align:center; font-weight:600;">
+  ⚠️ This browser can't connect to LEGO hubs — it doesn't support Web Bluetooth.
+  Please open this page in <b>Google Chrome</b> or <b>Microsoft Edge</b> on a laptop or desktop.
+</div>
+<script>
+  if (!navigator.bluetooth) document.getElementById('ble-warning').style.display = 'block';
+</script>
+
+<div class="header">
+  <h1>Pascal's Q-Learning Visualizer</h1>
+  <p>Train a LEGO® CS+AI robot to walk straight!</p>
+</div>
+
+<div class="tab-bar">
+  <button class="tab-btn active" id="tab-btn-tabular" onclick="switchPage('tabular')">Silly Walk</button>
+  <button class="tab-btn" id="tab-btn-line" onclick="switchPage('line')">Line Follower</button>
+  <button class="tab-btn" id="tab-btn-maze" onclick="switchPage('maze')">Maze Solver</button>
+</div>
+
+<div class="container">
+  <div class="panel sidebar">
+    <h2>Hardware Setup</h2>
+
+    <div class="device-card">
+      <div class="device-info">
+        <div class="status-dot" id="dm-dot"></div>
+        <div>Double Motor (dm)</div>
+      </div>
+      <div>
+        <button id="btn-connect-dm" py-click="connect_dm">Connect</button>
+        <button id="btn-disconnect-dm" class="danger" py-click="disconnect_dm" style="display:none; padding: 10px 10px;" title="Disconnect">✕</button>
+      </div>
+    </div>
+
+    <!-- Color Sensor is only relevant to Line Follower, so it's hidden on
+         Silly Walk via switchPage(); see #cs-controls below. -->
+    <div id="cs-controls" style="display: none;">
+      <div class="device-card">
+        <div class="device-info">
+          <div class="status-dot" id="cs-dot"></div>
+          <div>Color Sensor (cs)</div>
+        </div>
+        <div>
+          <button id="btn-connect-cs" py-click="connect_cs">Connect</button>
+          <button id="btn-disconnect-cs" class="danger" py-click="disconnect_cs" style="display:none; padding: 10px 10px;" title="Disconnect">✕</button>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="btn-show-reflection" py-click="show_reflection_modal" disabled style="width: 100%;">Show Reflection</button>
+      </div>
+    </div>
+
+    <!-- Show/Reset Yaw are specific to the Silly Walk task (they read/reset
+         the Double Motor's IMU), so they're hidden on the Line Follower tab
+         via switchPage(); see #yaw-controls / #reset-yaw-controls below. -->
+    <div class="controls" id="yaw-controls">
+      <button id="btn-show-yaw" py-click="show_yaw_modal" disabled style="width: 100%;">Show Yaw</button>
+    </div>
+    <div class="controls" id="reset-yaw-controls">
+      <button id="btn-reset-yaw" class="reset-yaw-btn" py-click="reset_yaw_now" disabled style="width: 100%;">Reset Yaw</button>
+    </div>
+
+    <div class="controls">
+      <button id="btn-train" class="success" py-click="start_training" disabled>Start Training</button>
+      <button id="btn-stop" class="danger" py-click="stop_all" disabled>Stop</button>
+    </div>
+    <div class="controls" id="step-once-controls" style="align-items: center;">
+      <button id="btn-step" py-click="step_training" disabled>Step Once</button>
+      <span style="color: var(--text-secondary); font-size: 0.9rem;">Step: <span id="step-counter">0</span></span>
+    </div>
+    <div class="controls">
+      <button id="btn-policy" py-click="run_policy" disabled>Run Learned Policy</button>
+    </div>
+
+    <h3>Logs</h3>
+    <div class="terminal" id="terminal"></div>
+  </div>
+
+  <div class="page-content" id="page-tabular">
+    <div class="panel main-content">
+      <div class="panel-header-static">
+        <h2>Settings</h2>
+      </div>
+      <div class="panel-body">
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Turn Settings <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Set the number of degrees you want the motors to turn in each step, and how long to pause after moving so the IMU reading settles before the next state is read.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Turn Degrees: <span id="val-turn-degrees">135</span></label>
+                <input type="range" id="slider-turn-degrees" min="10" max="360" step="5" value="135" oninput="document.getElementById('val-turn-degrees').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Turn Wait (s): <span id="val-turn-wait">0.3</span></label>
+                <input type="range" id="slider-turn-wait" min="0.1" max="3" step="0.1" value="0.3" oninput="document.getElementById('val-turn-wait').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Training Settings <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Set the number of steps per episode and how many episodes to train for. Yaw resets to 0 at the start of each episode.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Number of Steps: <span id="val-train-iters">10</span></label>
+                <input type="range" id="slider-train-iters" min="1" max="30" step="1" value="10" oninput="document.getElementById('val-train-iters').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Number of Episodes: <span id="val-num-episodes">10</span></label>
+                <input type="range" id="slider-num-episodes" min="1" max="30" step="1" value="10" oninput="document.getElementById('val-num-episodes').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Q-Learning Parameters <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Set the learning rate (how much each new experience updates the Q-table) and the discount factor (how much the agent cares about immediate vs future reward).</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Alpha (&alpha;, learning rate): <span id="val-alpha">0.1</span></label>
+                <input type="range" id="slider-alpha" min="0.01" max="1" step="0.01" value="0.1" oninput="document.getElementById('val-alpha').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Gamma (&gamma;, discount factor): <span id="val-gamma">0.9</span></label>
+                <input type="range" id="slider-gamma" min="0" max="0.99" step="0.01" value="0.9" oninput="document.getElementById('val-gamma').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Rewards Configuration <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Agent learns to maximize cumulative reward over time. Set the reward the agent receives for completing a specific action while in a given state.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <!-- Populated dynamically by rebuildStateUI() based on the current state count -->
+            <div id="rewards-container"></div>
+          </div>
+        </div>
+
+        <div style="margin-top: 10px;">
+          <button class="success" py-click="apply_rewards">Apply Settings</button>
+          <button class="danger" py-click="reset_qtable">Reset Q-Table</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel main-content">
+      <div class="qtable-header-row">
+        <div>
+          <h2>Q-Table</h2>
+        </div>
+        <div class="qtable-controls">
+          <div class="state-count-control">
+            <label for="state-count-select">States:</label>
+            <select id="state-count-select">
+              <option value="3" selected>3</option>
+              <option value="5">5</option>
+            </select>
+          </div>
+          <div class="state-count-control">
+            <label for="action-count-select">Actions:</label>
+            <select id="action-count-select">
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="table-resize-wrapper" id="qtable-wrapper">
+        <table id="qtable">
+          <thead id="qtable-thead">
+            <!-- Populated by rebuildQTableHead() based on the active action set -->
+          </thead>
+          <tbody id="qtable-body">
+            <!-- Rows injected by rebuildStateUI() -->
+          </tbody>
+        </table>
+      </div>
+
+      <div class="bellman-box" id="bellman-readout">
+        <div class="bellman-label">Bellman update (Q &larr; Q + &alpha;[reward + &gamma;&middot;max(Q<sub>next</sub>) &minus; Q])<span class="tooltip-trigger tooltip-below  tooltip-align-center help-icon">?<span class="tooltip-text">The Bellman equation recursively updates the values in the Q-table at a specific state-action pair.</span></span></div>
+        <div class="bellman-eq" id="bellman-eq-text">Start training to see each step's update here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Line Following tab -->
+  <div class="page-content hidden" id="page-line">
+    <div class="panel main-content">
+      <div class="panel-header-static">
+        <h2>Settings</h2>
+      </div>
+      <div class="panel-body">
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Movement Settings <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Set how far the robot turns or drives forward on each step, and how long to pause afterward so the reflection reading settles before the next state is read.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Turn Degrees: <span id="val-line-turn-degrees">15</span></label>
+                <input type="range" id="slider-line-turn-degrees" min="5" max="90" step="1" value="15" oninput="document.getElementById('val-line-turn-degrees').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Forward Degrees: <span id="val-line-forward-degrees">45</span></label>
+                <input type="range" id="slider-line-forward-degrees" min="10" max="180" step="5" value="45" oninput="document.getElementById('val-line-forward-degrees').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Rest Time (s): <span id="val-line-rest-time">0.4</span></label>
+                <input type="range" id="slider-line-rest-time" min="0.1" max="3" step="0.1" value="0.4" oninput="document.getElementById('val-line-rest-time').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Reflectance Thresholds <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Reflection readings below the left boundary count as "off line to the left"; above the right boundary, "off line to the right"; in between, "on line."</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Left Boundary: <span id="val-line-thresh-lo">33</span></label>
+                <input type="range" id="slider-line-thresh-lo" min="0" max="100" step="1" value="33" oninput="document.getElementById('val-line-thresh-lo').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Right Boundary: <span id="val-line-thresh-hi">66</span></label>
+                <input type="range" id="slider-line-thresh-hi" min="0" max="100" step="1" value="66" oninput="document.getElementById('val-line-thresh-hi').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Rewards Configuration <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Set the reward the agent receives for taking a specific action while in a given state.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div class="table-resize-wrapper">
+              <table id="line-rewards-table">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th class="action-value-header"><b class="action-header-label">Move to LEFT</b></th>
+                    <th class="action-value-header"><b class="action-header-label">Move to RIGHT</b></th>
+                    <th class="action-value-header"><b class="action-header-label">FORWARD</b></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="state-cell"><b>Off Line (Left)</b></td>
+                    <td><input type="range" id="reward-line-s0-left" min="-20" max="20" value="-10" style="width: 100%;" oninput="document.getElementById('val-reward-line-s0-left').innerText = this.value"><div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-line-s0-left">-10</span></div></td>
+                    <td><input type="range" id="reward-line-s0-right" min="-20" max="20" value="10" style="width: 100%;" oninput="document.getElementById('val-reward-line-s0-right').innerText = this.value"><div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-line-s0-right">10</span></div></td>
+                    <td><input type="range" id="reward-line-s0-forward" min="-20" max="20" value="-10" style="width: 100%;" oninput="document.getElementById('val-reward-line-s0-forward').innerText = this.value"><div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-line-s0-forward">-10</span></div></td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>On Line</b></td>
+                    <td><input type="range" id="reward-line-s1-left" min="-20" max="20" value="-10" style="width: 100%;" oninput="document.getElementById('val-reward-line-s1-left').innerText = this.value"><div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-line-s1-left">-10</span></div></td>
+                    <td><input type="range" id="reward-line-s1-right" min="-20" max="20" value="-10" style="width: 100%;" oninput="document.getElementById('val-reward-line-s1-right').innerText = this.value"><div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-line-s1-right">-10</span></div></td>
+                    <td><input type="range" id="reward-line-s1-forward" min="-20" max="20" value="10" style="width: 100%;" oninput="document.getElementById('val-reward-line-s1-forward').innerText = this.value"><div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-line-s1-forward">10</span></div></td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Off Line (Right)</b></td>
+                    <td><input type="range" id="reward-line-s2-left" min="-20" max="20" value="10" style="width: 100%;" oninput="document.getElementById('val-reward-line-s2-left').innerText = this.value"><div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-line-s2-left">10</span></div></td>
+                    <td><input type="range" id="reward-line-s2-right" min="-20" max="20" value="-10" style="width: 100%;" oninput="document.getElementById('val-reward-line-s2-right').innerText = this.value"><div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-line-s2-right">-10</span></div></td>
+                    <td><input type="range" id="reward-line-s2-forward" min="-20" max="20" value="-10" style="width: 100%;" oninput="document.getElementById('val-reward-line-s2-forward').innerText = this.value"><div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-line-s2-forward">-10</span></div></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top: 10px;">
+          <button class="success" py-click="apply_line_rewards">Apply Settings</button>
+          <button class="danger" py-click="reset_qtable_line">Reset Q-Table</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel main-content">
+      <h2>Q-Table</h2>
+      <div class="table-resize-wrapper" id="line-qtable-wrapper">
+        <table id="line-qtable">
+          <thead>
+            <tr>
+              <th></th>
+              <th class="action-value-header"><b class="action-header-label">Move to LEFT</b></th>
+              <th class="action-value-header"><b class="action-header-label">Move to RIGHT</b></th>
+              <th class="action-value-header"><b class="action-header-label">FORWARD</b></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="state-cell"><b>Off Line (Left)</b></td>
+              <td id="line-cell-0-0">0.00</td>
+              <td id="line-cell-0-1">0.00</td>
+              <td id="line-cell-0-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>On Line</b></td>
+              <td id="line-cell-1-0">0.00</td>
+              <td id="line-cell-1-1">0.00</td>
+              <td id="line-cell-1-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Off Line (Right)</b></td>
+              <td id="line-cell-2-0">0.00</td>
+              <td id="line-cell-2-1">0.00</td>
+              <td id="line-cell-2-2">0.00</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="color: var(--text-secondary); font-size: 0.85rem;">
+        Line following runs continuously rather than in resettable episodes — if the
+        robot drives off the line entirely, use Stop, reposition it by hand, then Start again.
+      </p>
+    </div>
+  </div>
+
+  <!-- Maze Solver tab -->
+  <div class="page-content hidden" id="page-maze">
+    <div class="panel main-content">
+      <div class="panel-header-static">
+        <h2>Settings</h2>
+      </div>
+      <div class="panel-body">
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Movement &amp; Episode Settings <span class="tooltip-trigger help-icon">?<span class="tooltip-text">How far the robot turns or drives forward each step, how wide a yaw deadband counts as "roughly straight," how many training episodes to run, and the step limit before an episode times out.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Turn Degrees: <span id="val-maze-turn-degrees">30</span></label>
+                <input type="range" id="slider-maze-turn-degrees" min="5" max="90" step="1" value="30" oninput="document.getElementById('val-maze-turn-degrees').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Forward Degrees: <span id="val-maze-forward-degrees">90</span></label>
+                <input type="range" id="slider-maze-forward-degrees" min="10" max="180" step="5" value="90" oninput="document.getElementById('val-maze-forward-degrees').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Rest Time (s): <span id="val-maze-rest-time">0.4</span></label>
+                <input type="range" id="slider-maze-rest-time" min="0.1" max="3" step="0.1" value="0.4" oninput="document.getElementById('val-maze-rest-time').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Yaw Deadband (&deg;): <span id="val-maze-yaw-deadband">10</span></label>
+                <input type="range" id="slider-maze-yaw-deadband" min="1" max="45" step="1" value="10" oninput="document.getElementById('val-maze-yaw-deadband').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Number of Episodes: <span id="val-maze-num-episodes">10</span></label>
+                <input type="range" id="slider-maze-num-episodes" min="1" max="30" step="1" value="10" oninput="document.getElementById('val-maze-num-episodes').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Max Steps per Episode: <span id="val-maze-max-steps">100</span></label>
+                <input type="range" id="slider-maze-max-steps" min="10" max="300" step="10" value="100" oninput="document.getElementById('val-maze-max-steps').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Q-Learning Parameters <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Set the learning rate (how much each new experience updates the Q-table) and the discount factor (how much the agent cares about immediate vs future reward). Lowering gamma makes a distant goal reward decay faster with distance, so it doesn't drown out step-by-step reward differences.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Alpha (&alpha;, learning rate): <span id="val-maze-alpha">0.1</span></label>
+                <input type="range" id="slider-maze-alpha" min="0.01" max="1" step="0.01" value="0.1" oninput="document.getElementById('val-maze-alpha').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Gamma (&gamma;, discount factor): <span id="val-maze-gamma">0.9</span></label>
+                <input type="range" id="slider-maze-gamma" min="0" max="0.99" step="0.01" value="0.9" oninput="document.getElementById('val-maze-gamma').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Rewards Configuration <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Set the reward for taking a specific action while the color sensor and yaw-drift together put the robot in a given state. States combine color (Black/Red/Blue tape, Green goal, White) with yaw-drift (Left/Right/Center).</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div class="table-resize-wrapper">
+              <table id="maze-rewards-table">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th class="action-value-header"><b class="action-header-label">Move to LEFT</b></th>
+                    <th class="action-value-header"><b class="action-header-label">Move to RIGHT</b></th>
+                    <th class="action-value-header"><b class="action-header-label">FORWARD</b></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="state-cell"><b>Black-Left</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s0-left" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s0-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s0-left">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s0-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s0-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s0-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s0-forward" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s0-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s0-forward">-1</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Black-Right</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s1-left" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s1-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s1-left">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s1-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s1-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s1-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s1-forward" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s1-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s1-forward">-1</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Black-Center</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s2-left" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s2-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s2-left">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s2-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s2-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s2-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s2-forward" min="-20" max="100" value="10" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s2-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s2-forward">10</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Red-Left</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s3-left" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s3-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s3-left">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s3-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s3-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s3-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s3-forward" min="-20" max="100" value="10" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s3-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s3-forward">10</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Red-Right</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s4-left" min="-20" max="100" value="1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s4-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s4-left">1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s4-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s4-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s4-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s4-forward" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s4-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s4-forward">-1</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Red-Center</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s5-left" min="-20" max="100" value="1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s5-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s5-left">1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s5-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s5-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s5-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s5-forward" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s5-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s5-forward">-1</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Blue-Left</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s6-left" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s6-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s6-left">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s6-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s6-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s6-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s6-forward" min="-20" max="100" value="10" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s6-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s6-forward">10</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Blue-Right</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s7-left" min="-20" max="100" value="1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s7-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s7-left">1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s7-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s7-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s7-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s7-forward" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s7-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s7-forward">-1</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Blue-Center</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s8-left" min="-20" max="100" value="1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s8-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s8-left">1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s8-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s8-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s8-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s8-forward" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s8-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s8-forward">-1</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>Green (Goal)</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s9-left" min="-20" max="100" value="100" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s9-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s9-left">100</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s9-right" min="-20" max="100" value="100" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s9-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s9-right">100</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s9-forward" min="-20" max="100" value="100" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s9-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s9-forward">100</span></div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="state-cell"><b>White</b></td>
+                    <td>
+                      <input type="range" id="reward-maze-s10-left" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s10-left').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s10-left">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s10-right" min="-20" max="100" value="-1" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s10-right').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s10-right">-1</span></div>
+                    </td>
+                    <td>
+                      <input type="range" id="reward-maze-s10-forward" min="-20" max="100" value="10" style="width: 100%;" oninput="document.getElementById('val-reward-maze-s10-forward').innerText = this.value">
+                      <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-maze-s10-forward">10</span></div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top: 10px;">
+          <button class="success" py-click="apply_maze_rewards">Apply Settings</button>
+          <button class="danger" py-click="reset_qtable_maze">Reset Q-Table</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel main-content">
+      <h2>Q-Table</h2>
+      <div class="controls" style="margin-top: 0;">
+        <button id="btn-maze-ready" py-click="maze_robot_ready" disabled style="width: 100%;">Robot Ready</button>
+      </div>
+      <p style="margin: 0; color: var(--text-secondary); font-size: 0.85rem;">
+        Click Start Training, then place the robot at the maze start and click
+        Robot Ready to begin each episode. There's no automatic reset between
+        episodes — you'll be prompted before every one.
+      </p>
+      <div class="table-resize-wrapper" id="maze-qtable-wrapper">
+        <table id="maze-qtable">
+          <thead>
+            <tr>
+              <th></th>
+              <th class="action-value-header"><b class="action-header-label">Move to LEFT</b></th>
+              <th class="action-value-header"><b class="action-header-label">Move to RIGHT</b></th>
+              <th class="action-value-header"><b class="action-header-label">FORWARD</b></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="state-cell"><b>Black-Left</b></td>
+              <td id="maze-cell-0-0">0.00</td>
+              <td id="maze-cell-0-1">0.00</td>
+              <td id="maze-cell-0-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Black-Right</b></td>
+              <td id="maze-cell-1-0">0.00</td>
+              <td id="maze-cell-1-1">0.00</td>
+              <td id="maze-cell-1-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Black-Center</b></td>
+              <td id="maze-cell-2-0">0.00</td>
+              <td id="maze-cell-2-1">0.00</td>
+              <td id="maze-cell-2-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Red-Left</b></td>
+              <td id="maze-cell-3-0">0.00</td>
+              <td id="maze-cell-3-1">0.00</td>
+              <td id="maze-cell-3-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Red-Right</b></td>
+              <td id="maze-cell-4-0">0.00</td>
+              <td id="maze-cell-4-1">0.00</td>
+              <td id="maze-cell-4-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Red-Center</b></td>
+              <td id="maze-cell-5-0">0.00</td>
+              <td id="maze-cell-5-1">0.00</td>
+              <td id="maze-cell-5-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Blue-Left</b></td>
+              <td id="maze-cell-6-0">0.00</td>
+              <td id="maze-cell-6-1">0.00</td>
+              <td id="maze-cell-6-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Blue-Right</b></td>
+              <td id="maze-cell-7-0">0.00</td>
+              <td id="maze-cell-7-1">0.00</td>
+              <td id="maze-cell-7-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Blue-Center</b></td>
+              <td id="maze-cell-8-0">0.00</td>
+              <td id="maze-cell-8-1">0.00</td>
+              <td id="maze-cell-8-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>Green (Goal)</b></td>
+              <td id="maze-cell-9-0">0.00</td>
+              <td id="maze-cell-9-1">0.00</td>
+              <td id="maze-cell-9-2">0.00</td>
+            </tr>
+            <tr>
+              <td class="state-cell"><b>White</b></td>
+              <td id="maze-cell-10-0">0.00</td>
+              <td id="maze-cell-10-1">0.00</td>
+              <td id="maze-cell-10-2">0.00</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="yaw-modal-overlay" class="modal-overlay hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 style="margin: 0;">Current Yaw</h3>
+      <button class="modal-close" py-click="hide_yaw_modal">&times;</button>
+    </div>
+    <div class="yaw-readout" id="yaw-readout-text">--&deg;</div>
+    <canvas id="yaw-compass-canvas" width="200" height="200"></canvas>
+    <div id="yaw-modal-actions" style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
+      <!-- Populated by rebuildYawModalActions() based on the active action set -->
+    </div>
+    <button class="reset-yaw-btn" py-click="reset_yaw_now" disabled style="width: 100%;">Reset Yaw</button>
+    <p style="margin: 0; color: var(--text-secondary); font-size: 0.8rem;">Last 30 seconds</p>
+    <canvas id="yaw-strip-canvas" width="400" height="120"></canvas>
+  </div>
+</div>
+
+<div id="reflection-modal-overlay" class="modal-overlay hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 style="margin: 0;">Current Reflection</h3>
+      <button class="modal-close" py-click="hide_reflection_modal">&times;</button>
+    </div>
+    <div class="yaw-readout" id="reflection-readout-text">--</div>
+    <div style="width: 100%;">
+      <div style="background: #e2e8f0; border-radius: 6px; height: 20px; position: relative; overflow: hidden;">
+        <div id="reflection-bar-fill" style="background: #3b82f6; height: 100%; width: 0%; transition: width 0.15s ease;"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">
+        <span>0 (dark)</span><span>100 (bright)</span>
+      </div>
+    </div>
+    <p style="margin: 0; color: var(--text-secondary); font-size: 0.8rem;">Last 30 seconds</p>
+    <canvas id="reflection-strip-canvas" width="400" height="120"></canvas>
+  </div>
+</div>
+
+<!-- Used only for the "State (Yaw)" axis-label's help-icon: that
+     icon lives inside a rotate(180deg) cell (for its vertical text), and a
+     normal nested CSS tooltip would inherit that rotation. This floating
+     div has no rotated ancestors, so JS positions it directly instead. -->
+<div id="floating-tooltip" class="floating-tooltip"></div>
+
+<script>
+  // Switches between the "tabular" and "line" pages. Purely visual —
+  // does not touch Python state, so it's safe to click regardless of what's
+  // running (Python-side guards prevent two training loops running at once).
+  window.switchPage = function(name) {
+    const pages = { tabular: 'page-tabular', line: 'page-line', maze: 'page-maze' };
+    for (const key in pages) {
+      const el = document.getElementById(pages[key]);
+      const btn = document.getElementById(`tab-btn-${key}`);
+      if (!el || !btn) continue;
+      if (key === name) {
+        el.classList.remove('hidden');
+        btn.classList.add('active');
+      } else {
+        el.classList.add('hidden');
+        btn.classList.remove('active');
+      }
+    }
+    // Step Once only makes sense for the Silly Walk Q-table; there's no
+    // single-step equivalent for line following or maze solving (both run
+    // continuously/episodically, not via discrete manual steps).
+    const stepControls = document.getElementById('step-once-controls');
+    if (stepControls) stepControls.style.display = (name === 'line' || name === 'maze') ? 'none' : '';
+
+    // Show Yaw / Reset Yaw apply to Silly Walk and Maze Solver (both use
+    // the Double Motor's IMU) but not Line Follower.
+    const yawControls = document.getElementById('yaw-controls');
+    if (yawControls) yawControls.style.display = (name === 'line') ? 'none' : '';
+    const resetYawControls = document.getElementById('reset-yaw-controls');
+    if (resetYawControls) resetYawControls.style.display = (name === 'line') ? 'none' : '';
+
+    // Color Sensor connection / Show Reflection apply to Line Follower and
+    // Maze Solver (both read the color sensor) but not Silly Walk.
+    const csControls = document.getElementById('cs-controls');
+    if (csControls) csControls.style.display = (name === 'tabular') ? 'none' : '';
+  };
+
+  // Collapses/expands an entire panel when its header is clicked.
+  window.togglePanel = function(headerEl) {
+    const panel = headerEl.closest('.panel');
+    if (panel) panel.classList.toggle('collapsed');
+  };
+
+  // Fired by an action's ▶ button in the Q-table header. Python listens
+  // for this via document.addEventListener('manual-action', ...) rather
+  // than py-click, since these buttons are dynamically injected whenever
+  // the Q-table header is rebuilt (see note in rebuildQTableHead).
+  window.requestManualAction = function(actionName) {
+    document.dispatchEvent(new CustomEvent('manual-action', { detail: { action: actionName } }));
+  };
+
+  // Briefly shades the action column header (e.g. "Move to LEFT") that was
+  // just executed, matching the light-blue tint used for the source state
+  // row (.state-cell.row-from) — a visual complement showing which action
+  // drove the current transition. The header's second row (thead.rows[1])
+  // holds exactly one <th class="action-value-header"> per action, with no
+  // leading offset cell (unlike the body rows), since the spacer/axis-label
+  // <th> above it spans both header rows via rowspan.
+  window.highlightActionHeader = function(colIdx, durationMs) {
+    const thead = document.getElementById('qtable-thead');
+    if (!thead || !thead.rows[1]) return;
+    const headerCell = thead.rows[1].cells[colIdx];
+    if (!headerCell) return;
+    headerCell.classList.add('active-action');
+    setTimeout(() => headerCell.classList.remove('active-action'), durationMs || 900);
+  };
+
+  // ── Floating tooltip for the "State (Yaw)" axis-label help-icon ──
+  // That icon lives inside a rotate(180deg) cell, so a normal nested CSS
+  // tooltip would inherit the rotation. Instead, position this tooltip
+  // (which lives outside any rotated ancestor) using real pixel coordinates
+  // from the icon's own bounding box. Uses event delegation on `document`
+  // (capture phase, since mouseenter/mouseleave don't bubble) since these
+  // icons are dynamically recreated whenever the table is rebuilt.
+  document.addEventListener('mouseenter', (e) => {
+    const icon = e.target.closest && e.target.closest('.axis-label .help-icon');
+    if (!icon) return;
+    const tipSource = icon.querySelector('.tooltip-text');
+    const floater = document.getElementById('floating-tooltip');
+    if (!tipSource || !floater) return;
+    floater.innerText = tipSource.textContent;
+    const rect = icon.getBoundingClientRect();
+    floater.style.left = `${rect.left}px`;
+    floater.style.top = `${rect.bottom + 6}px`;
+    floater.classList.add('visible');
+  }, true);
+
+  document.addEventListener('mouseleave', (e) => {
+    const icon = e.target.closest && e.target.closest('.axis-label .help-icon');
+    if (!icon) return;
+    const floater = document.getElementById('floating-tooltip');
+    if (floater) floater.classList.remove('visible');
+  }, true);
+
+  // ── Current Yaw modal ──
+  // Called from Python (show_yaw_modal / hide_yaw_modal), which also
+  // starts/stops the background polling loop that feeds updateYawGauge().
+  window.openYawModal = function() {
+    const overlay = document.getElementById('yaw-modal-overlay');
+    if (overlay) overlay.classList.remove('hidden');
+  };
+  window.closeYawModal = function() {
+    const overlay = document.getElementById('yaw-modal-overlay');
+    if (overlay) overlay.classList.add('hidden');
+  };
+
+  const yawHistory = []; // {t, yaw} pairs, trimmed to the last 30 seconds
+
+  // Updates the numeric readout, the compass needle, and the recent-history
+  // strip chart. Called every ~0.2s by Python's _yaw_monitor_loop while the
+  // modal is open.
+  window.updateYawGauge = function(yawDegrees) {
+    const readout = document.getElementById('yaw-readout-text');
+    if (readout) readout.innerText = `${yawDegrees.toFixed(1)}\u00b0`;
+
+    // --- Compass needle ---
+    const canvas = document.getElementById('yaw-compass-canvas');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 12;
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+      ctx.stroke();
+
+      // "Straight" reference tick at the top (yaw = 0)
+      ctx.strokeStyle = '#94a3b8';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r);
+      ctx.lineTo(cx, cy - r + 10);
+      ctx.stroke();
+
+      // Needle. Positive yaw = drifted left, so it swings counter-clockwise
+      // from straight-up as yaw increases (flip the sign here if this reads
+      // backwards against the physical robot).
+      const angleRad = (-yawDegrees * Math.PI) / 180;
+      const nx = cx + r * 0.8 * Math.sin(angleRad);
+      const ny = cy - r * 0.8 * Math.cos(angleRad);
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(nx, ny);
+      ctx.stroke();
+      ctx.fillStyle = '#3b82f6';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+
+    // --- Recent-history strip chart ---
+    const now = Date.now();
+    yawHistory.push({ t: now, yaw: yawDegrees });
+    const cutoff = now - 30000;
+    while (yawHistory.length && yawHistory[0].t < cutoff) yawHistory.shift();
+
+    const strip = document.getElementById('yaw-strip-canvas');
+    if (strip) {
+      const ctx = strip.getContext('2d');
+      const w = strip.width, h = strip.height, pad = 30;
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad, pad);
+      ctx.lineTo(pad, h - pad);
+      ctx.lineTo(w - pad, h - pad);
+      ctx.stroke();
+
+      if (yawHistory.length > 1) {
+        const yaws = yawHistory.map(p => p.yaw);
+        let yMin = Math.min(...yaws, -1), yMax = Math.max(...yaws, 1);
+        if (yMax - yMin < 2) { yMax += 1; yMin -= 1; }
+        const tMin = yawHistory[0].t, tMax = now;
+        const xOf = (t) => pad + ((t - tMin) / (tMax - tMin || 1)) * (w - 2 * pad);
+        const yOf = (y) => (h - pad) - ((y - yMin) / (yMax - yMin)) * (h - 2 * pad);
+
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        yawHistory.forEach((p, i) => {
+          const x = xOf(p.t), y = yOf(p.yaw);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '11px Inter, sans-serif';
+      ctx.fillText('-30s', pad, h - pad + 14);
+      ctx.textAlign = 'right';
+      ctx.fillText('now', w - pad, h - pad + 14);
+      ctx.textAlign = 'left';
+    }
+  };
+
+  // ── Current Reflection modal ──
+  // Called from Python (show_reflection_modal / hide_reflection_modal),
+  // which also starts/stops the background polling loop that feeds
+  // updateReflectionGauge(). Mirrors the yaw modal's structure, but with a
+  // simple 0-100 bar instead of a compass needle, since reflection has no
+  // notion of direction.
+  window.openReflectionModal = function() {
+    const overlay = document.getElementById('reflection-modal-overlay');
+    if (overlay) overlay.classList.remove('hidden');
+  };
+  window.closeReflectionModal = function() {
+    const overlay = document.getElementById('reflection-modal-overlay');
+    if (overlay) overlay.classList.add('hidden');
+  };
+
+  const reflectionHistory = []; // {t, value} pairs, trimmed to the last 30 seconds
+
+  window.updateReflectionGauge = function(value) {
+    const readout = document.getElementById('reflection-readout-text');
+    if (readout) readout.innerText = value.toFixed(1);
+
+    const fill = document.getElementById('reflection-bar-fill');
+    if (fill) fill.style.width = `${Math.max(0, Math.min(100, value))}%`;
+
+    // --- Recent-history strip chart (same layout as the yaw strip chart) ---
+    const now = Date.now();
+    reflectionHistory.push({ t: now, value });
+    const cutoff = now - 30000;
+    while (reflectionHistory.length && reflectionHistory[0].t < cutoff) reflectionHistory.shift();
+
+    const strip = document.getElementById('reflection-strip-canvas');
+    if (strip) {
+      const ctx = strip.getContext('2d');
+      const w = strip.width, h = strip.height, pad = 30;
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad, pad);
+      ctx.lineTo(pad, h - pad);
+      ctx.lineTo(w - pad, h - pad);
+      ctx.stroke();
+
+      if (reflectionHistory.length > 1) {
+        const tMin = reflectionHistory[0].t, tMax = now;
+        const xOf = (t) => pad + ((t - tMin) / (tMax - tMin || 1)) * (w - 2 * pad);
+        const yOf = (v) => (h - pad) - (Math.max(0, Math.min(100, v)) / 100) * (h - 2 * pad);
+
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        reflectionHistory.forEach((p, i) => {
+          const x = xOf(p.t), y = yOf(p.value);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '11px Inter, sans-serif';
+      ctx.fillText('-30s', pad, h - pad + 14);
+      ctx.textAlign = 'right';
+      ctx.fillText('now', w - pad, h - pad + 14);
+      ctx.textAlign = 'left';
+    }
+  };
+
+  // Collapses/expands one subsection (Turn Settings, Rewards Configuration,
+  // etc.) within a Settings panel, independent of the panel-level collapse.
+  window.toggleSubsection = function(headerEl) {
+    const section = headerEl.closest('.subsection');
+    if (section) section.classList.toggle('collapsed');
+  };
+
+  // Briefly tints a state row's name cell (blue for "from", green for "to")
+  // so you can see which state the robot was in / moved to each step.
+  // Row 0 has an extra leading cell (the rowspan'd axis-label), so the
+  // state-name cell sits one index further right there than in other rows.
+  window.highlightStateRow = function(rowIdx, cssClass, durationMs) {
+    const tbody = document.getElementById('qtable-body');
+    if (!tbody || !tbody.rows[rowIdx]) return;
+    const offset = (rowIdx === 0) ? 1 : 0;
+    const stateCell = tbody.rows[rowIdx].cells[offset];
+    if (!stateCell) return;
+    stateCell.classList.add(cssClass);
+    setTimeout(() => stateCell.classList.remove(cssClass), durationMs || 900);
+  };
+
+  // Flashes a glowing outline on the exact (state, action) cell whose Q-value
+  // just changed, independent of the row highlighting above. Row 0 has an
+  // extra leading cell (the rowspan'd axis-label), so value cells sit one
+  // index further right there than in other rows.
+  window.pulseCell = function(rowIdx, colIdx, durationMs) {
+    const tbody = document.getElementById('qtable-body');
+    if (!tbody || !tbody.rows[rowIdx]) return;
+    const offset = (rowIdx === 0) ? 2 : 1; // +1 for state cell, +1 more on row 0 for the axis-label cell
+    const cell = tbody.rows[rowIdx].cells[colIdx + offset];
+    if (!cell) return;
+    cell.classList.remove('cell-updating');
+    void cell.offsetWidth; // force reflow so the animation restarts cleanly on repeat steps
+    cell.classList.add('cell-updating');
+    setTimeout(() => cell.classList.remove('cell-updating'), durationMs || 900);
+  };
+
+  // Writes out the literal Bellman update just performed, with real numbers.
+  window.updateBellmanReadout = function(stateName, actionName, nextStateName, oldQ, alpha, reward, gamma, nextMaxQ, newQ) {
+    const el = document.getElementById('bellman-eq-text');
+    if (!el) return;
+    const rewardColor = reward >= 0 ? '#10b981' : '#ef4444';
+    const deltaColor = newQ >= oldQ ? '#10b981' : '#ef4444';
+    el.innerHTML =
+      `Q(<b>${stateName}</b>, <b>${actionName}</b>) &rarr; next state <b>${nextStateName}</b><br>` +
+      `Q &larr; <span class="t-old">${oldQ.toFixed(2)}</span> + ` +
+      `<span class="t-alpha">${alpha.toFixed(2)}</span> &times; [ ` +
+      `<span style="color:${rewardColor}">${reward.toFixed(2)}</span> + ` +
+      `<span class="t-gamma">${gamma.toFixed(2)}</span> &times; max(<span class="t-nextq">${nextMaxQ.toFixed(2)}</span>) ` +
+      `&minus; <span class="t-old">${oldQ.toFixed(2)}</span> ] = ` +
+      `<span class="t-new" style="color:${deltaColor}">${newQ.toFixed(2)}</span>`;
+  };
+
+  // Called when the Q-table is reset or its shape changes (state/action count).
+  window.resetBellmanReadout = function() {
+    const el = document.getElementById('bellman-eq-text');
+    if (el) el.innerText = "Start training to see each step's update here.";
+  };
+
+  // Expose a helper to color cells dynamically. Row 0 has an extra leading
+  // cell (the rowspan'd axis-label), so its value cells sit one index
+  // further right than in other rows.
+  window.updateCell = function(rowIdx, colIdx, val) {
+    const table = document.getElementById("qtable-body");
+    if(table && table.rows[rowIdx]) {
+      const offset = (rowIdx === 0) ? 2 : 1;
+      const cell = table.rows[rowIdx].cells[colIdx + offset];
+      if(cell) {
+        cell.innerText = val.toFixed(2);
+        // Interpolate color: green for pos, red for neg
+        let intensity = Math.min(Math.abs(val) / 10.0, 1.0); // max scale at 10
+        if (val > 0) {
+          cell.style.backgroundColor = `rgba(16, 185, 129, ${intensity})`;
+        } else if (val < 0) {
+          cell.style.backgroundColor = `rgba(239, 68, 68, ${intensity})`;
+        } else {
+          cell.style.backgroundColor = "transparent";
+        }
+      }
+    }
+  }
+
+  // Same color-interpolation logic as updateCell(), but for the Line
+  // Following tab's fixed 3x3 table, which uses plain per-cell ids
+  // (line-cell-{state}-{action}) instead of row/offset indexing, since
+  // that table's shape never changes and doesn't need the rowspan'd
+  // axis-label column the tabular table has.
+  window.updateLineCell = function(s, a, val) {
+    const cell = document.getElementById(`line-cell-${s}-${a}`);
+    if (!cell) return;
+    cell.innerText = val.toFixed(2);
+    let intensity = Math.min(Math.abs(val) / 10.0, 1.0);
+    if (val > 0) {
+      cell.style.backgroundColor = `rgba(16, 185, 129, ${intensity})`;
+    } else if (val < 0) {
+      cell.style.backgroundColor = `rgba(239, 68, 68, ${intensity})`;
+    } else {
+      cell.style.backgroundColor = "transparent";
+    }
+  };
+
+  // Same pattern again for the Maze Solver tab's fixed 11x3 table. Maze
+  // rewards run up to 100 (the Green goal tile) rather than 10, so the
+  // color-intensity scale here maxes out at 100 instead of 10 — otherwise
+  // every non-goal cell would render at full saturation.
+  window.updateMazeCell = function(s, a, val) {
+    const cell = document.getElementById(`maze-cell-${s}-${a}`);
+    if (!cell) return;
+    cell.innerText = val.toFixed(2);
+    let intensity = Math.min(Math.abs(val) / 100.0, 1.0);
+    if (val > 0) {
+      cell.style.backgroundColor = `rgba(16, 185, 129, ${intensity})`;
+    } else if (val < 0) {
+      cell.style.backgroundColor = `rgba(239, 68, 68, ${intensity})`;
+    } else {
+      cell.style.backgroundColor = "transparent";
+    }
+  };
+
+  // ── State configuration for 3-state and 5-state modes ──
+  // boundaryDefaults has (numStates - 1) entries, descending, in degrees.
+  // rewardDefaults has one {LEFT, RIGHT, FORWARD} object per state; FORWARD is
+  // only used when the "Include FORWARD action" checkbox is on.
+  const STATE_CONFIGS = {
+    3: {
+      names: ['Drifted Left', 'Straight', 'Drifted Right'],
+      boundaryDefaults: [10, -10],
+      rewardDefaults: [
+        { LEFT: -1, RIGHT: -1, FORWARD: -1 },
+        { LEFT: 10, RIGHT: 10, FORWARD: 5 },
+        { LEFT: -1, RIGHT: -1, FORWARD: -1 }
+      ]
+    },
+    5: {
+      names: ['Hard Left', 'Soft Left', 'Straight', 'Soft Right', 'Hard Right'],
+      boundaryDefaults: [20, 10, -10, -20],
+      rewardDefaults: [
+        { LEFT: -5, RIGHT: -5, FORWARD: -5 },
+        { LEFT: -1, RIGHT: -1, FORWARD: -1 },
+        { LEFT: 10, RIGHT: 10, FORWARD: 5 },
+        { LEFT: -1, RIGHT: -1, FORWARD: -1 },
+        { LEFT: -5, RIGHT: -5, FORWARD: -5 }
+      ]
+    }
+  };
+
+  // Which state "owns" (edits) boundary index b, for a given total state count n.
+  // Left-of-center states own the boundary matching their own index; right-of-center
+  // states own the boundary at (their index - 1), since the middle "Straight" state
+  // is skipped and owns no boundary of its own.
+  function boundaryOwner(n, b) {
+    const m = (n - 1) / 2; // index of the middle "Straight" state
+    return b < m ? b : b + 1;
+  }
+
+  // Keeps the read-only "Straight" range display in sync with its two
+  // neighboring boundary inputs.
+  window.updateStraightRangeGeneric = function(n) {
+    const m = (n - 1) / 2;
+    const upperInput = document.getElementById(`thresh-b${m - 1}`);
+    const lowerInput = document.getElementById(`thresh-b${m}`);
+    const display = document.getElementById('thresh-straight-display');
+    if (upperInput && lowerInput && display) {
+      display.innerText = `${lowerInput.value}\u00b0 to ${upperInput.value}\u00b0`;
+    }
+  };
+
+  // Display-only labels for action column headers (Q-table and Rewards
+  // table both use this). The underlying action name ('LEFT'/'RIGHT'/
+  // 'FORWARD') stays the same for element ids, Python's action_names(),
+  // and everywhere else in the UI — only what's shown here changes.
+  function actionDisplayLabel(actionName) {
+    if (actionName === 'LEFT') return 'Move to LEFT';
+    if (actionName === 'RIGHT') return 'Move to RIGHT';
+    return actionName;
+  }
+
+  // Rebuilds the Q-table's two-row header: blank spacer over the axis-label
+  // + state-name columns, then an "Actions" group header spanning the
+  // action columns, with one "Move to LEFT"/"Move to RIGHT" sub-header
+  // per action (white background, monospace/bold to match the state-name
+  // cells' look).
+  function rebuildQTableHead(actionNames) {
+    const thead = document.getElementById('qtable-thead');
+    if (!thead) return;
+    // Each action gets a small ▶ button that physically executes that
+    // action on the robot WITHOUT touching the Q-table. Dispatched as a
+    // CustomEvent rather than py-click, since py-click bindings on
+    // dynamically-injected elements (this header is rebuilt whenever
+    // states/actions change) aren't reliably picked up by PyScript.
+    const subHeaders = actionNames.map(name =>
+      `<th class="action-value-header">
+         <b class="action-header-label">${actionDisplayLabel(name)}</b>
+         <button class="execute-action-btn" onclick="requestManualAction('${name}')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+       </th>`
+    ).join('');
+    thead.innerHTML = `
+      <tr>
+        <th colspan="2" rowspan="2"></th>
+        <th colspan="${actionNames.length}" class="axis-style-header"><span class="axis-header-text">Actions</span> <span class="tooltip-trigger tooltip-below tooltip-align-end help-icon">?<span class="tooltip-text">Which way can the robot move?</span></span></th>
+      </tr>
+      <tr>${subHeaders}</tr>`;
+  }
+
+  // Rebuilds the "test an action while watching yaw" buttons inside the
+  // Current Yaw modal, mirroring the same action set as the Q-table and
+  // Rewards table headers. Uses the same execute-action-btn styling and
+  // requestManualAction() dispatch as those, so it automatically inherits
+  // the same enabled/disabled sync in Python's _set_running_ui() (which
+  // toggles every .execute-action-btn generically, not by id).
+  function rebuildYawModalActions(actionNames) {
+    const container = document.getElementById('yaw-modal-actions');
+    if (!container) return;
+    container.innerHTML = actionNames.map(name =>
+      `<button class="execute-action-btn" onclick="requestManualAction('${name}')" title="Physically execute this action (does not update the Q-table)" disabled>${actionDisplayLabel(name)}</button>`
+    ).join('');
+  }
+
+  // Rebuilds the Q-table rows and reward sliders for the given number of
+  // states (3 or 5) and the given active action set. Called on page load
+  // and whenever the "States" dropdown or "Include FORWARD action"
+  // dropdown changes.
+  window.rebuildStateUI = function(n, actionNames) {
+    actionNames = actionNames || ['LEFT', 'RIGHT'];
+    const cfg = STATE_CONFIGS[n];
+    const m = (n - 1) / 2;
+
+    rebuildQTableHead(actionNames);
+    rebuildYawModalActions(actionNames);
+
+    // --- Q-table rows: one row per STATE, one column per ACTION ---
+    const tbody = document.getElementById('qtable-body');
+    tbody.innerHTML = '';
+    for (let s = 0; s < n; s++) {
+      let stateCellHTML = `<b>${cfg.names[s]}</b>`;
+      if (s === m) {
+        stateCellHTML += `<div class="yaw-condition"><span id="thresh-straight-display">-</span></div>`;
+      } else {
+        let boundaryIdx = -1;
+        for (let b = 0; b < n - 1; b++) {
+          if (boundaryOwner(n, b) === s) { boundaryIdx = b; break; }
+        }
+        const isLeftSide = s < m;
+        const label = isLeftSide ? 'yaw &gt;' : 'yaw &lt;';
+        const defaultVal = cfg.boundaryDefaults[boundaryIdx];
+        stateCellHTML += `<div class="yaw-condition">${label} <input type="number" id="thresh-b${boundaryIdx}" value="${defaultVal}" step="1" oninput="updateStraightRangeGeneric(${n})">&deg;</div>`;
+      }
+      const valueCells = actionNames.map(() => '<td>0.00</td>').join('');
+      const tr = document.createElement('tr');
+      const axisLabelCell = s === 0
+        ? `<td rowspan="${n}" class="axis-label"><span>States (Yaw)</span> <span class="tooltip-trigger tooltip-below help-icon">?<span class="tooltip-text">How can we discretize the orientation of the robot at the start of each step, based on its yaw-orientation?</span></span></td>`
+        : '';
+      tr.innerHTML = `${axisLabelCell}<td class="state-cell">${stateCellHTML}</td>${valueCells}`;
+      tbody.appendChild(tr);
+    }
+    updateStraightRangeGeneric(n);
+
+    // --- Rewards table (mirrors the Q-table's layout: one row per state,
+    // one column per action, same table/th/td styling) ---
+    const container = document.getElementById('rewards-container');
+    container.innerHTML = '';
+
+    const headerCells = actionNames.map(a =>
+      `<th class="action-value-header">
+         <b class="action-header-label">${actionDisplayLabel(a)}</b>
+         <button class="execute-action-btn" onclick="requestManualAction('${a}')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+       </th>`
+    ).join('');
+    let bodyRows = '';
+    for (let s = 0; s < n; s++) {
+      const defaults = cfg.rewardDefaults[s];
+      const valueCells = actionNames.map(actionName => {
+        const idSuffix = actionName.toLowerCase();
+        const def = defaults[actionName];
+        return `
+          <td>
+            <input type="range" id="reward-s${s}-${idSuffix}" min="-20" max="20" value="${def}" style="width: 100%;"
+                   oninput="document.getElementById('val-reward-s${s}-${idSuffix}').innerText = this.value">
+            <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-s${s}-${idSuffix}">${def}</span></div>
+          </td>`;
+      }).join('');
+      const axisLabelCell = s === 0
+        ? `<td rowspan="${n}" class="axis-label"><span>States (Yaw)</span> <span class="tooltip-trigger tooltip-below help-icon">?<span class="tooltip-text">How can we discretize the orientation of the robot at the start of each step, based on its yaw-orientation?</span></span></td>`
+        : '';
+      bodyRows += `<tr>${axisLabelCell}<td class="state-cell"><b>${cfg.names[s]}</b></td>${valueCells}</tr>`;
+    }
+
+    container.innerHTML = `
+      <div class="table-resize-wrapper">
+        <table id="rewards-table">
+          <thead>
+            <tr>
+              <th colspan="2" rowspan="2"></th>
+              <th colspan="${actionNames.length}" class="axis-style-header"><span class="axis-header-text">Actions</span> <span class="tooltip-trigger tooltip-below tooltip-align-end help-icon">?<span class="tooltip-text">Which way can the robot move?</span></span></th>
+            </tr>
+            <tr>${headerCells}</tr>
+          </thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>`;
+  };
+
+  // Initial build at 3 states, 2 actions (matches Python's NUM_STATES/NUM_ACTIONS defaults)
+  rebuildStateUI(3, ['LEFT', 'RIGHT']);
+</script>
+
+<script type="py" src="./main.py" config="./pyscript.toml"></script>
+</body>
+</html>
