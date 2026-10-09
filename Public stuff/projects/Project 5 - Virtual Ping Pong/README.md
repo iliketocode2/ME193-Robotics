@@ -87,7 +87,12 @@ Double Motor IMU -> imu thread (swings; sends haptics) ----+-> game tick 60 Hz (
   ```
   my_env/Scripts/python "Public stuff/projects/Project 5 - Virtual Ping Pong/test_game_logic.py"
   ```
-- **The browser only draws.** It gets 60 Hz state plus a WebP cut-out of you, where the segmentation mask is the alpha channel. It sends back ENTER, D, [ ], SPACE and ESC.
+- **The browser only draws.** It gets 60 Hz game state plus, for each frame pose runs on, a small JPEG and that frame's raw person mask. A GPU shader uses the mask as transparency to cut you out. It sends back ENTER, D, [ ], SPACE and ESC.
+- **Low camera latency:**
+  - **No backlog:** a grab thread reads the webcam continuously and keeps only the newest frame, so frames never queue up behind slow pose detection.
+  - **Matched images:** your cut-out uses the same frame pose ran on, so the cut-out edges and the virtual paddle stay on your body.
+  - **Full-rate inset:** the select screen's camera inset gets every frame.
+  - **Checking it:** the D overlay shows "frame age" (how old the frame behind the current paddle position is). It should stay under ~100 ms.
 - **Bluetooth stays on one thread.** All BLE reads and commands happen on the IMU thread, so Bluetooth never stalls the camera or the game.
 - **IMU update rate:** the hub's notifications are raised from 100 ms to 30 ms with `device_notification_request(30)`. At 10 Hz, fast swings slipped between readings.
 - **Paddle/hand alignment:** `SHOULDER_WORLD` in `vision.py` is used both to map your hand to table coordinates and to scale your cut-out in 3D. That's why the virtual paddle lands on your real hand.

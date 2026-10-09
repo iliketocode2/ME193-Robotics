@@ -39,7 +39,7 @@ from mqttlib import MQTTClient  # noqa: E402
 import game_logic as gl  # noqa: E402
 from opponents import public_info  # noqa: E402
 from paddle_imu import KeyboardPaddle, MotorPaddle  # noqa: E402
-from vision import BODY_X_GAIN, SHOULDER_WORLD, SHOULDER_Y, Vision  # noqa: E402
+from vision import BODY_X_GAIN, MASK_SIZE, SHOULDER_WORLD, SHOULDER_Y, Vision  # noqa: E402
 
 # --- Hardware placeholders -------------------------------------------------------
 # None = connect to the first advertising Double Motor. Fine alone, ambiguous
@@ -55,7 +55,7 @@ HEARTBEAT_S = 1.0
 HTTP_PORT = 8193
 WS_PORT = HTTP_PORT + 1          # web/game.js assumes page port + 1
 TICK_HZ = 60
-VIDEO_HZ = 20
+VIDEO_HZ = 60                    # cap only -- a frame is sent as soon as vision finishes it
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 
@@ -69,6 +69,7 @@ class App:
         self.clients = set()
         self.stop = asyncio.Event()
         self._last_frame_id = -1
+        self._last_cut_id = -1
         self._last_record_sent = None
 
     # ------------------------------------------------------------ browser I/O
@@ -83,6 +84,7 @@ class App:
                       "hit_z": gl.PLAYER_HIT_Z, "opp_z": gl.OPP_HIT_Z, "hit_rx": gl.HIT_RADIUS_X},
             "body": {"shoulder_world": SHOULDER_WORLD, "shoulder_y": SHOULDER_Y,
                      "body_x_gain": BODY_X_GAIN},
+            "mask_size": list(MASK_SIZE),
         }))
         try:
             async for msg in ws:
@@ -139,7 +141,8 @@ class App:
                             paddle={"x": vs.paddle_x, "y": vs.paddle_y, "visible": vs.visible},
                             body={"u": vs.shoulder_u, "v": vs.shoulder_v, "w": vs.shoulder_w},
                             debug={"gyro": round(self.paddle.gyro_mag), "threshold": round(self.paddle.threshold),
-                                   "fps": round(vs.fps, 1), "paddle_connected": self.paddle.connected},
+                                   "fps": round(vs.fps, 1), "paddle_connected": self.paddle.connected,
+                                   "frame_age_ms": round((time.time() - vs.frame_t) * 1000) if vs.frame_t else None},
                             mqtt_ok=self.mqtt is not None)
                 broadcast(self.clients, json.dumps(snap))
                 if now >= next_video:
@@ -153,15 +156,18 @@ class App:
             await asyncio.sleep(max(0.0, period - (time.monotonic() - now)))
 
     def _send_video(self):
-        frame_id, jpeg, cutout = self.vision.latest_images()
-        if frame_id == self._last_frame_id:
-            return
-        self._last_frame_id = frame_id
-        # select screen: full camera view (you + your AprilTag); in game: just you
-        if self.game.state == gl.SELECT and jpeg:
-            broadcast(self.clients, b"F" + jpeg)
-        elif cutout:
-            broadcast(self.clients, b"C" + cutout)
+        video_id, video_jpeg, cut_id, cut_jpeg, mask = self.vision.latest_images()
+        if self.game.state == gl.SELECT:
+            # select screen: every camera frame (you + your AprilTag outlines)
+            if video_jpeg and video_id != self._last_frame_id:
+                self._last_frame_id = video_id
+                broadcast(self.clients, b"F" + video_jpeg)
+        elif cut_jpeg and mask and cut_id != self._last_cut_id:
+            # in game: the frame pose ran on + its person mask. The browser's
+            # GPU uses the mask as transparency to cut you out (much cheaper
+            # than encoding a transparent image here).
+            self._last_cut_id = cut_id
+            broadcast(self.clients, b"C" + mask + cut_jpeg)
 
     def _on_event(self, ev):
         kind = ev["type"]

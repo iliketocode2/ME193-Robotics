@@ -227,12 +227,34 @@ function updateSparks(dt) {
 const camCanvas = document.createElement("canvas");
 camCanvas.width = 320; camCanvas.height = 240;
 const camCtx = camCanvas.getContext("2d");
-const fadeGrad = camCtx.createLinearGradient(0, 0, 0, 240);
-fadeGrad.addColorStop(0.6, "rgba(0,0,0,1)"); fadeGrad.addColorStop(1, "rgba(0,0,0,0)");
 const camTex = new THREE.CanvasTexture(camCanvas);
-camTex.colorSpace = THREE.SRGBColorSpace;
-const you = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-  new THREE.MeshBasicMaterial({ map: camTex, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
+camTex.colorSpace = THREE.NoColorSpace;          // passed straight through by the shader below
+// Person mask from MediaPipe (raw bytes, top row first). The GPU upsamples it
+// and uses it as transparency -- no transparent-image encoding in Python.
+let MASK_W = 160, MASK_H = 120;
+let maskTex = makeMaskTex();
+function makeMaskTex() {
+  const t = new THREE.DataTexture(new Uint8Array(MASK_W * MASK_H), MASK_W, MASK_H, THREE.RedFormat);
+  t.minFilter = t.magFilter = THREE.LinearFilter;
+  t.unpackAlignment = 1;
+  t.needsUpdate = true;
+  return t;
+}
+const youMat = new THREE.ShaderMaterial({
+  uniforms: { map: { value: camTex }, mask: { value: maskTex }, opacity: { value: 0.85 } },
+  vertexShader: `varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `uniform sampler2D map; uniform sampler2D mask; uniform float opacity; varying vec2 vUv;
+    void main() {
+      float m = texture2D(mask, vec2(vUv.x, 1.0 - vUv.y)).r;         // mask rows are top-first
+      float a = smoothstep(0.25, 0.65, m)                              // crisp person edge
+              * smoothstep(0.0, 0.4, vUv.y)                            // fade out where the webcam frame ends
+              * opacity;
+      gl_FragColor = vec4(texture2D(map, vUv).rgb, a);
+    }`,
+  transparent: true, depthWrite: false, side: THREE.DoubleSide,
+});
+const you = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), youMat);
 you.renderOrder = 5;
 scene.add(you);
 const YOU_Z = 1.7;                              // just behind your end of the table
@@ -375,20 +397,35 @@ function connect() {
       img.src = URL.createObjectURL(new Blob([e.data.slice(1)], { type: "image/jpeg" }));
       if (old.startsWith("blob:")) URL.revokeObjectURL(old);
     } else if (kind === "C") {
-      createImageBitmap(new Blob([e.data.slice(1)], { type: "image/webp" })).then((bmp) => {
-        camCtx.globalCompositeOperation = "source-over";
-        camCtx.clearRect(0, 0, 320, 240); camCtx.drawImage(bmp, 0, 0, 320, 240); bmp.close();
-        camCtx.globalCompositeOperation = "destination-in";      // fade out where the webcam frame ends
-        camCtx.fillStyle = fadeGrad; camCtx.fillRect(0, 0, 320, 240);
-        camTex.needsUpdate = true;
-      }).catch(() => {});
+      pendingCut = e.data;                       // newest wins; never queue frames behind a slow decode
+      if (!decoding) decodeCut();
     }
   };
+}
+
+// "C" message = [1 byte "C"][MASK_W*MASK_H mask bytes][JPEG]
+let pendingCut = null, decoding = false;
+function decodeCut() {
+  const buf = pendingCut;
+  pendingCut = null;
+  if (!buf) return;
+  decoding = true;
+  const n = MASK_W * MASK_H;
+  createImageBitmap(new Blob([buf.slice(1 + n)], { type: "image/jpeg" })).then((bmp) => {
+    camCtx.drawImage(bmp, 0, 0, 320, 240); bmp.close();
+    camTex.needsUpdate = true;
+    maskTex.image.data.set(new Uint8Array(buf, 1, n));      // same frame as the image -> edges line up
+    maskTex.needsUpdate = true;
+  }).catch(() => {}).finally(() => { decoding = false; decodeCut(); });
 }
 
 function onJson(msg) {
   if (msg.type === "hello") {
     T = { ...T, ...msg.table }; BODY = msg.body; OPPONENTS = msg.opponents; SIM = msg.sim;
+    if (msg.mask_size && (msg.mask_size[0] !== MASK_W || msg.mask_size[1] !== MASK_H)) {
+      [MASK_W, MASK_H] = msg.mask_size;
+      maskTex.dispose(); maskTex = makeMaskTex(); youMat.uniforms.mask.value = maskTex;
+    }
     $("topic").textContent = msg.topic;
     buildTable(); buildCards();
     if (SIM) hint.textContent = "SIM MODE: SPACE = swing";
@@ -490,7 +527,7 @@ function updateHud() {
   if (!$("debug").classList.contains("hidden")) {
     const d = S.debug, frac = Math.min(1, d.gyro / Math.max(1, d.threshold * 2));
     $("debug").innerHTML =
-      `state      ${S.state}\nvision fps ${d.fps}\npaddle     x ${S.paddle.x.toFixed(2)}  y ${S.paddle.y.toFixed(2)}  ${S.paddle.visible ? "seen" : "NOT SEEN"}\n` +
+      `state      ${S.state}\nvision fps ${d.fps}   frame age ${d.frame_age_ms ?? "-"} ms\npaddle     x ${S.paddle.x.toFixed(2)}  y ${S.paddle.y.toFixed(2)}  ${S.paddle.visible ? "seen" : "NOT SEEN"}\n` +
       `gyro       ${d.gyro}   swing threshold ${d.threshold}  ([ / ])\nmotor      ${d.paddle_connected ? "connected" : SIM ? "sim" : "OFFLINE"}` +
       `<span class="bar"><span style="position:absolute;left:0;top:0;bottom:0;width:${frac * 100}%;background:${d.gyro >= d.threshold ? "#06d6a0" : "#ffd23f"};border-radius:4px"></span>` +
       `<span style="position:absolute;left:50%;top:-3px;bottom:-3px;width:2px;background:#fff"></span></span>`;
@@ -588,7 +625,8 @@ function frame() {
     youFit.cy = lerp(youFit.cy, sy - (0.5 - bd.v) * H, 0.35);
     you.scale.set(youFit.w, youFit.w * 0.75, 1);
     you.position.set(youFit.cx, youFit.cy, YOU_Z);
-    you.material.opacity = lerp(you.material.opacity, S.paddle.visible ? 0.85 : 0.3, 0.1);
+    const op = youMat.uniforms.opacity;
+    op.value = lerp(op.value, S.paddle.visible ? 0.85 : 0.3, 0.1);
 
     mySwingT = Math.min(1, mySwingT + dt / 0.3);
     const sw = Math.sin(mySwingT * Math.PI);

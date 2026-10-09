@@ -40,7 +40,7 @@ SHOULDER_WORLD = 0.36        # one shoulder-width of hand movement = this many m
 SHOULDER_Y = 0.45            # your shoulders' height above the table top
 PADDLE_X_LIMIT = 1.0
 PADDLE_Y_RANGE = (-0.1, 0.95)
-SMOOTHING = 0.55             # EMA weight on the newest sample (1 = no smoothing)
+SMOOTHING = 0.75             # EMA weight on the newest sample (1 = no smoothing)
 MIN_VISIBILITY = 0.5
 
 # --- AprilTag ------------------------------------------------------------------
@@ -50,6 +50,8 @@ TAG_HOLD_S = 0.5             # tag must be steady this long before it selects
 # --- Video stream to the browser ---------------------------------------------
 STREAM_SIZE = (320, 240)
 STREAM_QUALITY = 70
+POSE_INPUT = (320, 240)      # pose runs on a half-size copy: ~10% faster, same landmarks
+MASK_SIZE = (160, 120)       # person mask sent raw (no encoding); the browser's GPU upsamples it
 
 # MediaPipe pose model, stored in the gitignored repo-root models/ folder
 # (same pattern as Project 1's hand_landmarker.task).
@@ -117,9 +119,20 @@ class _Mirrored:
 
 
 class Vision:
-    """Owns the camera. start() launches the capture thread; read() returns
-    the latest VisionState; latest_jpeg()/latest_cutout() return encoded
-    images for the browser."""
+    """Owns the camera. Two threads:
+
+      grab   -- reads the camera as fast as it delivers and hands the newest
+                frame to the vision thread. It also encodes every frame for
+                the select screen's camera inset, so that runs at full
+                camera rate.
+      vision -- pose + AprilTag on the newest frame only (anything that
+                arrives meanwhile replaces it, never queues -- a queue of old
+                frames was the original lag). For gameplay it sends THAT frame
+                plus its person mask, so the cut-out edges and the virtual
+                paddle line up exactly with your body.
+
+    read() returns the latest VisionState; latest_images() returns
+    (video_id, video_jpeg, cut_id, cut_jpeg, mask_bytes)."""
 
     def __init__(self, cap, start_ms):
         self.cap = cap
@@ -128,11 +141,16 @@ class Vision:
         self._state = VisionState()
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._frame_jpeg = None         # full mirrored frame (select screen)
-        self._cutout_webp = None        # you, background transparent (gameplay)
+        self._new_frame = threading.Condition()
+        self._raw = None                # (frame, capture_time) -- newest only
+        self._frame_jpeg = None         # every camera frame, mirrored, STREAM_SIZE (select screen)
         self._frame_id = 0
+        self._cut_jpeg = None           # the frame pose last ran on (gameplay cut-out)
+        self._mask = None               # its person mask, MASK_SIZE uint8, mirrored, top row first
+        self._cut_id = 0
         self._tag_seen = None
         self._tag_since = 0.0
+        self._tag_outlines = []         # [(mirrored corner pts, BGR color)] drawn on the video by grab
         landmarker_opts = mp_vision.PoseLandmarkerOptions(
             base_options=mp_tasks.BaseOptions(model_asset_path=ensure_model()),
             running_mode=mp_vision.RunningMode.VIDEO,
@@ -143,14 +161,20 @@ class Vision:
         self.detector = cv2.aruco.ArucoDetector(
             cv2.aruco.getPredefinedDictionary(APRILTAG_DICTIONARY),
             cv2.aruco.DetectorParameters())
-        self._thread = threading.Thread(target=self._run, name="vision", daemon=True)
+        self._threads = [threading.Thread(target=self._grab, name="grab", daemon=True),
+                         threading.Thread(target=self._run, name="vision", daemon=True)]
 
     def start(self):
-        self._thread.start()
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # a hint; not every backend honors it
+        for t in self._threads:
+            t.start()
 
     def stop(self):
         self._stop.set()
-        self._thread.join(timeout=2)
+        with self._new_frame:
+            self._new_frame.notify_all()
+        for t in self._threads:
+            t.join(timeout=2)
         self.landmarker.close()
 
     def read(self):
@@ -158,11 +182,39 @@ class Vision:
             return VisionState(**self._state.__dict__)
 
     def latest_images(self):
-        """(frame_id, jpeg_bytes, cutout_webp_bytes)."""
+        """(video_id, video_jpeg, cut_id, cut_jpeg, mask_bytes)."""
         with self._lock:
-            return self._frame_id, self._frame_jpeg, self._cutout_webp
+            return self._frame_id, self._frame_jpeg, self._cut_id, self._cut_jpeg, self._mask
 
-    # ------------------------------------------------------------------ loop
+    # ------------------------------------------------------------------ threads
+    def _grab(self):
+        while not self._stop.is_set():
+            ok, frame = self.cap.read()
+            if not ok:
+                time.sleep(0.01)
+                continue
+            with self._new_frame:
+                self._raw = (frame, time.time())
+                self._new_frame.notify()
+
+            if not self.want_tags:      # the full-rate video is only for the select screen
+                continue
+            small = cv2.flip(cv2.resize(frame, STREAM_SIZE, interpolation=cv2.INTER_AREA), 1)
+            scale = STREAM_SIZE[0] / frame.shape[1]
+            for pts, color in self._tag_outlines:
+                cv2.polylines(small, [(pts * scale).astype(np.int32)], True, color, 2)
+            ok_j, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, STREAM_QUALITY])
+            if ok_j:
+                with self._lock:
+                    self._frame_jpeg = jpeg.tobytes()
+                    self._frame_id += 1
+
+    @staticmethod
+    def _encode_small(frame):
+        small = cv2.flip(cv2.resize(frame, STREAM_SIZE, interpolation=cv2.INTER_AREA), 1)
+        ok, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, STREAM_QUALITY])
+        return jpeg.tobytes() if ok else None
+
     def _run(self):
         last_t = time.time()
         last_ts = -1
@@ -170,22 +222,24 @@ class Vision:
         prev_px = None
         smooth = None
         while not self._stop.is_set():
-            ok, frame = self.cap.read()
-            if not ok:
-                time.sleep(0.01)
-                continue
+            with self._new_frame:
+                while self._raw is None and not self._stop.is_set():
+                    self._new_frame.wait(0.1)
+                if self._raw is None:
+                    continue
+                frame, captured = self._raw
+                self._raw = None          # anything that arrives while we work replaces, never queues
             now = time.time()
             h, w = frame.shape[:2]
 
             # Detect on the UN-mirrored frame so MediaPipe's left/right labels
             # match your real hands; mirror the results afterwards.
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            ts = max(int(now * 1000) - self.start_ms, last_ts + 1)
+            rgb = cv2.cvtColor(cv2.resize(frame, POSE_INPUT, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
+            ts = max(int(captured * 1000) - self.start_ms, last_ts + 1)
             last_ts = ts
             result = self.landmarker.detect_for_video(
                 mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts)
 
-            mirrored = cv2.flip(frame, 1)
             st = VisionState()
             mask = None
             if result.pose_landmarks:
@@ -206,39 +260,41 @@ class Vision:
                 else:
                     prev_px = None
                 if result.segmentation_masks:
-                    mask = np.fliplr(np.squeeze(result.segmentation_masks[0].numpy_view()))
+                    m = np.squeeze(result.segmentation_masks[0].numpy_view())
+                    m = cv2.resize(m, MASK_SIZE, interpolation=cv2.INTER_AREA)
+                    mask = (np.fliplr(m) * 255).astype(np.uint8).tobytes()
             else:
                 prev_px = None
 
             # AprilTag opponent pick (select screen only -- saves CPU in game)
-            tag_img = mirrored
             if self.want_tags:
-                tag_img = mirrored.copy()
                 # detect on the RAW frame -- a mirror-flipped AprilTag is not a valid tag
-                st.tag_opponent = self._detect_tag(frame, tag_img, now)
+                st.tag_opponent = self._detect_tag(frame, now)
             else:
                 self._tag_seen = None
+                self._tag_outlines = []
 
             fps = 0.9 * fps + 0.1 / max(now - last_t, 1e-3)
             last_t = now
-            st.fps, st.frame_t = fps, now
+            st.fps, st.frame_t = fps, captured
 
-            small = cv2.resize(tag_img, STREAM_SIZE, interpolation=cv2.INTER_AREA)
-            ok_j, jpeg = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, STREAM_QUALITY])
-            cutout = self._encode_cutout(cv2.resize(mirrored, STREAM_SIZE, interpolation=cv2.INTER_AREA), mask)
+            cut_jpeg = None if self.want_tags else self._encode_small(frame)   # not needed on the select screen
 
             with self._lock:
                 self._state = st
-                self._frame_jpeg = jpeg.tobytes() if ok_j else self._frame_jpeg
-                self._cutout_webp = cutout
-                self._frame_id += 1
+                if cut_jpeg:
+                    self._cut_jpeg = cut_jpeg
+                    self._mask = mask if mask is not None else bytes(MASK_SIZE[0] * MASK_SIZE[1])
+                    self._cut_id += 1
 
-    def _detect_tag(self, frame, draw_on, now):
+    def _detect_tag(self, frame, now):
         """Return the opponent key once the same tag has been held TAG_HOLD_S.
-        `frame` is the raw (un-mirrored) camera image; outlines are drawn on
-        `draw_on`, the mirrored copy the player sees."""
+        `frame` is the raw (un-mirrored) camera image -- a mirrored AprilTag
+        isn't a valid tag. Outlines (mirrored to match the screen) are left
+        in self._tag_outlines for the grab thread to draw on the video."""
         corners, ids, _ = self.detector.detectMarkers(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
         seen = None
+        outlines = []
         if ids is not None:
             w = frame.shape[1]
             for c, tag_id in zip(corners, ids.flatten()):
@@ -246,24 +302,12 @@ class Vision:
                 color = (60, 220, 90) if key else (80, 80, 255)
                 pts = c.reshape(4, 2).copy()
                 pts[:, 0] = (w - 1) - pts[:, 0]            # mirror to match the displayed view
-                cv2.polylines(draw_on, [pts.astype(np.int32)], True, color, 4)
+                outlines.append((pts, color))
                 if key and seen is None:
                     seen = key
+        self._tag_outlines = outlines
         if seen != self._tag_seen:
             self._tag_seen, self._tag_since = seen, now
         if seen and now - self._tag_since >= TAG_HOLD_S:
             return seen
         return None
-
-    @staticmethod
-    def _encode_cutout(small_bgr, mask):
-        """You on a transparent background, as WebP with alpha."""
-        if mask is None:
-            alpha = np.zeros(small_bgr.shape[:2], np.uint8)
-        else:
-            m = cv2.resize(mask.astype(np.float32), STREAM_SIZE, interpolation=cv2.INTER_LINEAR)
-            m = np.clip((m - 0.25) / 0.5, 0, 1)            # crisper edge than the raw soft mask
-            alpha = (cv2.GaussianBlur(m, (5, 5), 0) * 255).astype(np.uint8)
-        bgra = np.dstack([small_bgr, alpha])
-        ok, buf = cv2.imencode(".webp", bgra, [cv2.IMWRITE_WEBP_QUALITY, STREAM_QUALITY])
-        return buf.tobytes() if ok else None
