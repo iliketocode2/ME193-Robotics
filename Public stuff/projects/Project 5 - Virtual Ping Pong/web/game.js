@@ -1,15 +1,18 @@
 // Rogers Cup -- the renderer. Python (pingpong.py) runs the game and streams
 // state at 60 Hz plus your webcam cut-out at ~20 Hz; this file only draws it
-// and sends keys back (ENTER confirm, SPACE swing in --sim, D debug, [ ] swing
-// sensitivity, ESC quit).
+// and sends controls back: on-screen buttons, or keys ENTER start / home,
+// R rematch, M announcer, C crowd, SPACE swing in --sim, D debug,
+// [ ] swing sensitivity, ESC quit.
 import * as THREE from "three";
 import { makeCharacter, makePaddle, toon, part, HEAD_HEIGHT } from "./characters.js";
+import { GameAudio } from "./audio.js";
 
 const TABLE_Y = 0.76;                          // table top height (game y=0)
 let T = { half_w: 0.7625, half_l: 1.37, net_h: 0.1525, hit_z: 1.55, opp_z: -1.55, hit_rx: 0.38 };
 let BODY = { shoulder_world: 0.36, shoulder_y: 0.45, body_x_gain: 1.6 };
 let OPPONENTS = [];
 let SIM = false;
+let GAME_OVER_LOCK = 2.5;
 let S = null;                                   // latest state from Python
 const $ = (id) => document.getElementById(id);
 
@@ -327,15 +330,17 @@ function drawScoreboard() {
 }
 
 // ------------------------------------------------------------------- audio
-let actx = null;
-function blip(freq, dur = 0.08, type = "square", vol = 0.12, slide = 0) {
-  if (!actx) return;
-  const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
-  o.type = type; o.frequency.setValueAtTime(freq, t);
-  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, freq + slide), t + dur);
-  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+// Browsers only allow sound after a click/key, so audio starts on the first one.
+let audio = null;
+function ensureAudio() {
+  if (audio) { if (audio.ctx.state === "suspended") audio.ctx.resume(); return; }
+  audio = new GameAudio();
+  audio.onCaption = showCaption;
+  audio.setMood(S && S.state !== "select" ? "idle" : "quiet");
+  refreshSoundButtons();
 }
+addEventListener("pointerdown", ensureAudio);
+const blip = (...a) => audio?.blip(...a);
 const arp = (notes, step = 0.09, type = "triangle") =>
   notes.forEach((f, i) => setTimeout(() => blip(f, 0.16, type, 0.12), i * step * 1000));
 
@@ -422,6 +427,7 @@ function decodeCut() {
 function onJson(msg) {
   if (msg.type === "hello") {
     T = { ...T, ...msg.table }; BODY = msg.body; OPPONENTS = msg.opponents; SIM = msg.sim;
+    GAME_OVER_LOCK = msg.game_over_lock ?? GAME_OVER_LOCK;
     if (msg.mask_size && (msg.mask_size[0] !== MASK_W || msg.mask_size[1] !== MASK_H)) {
       [MASK_W, MASK_H] = msg.mask_size;
       maskTex.dispose(); maskTex = makeMaskTex(); youMat.uniforms.mask.value = maskTex;
@@ -444,10 +450,20 @@ function onJson(msg) {
   updateHud();
 }
 
+let rally = 0;                                  // shots since the serve (sizes the crowd's reaction)
 function onEvent(ev) {
   const opp = S?.opp && chars[S.opp];
   switch (ev.type) {
+    case "start":
+      audio?.applause(2.5, 0.8); audio?.cheer(0.35);
+      break;
+    case "call":
+      if (audio) audio.say(ev.text, ev.excite, ev.interrupt);
+      else showCaption(ev.text);
+      break;
     case "hit":
+      rally++;
+      if (ev.streak && ev.streak % 5 === 0) audio?.cheer(0.3);
       mySwingT = 0;
       burst(ball.position, 0xffd23f);
       shake = 0.05;
@@ -455,9 +471,9 @@ function onEvent(ev) {
       pop("streakPill");
       crowd.cheer = Math.min(1, crowd.cheer + 0.15);
       break;
-    case "opp_hit": opp?.swing(); blip(480, 0.07, "square", 0.08); break;
+    case "opp_hit": rally++; opp?.swing(); blip(480, 0.07, "square", 0.08); break;
     case "bounce": blip(1100, 0.03, "sine", 0.08); break;
-    case "net": blip(160, 0.2, "sawtooth", 0.08, -60); break;
+    case "net": blip(160, 0.2, "sawtooth", 0.08, -60); audio?.ooh(0.6); break;
     case "record":
       pop("recordPill");
       if (ev.record > 1) showSub(`NEW RECORD: ${ev.record.toFixed(1)}`, 1.5);
@@ -465,16 +481,26 @@ function onEvent(ev) {
     case "point":
       if (ev.winner === "player") {
         showBanner("POINT!", "good", 1.2); arp([523, 659, 784]); crowd.cheer = 1;
+        audio?.cheer(0.35 + Math.min(rally, 20) / 25); audio?.applause(2, 0.7);
       } else {
         showBanner(ev.reason === "miss" ? "MISS" : "POINT", "lose", 1.2);
         blip(300, 0.35, "sawtooth", 0.08, -180);
+        audio?.ooh(0.55, true); audio?.applause(1.2, 0.3);         // "aww", then polite applause
       }
       break;
     case "game_over":
-      if (ev.winner === "player") { arp([523, 659, 784, 1047, 1319], 0.12); crowd.cheer = 1; }
-      else arp([392, 330, 262, 196], 0.18, "sawtooth");
+      if (ev.winner === "player") {
+        arp([523, 659, 784, 1047, 1319], 0.12); crowd.cheer = 1;
+        audio?.cheer(1); audio?.applause(5, 1);
+      } else {
+        arp([392, 330, 262, 196], 0.18, "sawtooth");
+        audio?.applause(3, 0.5);
+      }
       break;
-    case "miss": showSub(MISS_TEXT[ev.reason] || "Miss!", 2); break;
+    case "miss":
+      showSub(MISS_TEXT[ev.reason] || "Miss!", 2);
+      if (ev.reason === "bad_timing") audio?.ooh(0.7);                 // so close!
+      break;
     case "say": say(ev.text); break;
   }
 }
@@ -483,10 +509,13 @@ function onStateChange(state, prev) {
   const inGame = state !== "select";
   $("select").classList.toggle("hidden", inGame);
   $("hud").classList.toggle("hidden", !inGame);
+  $("homeBtn").classList.toggle("hidden", !inGame || state === "game_over");
+  disarmHome();
   if (state === "select") { banner.className = "banner hidden"; subBanner.classList.add("hidden"); }
-  if (state === "game_over") {
-    if (S.winner === "player") showBanner("YOU WIN!", "win", 999); else showBanner("YOU LOSE", "lose", 999);
-  }
+  $("over").classList.toggle("hidden", state !== "game_over");
+  if (state === "game_over") showGameOver();
+  if (state === "serve") rally = 0;
+  audio?.setMood({ select: "quiet", countdown: "buzz", rally: "rally", game_over: "buzz" }[state] ?? "idle");
   if (state === "serve" && prev === "countdown") { showBanner("PLAY!", "good", 0.8); blip(1046, 0.25, "triangle", 0.12); }
 }
 
@@ -499,10 +528,12 @@ function updateHud() {
 
   if (S.state === "select") {
     for (const o of OPPONENTS) $("card-" + o.key)?.classList.toggle("on", S.highlight === o.key);
-    const c = $("confirm");
+    const c = $("startBtn");
     const o = OPPONENTS.find((o) => o.key === S.highlight);
     c.classList.toggle("ready", !!o);
-    c.innerHTML = o ? `Press <kbd>ENTER</kbd> to play ${o.name}` : "Choose your opponent";
+    c.disabled = !o;
+    const html = o ? `▶ Start match vs ${o.name} <kbd>Enter</kbd>` : "Hold up an AprilTag to choose your opponent";
+    if (c.innerHTML !== html) c.innerHTML = html;
   }
   if (S.state === "countdown") {
     const n = Math.ceil(S.countdown);
@@ -510,11 +541,15 @@ function updateHud() {
     lastCount = n;
   } else lastCount = 0;
 
+  if (S.state === "game_over") {
+    const ready = S.state_age >= GAME_OVER_LOCK;    // short lock so a stray swing/keypress can't skip the result
+    $("overHome").disabled = $("overRematch").disabled = !ready;
+  }
+
   let h = "";
   if (S.state === "serve" && S.server === "player") h = "Swing the paddle to serve!";
-  else if (S.state === "game_over") h = "Press ENTER to choose an opponent";
   else if (S.state !== "select" && !S.paddle.visible) h = "Step into the camera view!";
-  else if (SIM && S.state !== "select") h = "SIM MODE: SPACE = swing";
+  else if (SIM && S.state !== "select" && S.state !== "game_over") h = "SIM MODE: SPACE = swing";
   hint.textContent = h;
 
   const key = `${S.score.you}-${S.score.opp}-${S.server}-${S.streak}-${S.record}-${S.opp_name}-${S.state === "game_over"}`;
@@ -534,11 +569,66 @@ function updateHud() {
   }
 }
 
+// ------------------------------------------------------------- controls
+// Every button blurs after a click, so a later SPACE (swing) or ENTER can't
+// re-trigger it by accident.
+function button(id, fn) {
+  $(id).addEventListener("click", (e) => { ensureAudio(); fn(e); e.currentTarget.blur(); });
+}
+button("startBtn", () => send("confirm"));
+button("overHome", () => send("home"));
+button("overRematch", () => send("rematch"));
+button("voiceBtn", () => toggleVoice());
+button("crowdBtn", () => toggleCrowd());
+
+// Home mid-match takes two clicks so a stray click can't throw the game away.
+let homeArmed = 0;
+button("homeBtn", () => {
+  if (performance.now() < homeArmed) { disarmHome(); send("home"); return; }
+  homeArmed = performance.now() + 3000;
+  $("homeBtn").classList.add("armed");
+  $("homeBtn").textContent = "Quit match? Click again";
+  setTimeout(() => { if (performance.now() >= homeArmed) disarmHome(); }, 3100);
+});
+function disarmHome() {
+  homeArmed = 0;
+  $("homeBtn").classList.remove("armed");
+  $("homeBtn").textContent = "🏠 Home";
+}
+
+function toggleVoice() { if (audio) { audio.setVoice(!audio.voiceOn); refreshSoundButtons(); } }
+function toggleCrowd() { if (audio) { audio.setCrowd(!audio.crowdOn); refreshSoundButtons(); } }
+function refreshSoundButtons() {
+  $("voiceBtn").classList.toggle("off", !!audio && !audio.voiceOn);
+  $("crowdBtn").classList.toggle("off", !!audio && !audio.crowdOn);
+}
+
+function showGameOver() {
+  const won = S.winner === "player";
+  const t = $("overTitle");
+  t.textContent = won ? "YOU WIN!" : "YOU LOSE";
+  t.className = won ? "win" : "lose";
+  $("overScore").textContent = `${S.score.you} – ${S.score.opp}  vs  ${S.opp_name}`;
+  $("overRecord").textContent = `Session record: ${S.record.toFixed(1)} hits in a row  ·  posted to ${$("topic").textContent}`;
+  $("overHome").disabled = $("overRematch").disabled = true;
+}
+
+let captionTimer = 0;
+function showCaption(text) {
+  const c = $("caption");
+  c.textContent = text; c.classList.remove("fade");
+  clearTimeout(captionTimer);
+  captionTimer = setTimeout(() => c.classList.add("fade"), 2500 + text.length * 45);
+}
+
 // ------------------------------------------------------------------- input
 addEventListener("keydown", (e) => {
-  if (!actx) { actx = new AudioContext(); }
+  ensureAudio();
   if (e.repeat) return;
   if (e.key === "Enter") send("confirm");
+  else if (e.key === "r" || e.key === "R") send("rematch");
+  else if (e.key === "m" || e.key === "M") toggleVoice();
+  else if (e.key === "c" || e.key === "C") toggleCrowd();
   else if (e.code === "Space") { e.preventDefault(); if (SIM) { send("swing"); mySwingT = 0; } }
   else if (e.key === "d" || e.key === "D") $("debug").classList.toggle("hidden");
   else if (e.key === "[") send("sens_up");

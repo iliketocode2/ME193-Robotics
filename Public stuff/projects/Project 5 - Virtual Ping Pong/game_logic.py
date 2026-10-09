@@ -148,24 +148,41 @@ class Game:
             self.highlight = opp_key if opp_key in OPPONENTS else None
 
     def confirm(self):
-        """Manual confirm from the computer (Enter)."""
+        """Manual confirm from the computer (Enter / Start button). On the
+        select screen it starts a match; after a game it goes home."""
         if self.state == SELECT and self.highlight:
-            self.opp = OPPONENTS[self.highlight]
-            self.score = {PLAYER: 0, OPP: 0}
-            self.winner = None
-            self.server = PLAYER
-            self.opp_x = 0.0
-            self._emit("start", opp=self.opp["key"])
-            self._say("intro")
-            self._enter(COUNTDOWN)
-        elif self.state == GAME_OVER and self.now - self.state_t >= GAME_OVER_LOCK_S:
-            self.highlight = None
-            self._enter(SELECT)
+            self._start_match(self.highlight)
+        elif self.state == GAME_OVER:
+            self.go_home()
 
-    def back_to_select(self):
+    def rematch(self):
+        """Play the same opponent again (game-over screen only)."""
+        if self.state == GAME_OVER and self._game_over_unlocked():
+            self._start_match(self.opp["key"])
+
+    def go_home(self):
+        """Back to the opponent-select screen. From the game-over screen this
+        waits out GAME_OVER_LOCK_S; mid-match it quits right away."""
+        if self.state == SELECT or (self.state == GAME_OVER and not self._game_over_unlocked()):
+            return
         self.ball = Ball()
         self.highlight = None
         self._enter(SELECT)
+
+    def _game_over_unlocked(self):
+        return self.now - self.state_t >= GAME_OVER_LOCK_S
+
+    def _start_match(self, opp_key):
+        self.opp = OPPONENTS[opp_key]
+        self.score = {PLAYER: 0, OPP: 0}
+        self.winner = None
+        self.server = PLAYER
+        self.opp_x = 0.0
+        self.streak = 0                 # streaks are per match; the record is per session
+        self.ball = Ball()
+        self._emit("start", opp=self.opp["key"])
+        self._say("intro")
+        self._enter(COUNTDOWN)
 
     # --------------------------------------------------------------- update
     def update(self, now, dt, paddle, swings=()):

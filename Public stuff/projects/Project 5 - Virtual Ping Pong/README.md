@@ -11,6 +11,7 @@ places you at a 3D table.
 | **AprilTags** | Hold up a tag to pick your opponent, then press ENTER to start. The opponent sets the ball speed. | `vision.py`, `opponents.py` |
 | **MQTT** | Your record number of continuous hits is posted live as a float. | `pingpong.py` |
 | **Motors** | They buzz on a hit and rumble on a miss. The hub light shows green, red or yellow. | `paddle_imu.py` |
+| **Announcer + crowd** | A table tennis announcer calls the match out loud, and a crowd murmurs, gasps, cheers and applauds. | `commentary.py`, `web/audio.js` |
 
 ## Opponents
 | Tag | Opponent | Level | Ball speed | Personality |
@@ -27,6 +28,7 @@ my_env/Scripts/pip install websockets      # once (everything else is already in
 ```
 - The first run downloads `pose_landmarker_lite.task` into the repo-root `models/` folder, which is gitignored.
 - The browser page loads Three.js and the font from a CDN, so you need internet (the MQTT broker needs it anyway).
+- **Use Microsoft Edge for the best announcer voice.** Edge has natural-sounding voices, and the game picks a British one ("Ryan"). Chrome falls back to "Google UK English Male".
 
 ## Run
 ```
@@ -35,18 +37,32 @@ my_env/Scripts/python "Public stuff/projects/Project 5 - Virtual Ping Pong/pingp
 1. The Double Motor connects. Put your Connection Card values in `PADDLE_CARD_SERIAL`/`PADDLE_CARD_COLOR` at the top of `pingpong.py`. With `None` it connects to the first Double Motor it finds.
 2. Pick a camera in the camlib window.
 3. The game opens at http://localhost:8193/.
-4. Hold up an opponent's tag. Their card lights up, and it stays picked after you lower the tag. Press **ENTER**.
+4. Hold up an opponent's tag. Their card lights up, and it stays picked after you lower the tag. Click **Start match** or press **ENTER**.
 5. Stand about 2 m from the camera with your shoulders visible. Hold the motor in your right hand, or set `RIGHT_HANDED = False` in `vision.py`.
 
 **Hold the motor with nothing attached to its shafts. They spin for the haptic buzz.**
 
-| Key (browser) | Action |
+Everything can be clicked on screen. Each button also has a keyboard shortcut:
+
+| On screen | Key | Action |
+|---|---|---|
+| **Start match** | ENTER | Play the opponent whose tag you held up |
+| **🏠 Home** (top) | — | Quit the current match. Click twice, so a stray click can't end your game. |
+| **🏠 Home** (game over) | ENTER | Back to opponent select |
+| **↻ Rematch** (game over) | R | Same opponent again |
+| **🎙 Announcer** | M | Announcer voice on/off (remembered between sessions) |
+| **👥 Crowd** | C | Crowd noise on/off (remembered between sessions) |
+
+The game-over buttons unlock after 2.5 s, so a swing or keypress right at match point can't skip the result screen.
+
+| Key only | Action |
 |---|---|
-| ENTER | Confirm the opponent / play again after game over |
-| D | Debug overlay: live gyro magnitude vs. swing threshold, vision fps, paddle position |
+| D | Debug overlay: live gyro magnitude vs. swing threshold, vision fps, frame age, paddle position |
 | [ / ] | Make swing detection more / less sensitive |
 | SPACE | Swing (only with `--sim`) |
-| ESC | Quit (motors stop and BLE disconnects) |
+| ESC | Quit the whole program (motors stop and BLE disconnects) |
+
+**Sound starts after your first click or key press.** Browsers block audio until then.
 
 Options:
 - `--sim` plays without the Double Motor, using SPACE to swing.
@@ -67,6 +83,28 @@ The hub's raw gyro units aren't documented, so `SWING_GYRO_THRESHOLD` in
 - **Scoring:** games go to 11, win by 2, and the serve alternates every 2 points. To serve, just swing.
 - **Streak:** your hits in a row. It resets only when **you** miss. The opponent's errors don't break it.
 - **Record:** your best streak this session.
+
+## Announcer and crowd
+`commentary.py` turns game events into lines, and `test_commentary.py` covers it. It's scripted, so it's instant, free, and needs no API key.
+
+| When | Example |
+|---|---|
+| Match start | "Welcome to the Rogers Cup! Today's match: you, versus Coach Rita." Plus an intro for each opponent |
+| Every point | Why it ended, then the score: "Caught flat-footed! Seven, four, to Coach Rita." |
+| Key moments | "Deuce!", "Game point, you!", "What a comeback!" |
+| During rallies | Long rallies ("Ten shots and counting!"), streaks ("That's ten in a row!"), smashes |
+| Records | Called when the point ends: "And a new personal best: seven in a row!" |
+| Game over | The final result |
+
+- **Delivery:** each line has an excitement level. Hyped lines are spoken higher and faster.
+- **No talking over itself:** point calls cut in immediately, and optional chatter is dropped while it's still talking.
+- **Captions:** every line also shows in the bottom-left corner.
+
+The crowd is synthesized live in `web/audio.js`, with no sound files:
+- It murmurs, and goes hushed during rallies.
+- It cheers when you win a point (louder for long rallies) and goes "aww" when you lose one.
+- It "ooh"s at near-misses and net balls, and applauds after points.
+- It ducks under the announcer's voice.
 
 ## MQTT
 - **Topic:** `ME193/Rogers/WilliamGoldman`

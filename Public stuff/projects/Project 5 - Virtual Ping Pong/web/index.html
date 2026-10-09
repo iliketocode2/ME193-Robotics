@@ -23,16 +23,37 @@
     </div>
   </div>
 
+  <!-- always-on controls (clickable; keys in brackets) -->
+  <div id="controls">
+    <button id="homeBtn" class="ctl hidden" title="Quit to the opponent select screen">🏠 Home</button>
+    <button id="voiceBtn" class="ctl" title="Announcer on/off (M)">🎙 Announcer</button>
+    <button id="crowdBtn" class="ctl" title="Crowd noise on/off (C)">👥 Crowd</button>
+  </div>
+
   <!-- select screen -->
   <div id="select" class="hidden">
     <h1 class="logo">ROGERS <span>CUP</span></h1>
     <p class="sub">Hold an opponent's <b>AprilTag</b> up to the camera</p>
     <div id="cards"></div>
-    <div id="confirm" class="confirm">Choose your opponent</div>
+    <button id="startBtn" class="confirm" disabled>Choose your opponent</button>
     <div class="inset"><img id="camInset" alt=""><span>camera</span></div>
   </div>
 
+  <!-- game over -->
+  <div id="over" class="over hidden">
+    <div class="overCard">
+      <h2 id="overTitle"></h2>
+      <p id="overScore"></p>
+      <p id="overRecord"></p>
+      <div class="overBtns">
+        <button id="overHome" class="big">🏠 Home <kbd>Enter</kbd></button>
+        <button id="overRematch" class="big alt">↻ Rematch <kbd>R</kbd></button>
+      </div>
+    </div>
+  </div>
+
   <div id="banner" class="banner hidden"></div>
+  <div id="caption" class="caption"></div>
   <div id="subBanner" class="subbanner hidden"></div>
   <div id="bubble" class="bubble hidden"></div>
   <div id="hint" class="hint"></div>

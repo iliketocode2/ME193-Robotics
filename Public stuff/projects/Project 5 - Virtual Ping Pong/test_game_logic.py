@@ -169,6 +169,24 @@ g.now += gl.GAME_OVER_LOCK_S
 g.confirm()
 check(g.state == gl.SELECT and g.highlight is None, "confirm after game over -> back to select")
 
+# --- rematch / home buttons -------------------------------------------------
+g = new_game(opp="rita", seed=16)
+g.streak = 3
+g.score = {gl.PLAYER: 3, gl.OPP: 10}
+g._point(gl.OPP, "t"); g._after_point()
+g.rematch()
+check(g.state == gl.GAME_OVER, "rematch is locked right at game over too")
+g.now += gl.GAME_OVER_LOCK_S
+g.rematch()
+check(g.state == gl.COUNTDOWN and g.opp["key"] == "rita" and g.score == {gl.PLAYER: 0, gl.OPP: 0},
+      "rematch -> same opponent, score reset, countdown")
+check(g.streak == 0, "a new match resets the streak (the record stays)")
+g._start_serve()
+g.go_home()
+check(g.state == gl.SELECT and not g.ball.visible, "home mid-match quits straight to select")
+g.go_home()
+check(g.state == gl.SELECT, "home on the select screen does nothing")
+
 servers = []
 g2 = new_game(seed=15)
 for i in range(6):

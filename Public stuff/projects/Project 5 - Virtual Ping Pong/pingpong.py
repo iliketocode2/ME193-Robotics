@@ -13,8 +13,9 @@ Run:
     my_env/Scripts/python "Public stuff/projects/Project 5 - Virtual Ping Pong/pingpong.py"
     ... --sim        no Double Motor: SPACE in the browser swings
     ... --no-mqtt    don't publish
-Browser keys: ENTER confirm opponent / play again, D debug overlay,
-[ / ] swing sensitivity, ESC quit.
+Browser: click the on-screen buttons (Start match / Home / Rematch / sound
+toggles), or keys ENTER start / home, R rematch, M mute announcer, C mute
+crowd, D debug overlay, [ / ] swing sensitivity, ESC quit.
 """
 
 import argparse
@@ -37,6 +38,7 @@ from camlib import pick_camera  # noqa: E402
 from mqttlib import MQTTClient  # noqa: E402
 
 import game_logic as gl  # noqa: E402
+from commentary import Announcer  # noqa: E402
 from opponents import public_info  # noqa: E402
 from paddle_imu import KeyboardPaddle, MotorPaddle  # noqa: E402
 from vision import BODY_X_GAIN, MASK_SIZE, SHOULDER_WORLD, SHOULDER_Y, Vision  # noqa: E402
@@ -66,6 +68,7 @@ class App:
         self.mqtt = mqtt
         self.sim = sim
         self.game = gl.Game()
+        self.announcer = Announcer()
         self.clients = set()
         self.stop = asyncio.Event()
         self._last_frame_id = -1
@@ -85,6 +88,7 @@ class App:
             "body": {"shoulder_world": SHOULDER_WORLD, "shoulder_y": SHOULDER_Y,
                      "body_x_gain": BODY_X_GAIN},
             "mask_size": list(MASK_SIZE),
+            "game_over_lock": gl.GAME_OVER_LOCK_S,
         }))
         try:
             async for msg in ws:
@@ -98,6 +102,10 @@ class App:
         cmd = msg.get("cmd")
         if cmd == "confirm":
             self.game.confirm()
+        elif cmd == "home":
+            self.game.go_home()
+        elif cmd == "rematch":
+            self.game.rematch()
         elif cmd == "swing" and self.sim:
             self.paddle.key_swing()
         elif cmd == "sens_up":
@@ -132,6 +140,7 @@ class App:
             paddle = gl.Paddle(vs.paddle_x, vs.paddle_y, vs.paddle_vx, vs.visible)
             swings = self.paddle.take_swings()
             events = self.game.update(now, dt, paddle, swings)
+            events += self.announcer.update(now, events, self.game)
             for ev in events:
                 self._on_event(ev)
 
@@ -183,6 +192,8 @@ class App:
             self._publish_record()
         elif kind == "say":
             print(f'  {self.game.opp["name"]}: "{ev["text"]}"')
+        elif kind == "call":
+            print(f'  [announcer] {ev["text"]}')
 
     def _publish_record(self, force=False):
         """Record # of continuous hits, as a bare float string (e.g. '12.0')."""
