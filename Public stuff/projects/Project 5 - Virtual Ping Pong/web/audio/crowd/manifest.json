@@ -1,0 +1,41 @@
+{
+  "bed": [
+    "bed_stadium.ogg",
+    "bed_walla.ogg"
+  ],
+  "bed_buzz": [
+    "bed_buzz.ogg"
+  ],
+  "chant": [
+    "chant_vienna.ogg",
+    "chant_clap.ogg",
+    "chant_terrace.ogg",
+    "chant_merci.ogg"
+  ],
+  "roar": [
+    "roar_1.ogg",
+    "roar_2.ogg",
+    "roar_rhythmic.ogg"
+  ],
+  "cheer": [
+    "cheer_1.ogg",
+    "cheer_2.ogg",
+    "cheer_3.ogg"
+  ],
+  "cheer_small": [
+    "cheer_small.ogg"
+  ],
+  "applause_s": [
+    "applause_s.ogg"
+  ],
+  "applause_m": [
+    "applause_m.ogg"
+  ],
+  "applause_l": [
+    "applause_l.ogg"
+  ],
+  "ooh": [
+    "ooh_1.ogg",
+    "ooh_2.ogg"
+  ]
+}

@@ -5,7 +5,7 @@
 // [ ] swing sensitivity, ESC quit.
 import * as THREE from "three";
 import { makeCharacter, makePaddle, toon, part, HEAD_HEIGHT } from "./characters.js";
-import { GameAudio } from "./audio.js";
+import { GameAudio, savedVoicePref } from "./audio.js";
 
 const TABLE_Y = 0.76;                          // table top height (game y=0)
 let T = { half_w: 0.7625, half_l: 1.37, net_h: 0.1525, hit_z: 1.55, opp_z: -1.55, hit_rx: 0.38 };
@@ -18,7 +18,6 @@ const $ = (id) => document.getElementById(id);
 
 // ------------------------------------------------------------------ renderer
 const renderer = new THREE.WebGLRenderer({ canvas: $("scene"), antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
@@ -53,10 +52,43 @@ scene.add(new THREE.HemisphereLight(0xe3f4ff, 0xc9a77a, 1.7));
 const sun = new THREE.DirectionalLight(0xffffff, 2.3);
 sun.position.set(3, 7, 4);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(1024, 1024);
 Object.assign(sun.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5, near: 1, far: 20 });
 sun.shadow.bias = -0.0005;
 scene.add(sun);
+
+// ------------------------------------------------------------ render budget
+// The camera (MediaPipe), Sonia's AI and this page all share one laptop chip
+// -- power, memory bandwidth and GPU. Every frame drawn here costs camera fps
+// (measured: ~27 -> 19 fps when this page drew 120 fps at 2x pixel ratio).
+// So: draw at most 60 fps at 1x pixel ratio (1.25x was measured to cause
+// 50-400 ms GPU stalls), and step quality down for the rest of the session
+// if frames stutter or run slow.
+const QUALITY = [
+  { name: "high", pr: 1, shadows: true },
+  { name: "medium", pr: 1, shadows: false },
+  { name: "low", pr: 0.75, shadows: false },
+];
+const FRAME_MS = 1000 / 60;
+const SLOW_FPS = 45;                     // average below this...
+const MAX_STUTTERS = 3;                  // ...or this many >50 ms frames per second, 2 s running -> step down
+let quality = 0, nextFrameMs = 0, rendered = 0, renderFps = 0, slowSeconds = 0;
+let stutters = 0, lastFrameMs = 0;
+function applyQuality() {
+  const q = QUALITY[quality];
+  renderer.setPixelRatio(q.pr);
+  sun.castShadow = q.shadows;
+  resize();
+}
+applyQuality();
+setInterval(() => {                      // once a second: measure, adapt, report
+  renderFps = rendered; rendered = 0;
+  const stuttered = stutters; stutters = 0;
+  if (document.hidden) return;
+  slowSeconds = renderFps < SLOW_FPS || stuttered >= MAX_STUTTERS ? slowSeconds + 1 : 0;
+  if (slowSeconds >= 2 && quality < QUALITY.length - 1) { quality++; slowSeconds = 0; applyQuality(); }
+  send("perf", { fps: renderFps, quality: QUALITY[quality].name });
+}, 1000);
 
 // ------------------------------------------------------------------- arena
 const floorTex = canvasTex(512, 512, (g, w, h) => {
@@ -130,7 +162,10 @@ const crowd = [];
   crowd.bodyMesh = bodyMesh; crowd.headMesh = headMesh; crowd.cheer = 0;
 }
 const _m = new THREE.Matrix4();
+let lastCrowd = 0;
 function updateCrowd(t, dt) {
+  if (t - lastCrowd < 1 / 30) return;   // 30 Hz is plenty for bobbing spectators
+  dt = t - lastCrowd; lastCrowd = t;
   crowd.cheer = Math.max(0, crowd.cheer - dt * 0.6);
   for (const c of crowd) {
     const hop = Math.abs(Math.sin(t * (3 + crowd.cheer * 6) + c.phase)) * (0.02 + crowd.cheer * 0.18);
@@ -384,7 +419,7 @@ function buildCards() {
 let ws = null;
 let lastState = "";
 let lastScoreKey = "";
-function send(cmd) { if (ws?.readyState === 1) ws.send(JSON.stringify({ cmd })); }
+function send(cmd, extra = {}) { if (ws?.readyState === 1) ws.send(JSON.stringify({ cmd, ...extra })); }
 
 function connect() {
   ws = new WebSocket(`ws://${location.hostname}:${Number(location.port) + 1}`);
@@ -435,9 +470,11 @@ function onJson(msg) {
     $("topic").textContent = msg.topic;
     buildTable(); buildCards();
     if (SIM) hint.textContent = "SIM MODE: SPACE = swing";
+    send("commentary", { on: audio ? audio.voiceOn : savedVoicePref() });   // muted = no AI work
     return;
   }
   if (msg.type !== "state") return;
+  ballRecv = performance.now();
   if (!S) {                                       // first state: jump straight to the right view
     const v = msg.state === "select" ? VIEWS.select : VIEWS.game;
     camPos.copy(v.pos); camLook.copy(v.look);
@@ -451,18 +488,34 @@ function onJson(msg) {
 }
 
 let rally = 0;                                  // shots since the serve (sizes the crowd's reaction)
+let playerRun = 0;                              // points in a row for you (crowd chants on a run)
+
+// The crowd breaks into a football chant between points when it has a reason
+// to (and never more than one every 15 s -- see SampleCrowd.chant).
+function maybeChant(ev) {
+  const you = ev.score.you ?? ev.score.player, them = ev.score.opp;
+  const bigPoint = Math.max(you, them) >= 10;   // game point / deuce territory
+  if ((ev.winner === "player" && (playerRun >= 3 || S.streak >= 5)) || bigPoint) {
+    setTimeout(() => audio?.chant(), 1800);     // after the cheer and the call
+  }
+}
+
 function onEvent(ev) {
   const opp = S?.opp && chars[S.opp];
   switch (ev.type) {
     case "start":
+      playerRun = 0;
       audio?.applause(2.5, 0.8); audio?.cheer(0.35);
+      setTimeout(() => audio?.chant(), 1200);
       break;
     case "call":
-      if (audio) audio.say(ev.text, ev.excite, ev.interrupt);
-      else showCaption(ev.text);
+      if (audio) audio.say(ev.text, ev.excite, ev.interrupt, ev.speaker);
+      else showCaption(ev.text, ev.speaker);
       break;
     case "hit":
       rally++;
+      if (ev.serve) audio?.stopChant();         // the chant fades as play starts
+      if (rally >= 4) audio?.dropQueued("sonia"); // her between-points line is stale once the rally is on
       if (ev.streak && ev.streak % 5 === 0) audio?.cheer(0.3);
       mySwingT = 0;
       burst(ball.position, 0xffd23f);
@@ -471,7 +524,12 @@ function onEvent(ev) {
       pop("streakPill");
       crowd.cheer = Math.min(1, crowd.cheer + 0.15);
       break;
-    case "opp_hit": rally++; opp?.swing(); blip(480, 0.07, "square", 0.08); break;
+    case "opp_hit":
+      rally++;
+      if (ev.serve) audio?.stopChant();
+      if (rally >= 4) audio?.dropQueued("sonia");
+      opp?.swing(); blip(480, 0.07, "square", 0.08);
+      break;
     case "bounce": blip(1100, 0.03, "sine", 0.08); break;
     case "net": blip(160, 0.2, "sawtooth", 0.08, -60); audio?.ooh(0.6); break;
     case "record":
@@ -479,19 +537,22 @@ function onEvent(ev) {
       if (ev.record > 1) showSub(`NEW RECORD: ${ev.record.toFixed(1)}`, 1.5);
       break;
     case "point":
+      playerRun = ev.winner === "player" ? playerRun + 1 : 0;
       if (ev.winner === "player") {
         showBanner("POINT!", "good", 1.2); arp([523, 659, 784]); crowd.cheer = 1;
-        audio?.cheer(0.35 + Math.min(rally, 20) / 25); audio?.applause(2, 0.7);
+        audio?.cheer(0.35 + Math.min(rally, 20) / 25); audio?.applause(2, 0.4 + Math.min(rally, 12) / 20);
       } else {
         showBanner(ev.reason === "miss" ? "MISS" : "POINT", "lose", 1.2);
         blip(300, 0.35, "sawtooth", 0.08, -180);
         audio?.ooh(0.55, true); audio?.applause(1.2, 0.3);         // "aww", then polite applause
       }
+      maybeChant(ev);
       break;
     case "game_over":
       if (ev.winner === "player") {
         arp([523, 659, 784, 1047, 1319], 0.12); crowd.cheer = 1;
         audio?.cheer(1); audio?.applause(5, 1);
+        setTimeout(() => audio?.chant(), 3500);
       } else {
         arp([392, 330, 262, 196], 0.18, "sawtooth");
         audio?.applause(3, 0.5);
@@ -532,7 +593,9 @@ function updateHud() {
     const o = OPPONENTS.find((o) => o.key === S.highlight);
     c.classList.toggle("ready", !!o);
     c.disabled = !o;
-    const html = o ? `▶ Start match vs ${o.name} <kbd>Enter</kbd>` : "Hold up an AprilTag to choose your opponent";
+    const html = !o ? "Hold up an AprilTag to choose your opponent"
+      : S.hold != null ? `Sonia warming up… starting in ${Math.ceil(S.hold)} s <kbd>Enter</kbd> start now`
+      : `▶ Start match vs ${o.name} <kbd>Enter</kbd>`;
     if (c.innerHTML !== html) c.innerHTML = html;
   }
   if (S.state === "countdown") {
@@ -540,6 +603,8 @@ function updateHud() {
     if (n !== lastCount && n > 0) { showBanner(String(n), "", 0.9); blip(660, 0.1, "triangle", 0.12); }
     lastCount = n;
   } else lastCount = 0;
+
+  updateBoothBadge(S.booth);
 
   if (S.state === "game_over") {
     const ready = S.state_age >= GAME_OVER_LOCK;    // short lock so a stray swing/keypress can't skip the result
@@ -563,7 +628,11 @@ function updateHud() {
     const d = S.debug, frac = Math.min(1, d.gyro / Math.max(1, d.threshold * 2));
     $("debug").innerHTML =
       `state      ${S.state}\nvision fps ${d.fps}   frame age ${d.frame_age_ms ?? "-"} ms\npaddle     x ${S.paddle.x.toFixed(2)}  y ${S.paddle.y.toFixed(2)}  ${S.paddle.visible ? "seen" : "NOT SEEN"}\n` +
-      `gyro       ${d.gyro}   swing threshold ${d.threshold}  ([ / ])\nmotor      ${d.paddle_connected ? "connected" : SIM ? "sim" : "OFFLINE"}` +
+      `gyro       ${d.gyro}   swing threshold ${d.threshold}  ([ / ])\nmotor      ${d.paddle_connected ? "connected" : SIM ? "sim" : "OFFLINE"}\n` +
+      `render     ${renderFps} fps  quality ${QUALITY[quality].name}   server tick ${d.tick_hz} Hz (worst gap ${d.tick_gap_ms} ms)\n` +
+      `AI booth   ${S.booth?.status ?? "-"} ${S.booth?.device ?? ""}  ${S.booth?.gate ? "ball dead: may think" : "RALLY: AI paused"}` +
+      `${S.booth?.generating ? "  (writing...)" : ""}  last line ${S.booth?.latency != null ? S.booth.latency.toFixed(1) + " s" : "-"}` +
+      `  cut off ${S.booth?.cancelled ?? 0}   crowd ${audio?.crowdKind ?? "(click to start audio)"}` +
       `<span class="bar"><span style="position:absolute;left:0;top:0;bottom:0;width:${frac * 100}%;background:${d.gyro >= d.threshold ? "#06d6a0" : "#ffd23f"};border-radius:4px"></span>` +
       `<span style="position:absolute;left:50%;top:-3px;bottom:-3px;width:2px;background:#fff"></span></span>`;
   }
@@ -596,11 +665,31 @@ function disarmHome() {
   $("homeBtn").textContent = "🏠 Home";
 }
 
-function toggleVoice() { if (audio) { audio.setVoice(!audio.voiceOn); refreshSoundButtons(); } }
+function toggleVoice() {
+  if (!audio) return;
+  audio.setVoice(!audio.voiceOn);
+  refreshSoundButtons();
+  send("commentary", { on: audio.voiceOn });   // muted: Sonia doesn't think at all (zero AI load)
+}
 function toggleCrowd() { if (audio) { audio.setCrowd(!audio.crowdOn); refreshSoundButtons(); } }
 function refreshSoundButtons() {
   $("voiceBtn").classList.toggle("off", !!audio && !audio.voiceOn);
   $("crowdBtn").classList.toggle("off", !!audio && !audio.crowdOn);
+}
+
+// AI booth status: is Sonia (the AI colour commentator) available?
+let lastBooth = "";
+function updateBoothBadge(b) {
+  if (!b) return;
+  const key = `${b.status}|${b.device}|${b.detail}`;
+  if (key === lastBooth) return;
+  lastBooth = key;
+  const el = $("boothBadge");
+  const label = { ready: `🤖 Sonia: on air`, loading: "🤖 Sonia: warming up…", off: "🤖 Sonia: off", offline: "🤖 Sonia: offline" };
+  el.textContent = label[b.status] ?? `🤖 ${b.status}`;
+  el.className = `ctl badge s-${b.status}`;
+  el.title = b.status === "ready" ? `AI colour commentator running on ${b.device}` :
+    b.detail || (b.status === "off" ? "Started with --no-ai" : "Loading the AI model");
 }
 
 function showGameOver() {
@@ -614,9 +703,12 @@ function showGameOver() {
 }
 
 let captionTimer = 0;
-function showCaption(text) {
+const SPEAKER_NAME = { ray: "Ray", sonia: "Sonia" };
+function showCaption(text, speaker = "ray") {
   const c = $("caption");
-  c.textContent = text; c.classList.remove("fade");
+  c.innerHTML = `<b>${SPEAKER_NAME[speaker] ?? ""}</b> `;
+  c.append(text);
+  c.className = `caption ${speaker}`;
   clearTimeout(captionTimer);
   captionTimer = setTimeout(() => c.classList.add("fade"), 2500 + text.length * 45);
 }
@@ -647,7 +739,16 @@ const clock = new THREE.Clock();
 const tmp = new THREE.Vector3();
 const lerp = (a, b, k) => a + (b - a) * k;
 
+let ballRecv = 0;                     // when the last server state arrived (for extrapolation)
+
 function frame() {
+  requestAnimationFrame(frame);
+  const nowMs = performance.now();
+  if (nowMs < nextFrameMs - 2) return;  // 60 fps cap (on 120/144 Hz screens skip the extra frames)
+  nextFrameMs = Math.max(nextFrameMs + FRAME_MS, nowMs - FRAME_MS);
+  if (lastFrameMs && nowMs - lastFrameMs > 50) stutters++;
+  lastFrameMs = nowMs;
+  rendered++;
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
   const state = S?.state ?? "select";
   const inGame = state !== "select";
@@ -694,10 +795,20 @@ function frame() {
   const showBall = inGame && b?.visible;
   ball.visible = ballShadow.visible = !!showBall;
   if (showBall) {
-    ball.position.set(b.x, TABLE_Y + b.y + BALL_R * 0.5, b.z);
-    const overTable = Math.abs(b.x) <= T.half_w && Math.abs(b.z) <= T.half_l && b.y >= -0.02;
-    ballShadow.position.set(b.x, overTable ? TABLE_Y + 0.003 : 0.01, b.z);
-    const hgt = Math.max(0, b.y + (overTable ? 0 : TABLE_Y));
+    // Extrapolate from the last server update with the ball's own velocity, so
+    // it glides at the screen's frame rate even if updates arrive unevenly.
+    let { x, y, z } = b;
+    if (b.live) {
+      const e = Math.min((nowMs - ballRecv) / 1000, 0.06);
+      x += b.vx * e + 0.5 * (b.ax || 0) * e * e;
+      y += b.vy * e - 4.905 * e * e;
+      z += b.vz * e;
+      if (y < 0 && Math.abs(x) <= T.half_w && Math.abs(z) <= T.half_l) y = 0;   // don't sink into the table
+    }
+    ball.position.set(x, TABLE_Y + y + BALL_R * 0.5, z);
+    const overTable = Math.abs(x) <= T.half_w && Math.abs(z) <= T.half_l && y >= -0.02;
+    ballShadow.position.set(x, overTable ? TABLE_Y + 0.003 : 0.01, z);
+    const hgt = Math.max(0, y + (overTable ? 0 : TABLE_Y));
     ballShadow.scale.setScalar(1 + hgt * 1.5);
     ballShadow.material.opacity = Math.max(0.08, 0.35 - hgt * 0.25);
     trailPos.unshift(ball.position.clone()); trailPos.length = Math.min(trailPos.length, trail.length);
@@ -751,7 +862,6 @@ function frame() {
   updateSparks(dt);
   updateCrowd(t, dt);
   renderer.render(scene, camera);
-  requestAnimationFrame(frame);
 }
 
 buildCards();

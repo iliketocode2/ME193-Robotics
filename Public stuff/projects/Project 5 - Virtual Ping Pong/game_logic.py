@@ -44,8 +44,8 @@ PLAYER_SPEED_SCALE = 1.05  # your returns vs. the opponent's shot speed
 # --- Match -----------------------------------------------------------------
 GAME_POINTS = 11
 COUNTDOWN_S = 3.0
-POINT_PAUSE_S = 2.0
-OPP_SERVE_DELAY_S = 1.2
+POINT_PAUSE_S = 2.8        # also the main window for Sonia (the AI) to think: ball is dead
+OPP_SERVE_DELAY_S = 1.6
 GAME_OVER_LOCK_S = 2.5     # ignore confirm right after game over (no accidental restart)
 STREAK_LINE_EVERY = 5      # opponent comments every N hits in a row
 
@@ -238,7 +238,7 @@ class Game:
         b = self.ball
         if self.server == PLAYER:
             # ball floats in front of your paddle until you swing
-            b.x, b.y, b.z = paddle.x, max(paddle.y, 0.05) + 0.12, PLAYER_HIT_Z - 0.1
+            b.x, b.y, b.z = paddle.x, min(max(paddle.y, 0.05) + 0.12, 0.9), PLAYER_HIT_Z - 0.1
             fresh = [s for s in self._swings if s.t >= self.state_t + 0.3]
             if fresh:
                 self._player_hit(fresh[-1], paddle, serve=True)
@@ -443,7 +443,9 @@ class Game:
             "point_reason": self.point_reason,
             "countdown": max(0.0, COUNTDOWN_S - (self.now - self.state_t))
             if self.state == COUNTDOWN else 0,
+            # velocity lets the browser extrapolate smoothly between server updates
             "ball": {"x": round(b.x, 4), "y": round(b.y, 4), "z": round(b.z, 4),
-                     "visible": b.visible},
+                     "vx": round(b.vx, 3), "vy": round(b.vy, 3), "vz": round(b.vz, 3), "ax": round(b.ax, 3),
+                     "live": b.live and self.state in (RALLY, POINT), "visible": b.visible},
             "opp_x": round(self.opp_x, 4),
         }

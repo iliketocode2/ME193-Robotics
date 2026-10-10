@@ -105,4 +105,10 @@ button { font-family: inherit; cursor: pointer; }
 .caption { position: fixed; left: 16px; bottom: 64px; max-width: min(520px, calc(100% - 32px)); background: rgba(27, 35, 64, .82); color: #fff;
   font-size: 18px; font-weight: 500; padding: 8px 16px 8px 42px; border-radius: 14px; pointer-events: none; transition: opacity .4s; }
 .caption::before { content: "🎙"; position: absolute; left: 13px; top: 7px; }
+.caption b { font-weight: 700; color: var(--yellow); margin-right: 4px; }
+.caption.sonia b { color: #9ee6ff; }
+.badge { cursor: default; font-weight: 600; }
+.badge.s-ready { background: #d9f7ec; }
+.badge.s-offline, .badge.s-off { opacity: .6; }
+.badge.s-loading { animation: pulse 1.6s infinite; }
 .caption:empty, .caption.fade { opacity: 0; }

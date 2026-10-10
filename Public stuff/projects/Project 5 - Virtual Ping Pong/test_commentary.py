@@ -77,6 +77,112 @@ c = a.update(1.0, [{"type": "miss", "reason": "no_swing"},
                    {"type": "point", "winner": gl.OPP, "reason": "miss", "score": {gl.PLAYER: 0, gl.OPP: 1}}], g)
 check(any(s in c[0]["text"] for s in ("swing", "flat-footed", "trigger")), f"no-swing miss is called out: '{c[0]['text']}'")
 
+check(all(c["speaker"] == "ray" for c in calls), "all play-by-play calls are tagged speaker=ray")
+a = Announcer(rng=random.Random(0))
+g = Game(); g.opp = gl.OPPONENTS["viktor"]
+welcome = a.update(0.0, [{"type": "start", "opp": "viktor"}], g, handoff=True)[0]["text"]
+check("Sonia" in welcome and "banana" not in welcome, f"with the AI booth ready, Ray hands over to Sonia: '{welcome}'")
+
+# =================================================================== Sonia
+from commentary import Booth, MatchStory, build_messages, sanitize_line, too_similar  # noqa: E402
+
+# --- sanitizer ------------------------------------------------------------------
+check(sanitize_line("<think>\n</think>\nRita’s got that edge — always pushing wide.") ==
+      "Rita's got that edge, always pushing wide.", "sanitizer: strips <think>, fixes quotes and dashes")
+check(sanitize_line('Sonia: "What a rally that was, simply superb!" And more.') ==
+      "What a rally that was, simply superb!", "sanitizer: drops speaker label, quotes, extra sentences")
+check(sanitize_line("Our player trails 4-7 now, oh dear.") is None, "sanitizer: drops lines that call the score")
+check(sanitize_line("Too short.") is None, "sanitizer: drops fragments")
+check(sanitize_line("A fightback \U0001F525 for the ages from our player.") == "A fightback for the ages from our player.",
+      "sanitizer: strips emojis")
+long = sanitize_line(" ".join(["word"] * 24))
+check(long is not None and len(long.split()) == 20, "sanitizer: trims slightly-long lines to 20 words")
+check(sanitize_line("Vikor has our player rooted to the spot again.") == "Viktor has our player rooted to the spot again.",
+      "sanitizer: fixes misspelled opponent names")
+check(too_similar("Rita keeps pulling our player wide again", ["Rita keeps pulling our player wide"]),
+      "near-repeats are detected")
+check(too_similar("Pip's lobs are a lullaby tonight.", ["Pip's lobs still loop like a broken record."]),
+      "lines that open the same way count as repeats")
+check(not too_similar("The crowd is loving every second of this.", ["Pip's lobs still loop like a broken record."]),
+      "genuinely different lines pass")
+check(too_similar("Pip's face lights up at that one.", ["The crowd is up.", "Pip's daffy lob hits the net."]),
+      "two lines in a row can't open with the same word")
+
+# --- story ----------------------------------------------------------------------
+def point(winner, you, them, reason="miss", miss=None):
+    evs = [{"type": "miss", "reason": miss}] if miss else []
+    return evs + [{"type": "point", "winner": winner, "reason": reason, "score": {gl.PLAYER: you, gl.OPP: them}}]
+
+g = Game(); g.set_highlight("rita"); g.confirm()
+st = MatchStory()
+st.update([{"type": "start", "opp": "rita"}], g)
+for i in range(3):
+    g.score = {gl.PLAYER: 0, gl.OPP: i + 1}
+    st.update([{"type": "opp_hit", "serve": True}, {"type": "hit", "streak": 1}] + point(gl.OPP, 0, i + 1, miss="wrong_place"), g)
+sit = st.situation("point", g)
+check(sit["momentum"].endswith("won 3 in a row") and "out of position 3 times" in sit["pattern"],
+      f"story notices runs and repeated mistakes: {sit.get('momentum')} / {sit.get('pattern')}")
+check(sit["how"] == "our player was out of position" and sit["rally_shots"] == 2, "story describes how the point ended")
+check(not any(ch.isdigit() for ch in sit["score_situation"].replace("leads by 3", "")), "score is given as a situation, not numbers")
+msgs = build_messages(sit)
+check(msgs[0]["role"] == "system" and msgs[-1]["role"] == "user" and '"moment":"point"' in msgs[-1]["content"],
+      "prompt = fixed system + examples, situation last")
+check(build_messages({"moment": "intro"})[:-1] == build_messages({"moment": "x"})[:-1],
+      "prompt prefix is identical every time (lets the runtime reuse work)")
+
+# --- booth timing ---------------------------------------------------------------
+b = Booth(rng=random.Random(1))
+g = Game(); g.set_highlight("pip"); g.confirm()
+check(b.update(0.0, [{"type": "start", "opp": "pip"}], g, ready=False) == [], "no AI requests while the worker isn't ready")
+b = Booth(rng=random.Random(1))
+reqs = b.update(0.0, [{"type": "start", "opp": "pip"}], g, ready=True)
+check(len(reqs) == 1 and reqs[0]["kind"] == "intro", "match start -> intro request")
+intro = b.accept({"id": reqs[0]["id"], "text": "Pip waddles out to a huge roar from the crowd tonight.", "latency": 1.8}, 2.0, g)
+check(intro and intro["speaker"] == "sonia" and not intro["interrupt"], "a timely line becomes a Sonia call (no interrupt)")
+
+g.score = {gl.PLAYER: 1, gl.OPP: 0}
+r1 = b.update(3.0, point(gl.PLAYER, 1, 0, reason="opp_miss"), g, ready=True)
+check(r1 == [], "quiet point right after Sonia spoke -> no request (cooldown)")
+reqs = []
+for i, t in enumerate((12.0, 13.0, 14.0)):
+    g.score = {gl.PLAYER: 2 + i, gl.OPP: 0}
+    reqs += b.update(t, point(gl.PLAYER, 2 + i, 0, reason="opp_miss"), g, ready=True)
+check(len(reqs) == 1 and reqs[0]["kind"] == "point", "a run of points earns exactly one request")
+g.score = {gl.PLAYER: 5, gl.OPP: 0}
+b.update(15.0, point(gl.PLAYER, 5, 0, reason="opp_miss"), g, ready=True)
+check(b.accept({"id": reqs[0]["id"], "text": "Pip simply cannot live with our player at the moment.", "latency": 2}, 15.5, g) is None,
+      "a line about an older point is dropped once another point has happened")
+
+b2 = Booth(rng=random.Random(2)); g2 = Game(); g2.set_highlight("rita"); g2.confirm()
+req = b2.update(0.0, [{"type": "start", "opp": "rita"}], g2, ready=True)[0]
+check(b2.accept({"id": req["id"], "text": "Rita looks absolutely ready for business today.", "latency": 20}, 20.0, g2) is None,
+      "a line that arrives after its deadline is dropped")
+req = b2.update(30.0, [{"type": "start", "opp": "rita"}], g2, ready=True)[0]
+b2.story.update([{"type": "opp_hit", "serve": True}, {"type": "hit", "streak": 1},
+                 {"type": "opp_hit"}, {"type": "hit", "streak": 2}], g2); g2.state = gl.RALLY
+check(b2.accept({"id": req["id"], "text": "Rita looks absolutely ready for business today.", "latency": 1}, 31.0, g2) is None,
+      "the intro is dropped once the first rally is under way")
+
+g3 = Game(); g3.set_highlight("viktor"); g3.confirm()
+b3 = Booth(rng=random.Random(3)); b3.update(0, [{"type": "start", "opp": "viktor"}], g3, ready=True)
+b3.last_spoke = -1e9
+g3.score = {gl.PLAYER: 11, gl.OPP: 9}
+check(b3.update(50.0, point(gl.PLAYER, 11, 9, reason="opp_miss"), g3, ready=True) == [],
+      "no point line for the game-winning point (the outro covers it)")
+g3.winner = gl.PLAYER
+out = b3.update(52.0, [{"type": "game_over", "winner": gl.PLAYER, "score": g3.score}], g3, ready=True)
+check(len(out) == 1 and out[0]["kind"] == "game_over" and '"winner":"player"' in out[0]["messages"][-1]["content"],
+      "game over -> outro request with the result")
+first = b3.accept({"id": out[0]["id"], "text": "Viktor has finally met his match, and what a match it was.", "latency": 2}, 53.0, g3)
+again = b3.update(54.0, [{"type": "game_over", "winner": gl.PLAYER, "score": g3.score}], g3, ready=True)[0]
+dup = b3.accept({"id": again["id"], "text": "Viktor has finally met his match, and what a match that was!", "latency": 2}, 55.0, g3)
+check(first is not None and dup is None, "Sonia never repeats herself")
+check(len({r["seed"] for r in reqs + out + [again]}) == len(reqs + out + [again]), "every request gets its own random seed")
+foci = [b3._request(60.0 + i, "point", g3, ttl=5)["messages"][-1]["content"] for i in range(6)]
+foci = [f.split('"focus":"')[1].split('"')[0] for f in foci]
+check(all(a != b for a, b in zip(foci, foci[1:])) and len(set(foci)) >= 3,
+      f"each request gets a fresh focus, never the same twice running ({foci[:3]}...)")
+
 print()
 print("ALL PASSED" if not failures else f"{len(failures)} FAILED")
 raise SystemExit(1 if failures else 0)
