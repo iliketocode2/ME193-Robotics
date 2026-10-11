@@ -29,6 +29,18 @@
     <button id="voiceBtn" class="ctl" title="Commentators on/off (M)">🎙 Commentary</button>
     <button id="crowdBtn" class="ctl" title="Crowd noise on/off (C)">👥 Crowd</button>
     <span id="boothBadge" class="ctl badge s-loading" title="AI colour commentator">🤖 Sonia: warming up…</span>
+    <span id="wxBadge" class="ctl badge hidden" title="Live weather at Tufts"></span>
+  </div>
+
+  <!-- pre-match show: lower-third cards + skip -->
+  <div id="show" class="hidden">
+    <div class="lower">
+      <div id="ltTitle" class="lt"></div>
+      <div id="ltWeather" class="lt"></div>
+      <div id="ltOpp" class="lt"></div>
+      <div id="ltPlayer" class="lt"></div>
+    </div>
+    <button id="skipBtn" class="skip">Skip ▸ <kbd>Enter</kbd><i id="showBar"></i></button>
   </div>
 
   <!-- select screen -->

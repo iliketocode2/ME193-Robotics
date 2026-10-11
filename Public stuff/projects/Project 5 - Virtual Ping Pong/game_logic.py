@@ -48,10 +48,16 @@ POINT_PAUSE_S = 2.8        # also the main window for Sonia (the AI) to think: b
 OPP_SERVE_DELAY_S = 1.6
 GAME_OVER_LOCK_S = 2.5     # ignore confirm right after game over (no accidental restart)
 STREAK_LINE_EVERY = 5      # opponent comments every N hits in a row
+# Pre-match show: the commentators introduce the match, the players and the
+# weather (commentary.ShowDirector), which also gives Sonia (the AI) time to
+# warm up. Skippable; ends early once the script is done.
+SHOW_MAX_S = 15.0
+SHOW_REMATCH_S = 9.0
+SHOW_SKIP_LOCK_S = 0.8     # a habitual double-ENTER mustn't skip the show instantly
 
 # States
-SELECT, COUNTDOWN, SERVE, RALLY, POINT, GAME_OVER = (
-    "select", "countdown", "serve", "rally", "point", "game_over")
+SELECT, SHOW, COUNTDOWN, SERVE, RALLY, POINT, GAME_OVER = (
+    "select", "show", "countdown", "serve", "rally", "point", "game_over")
 PLAYER, OPP = "player", "opp"
 
 
@@ -135,6 +141,10 @@ class Game:
         self.winner = None
         self.point_winner = None
         self.point_reason = ""
+        self.show_len = SHOW_MAX_S
+        self.show_rematch = False
+        self.match_best = 0         # best streak this match
+        self.history = []           # finished matches this session: {opp, winner, you, them, best_streak}
         self._swings = []           # recent unconsumed swings
         self._events = []
         # what happened while the ball was in your hit zone (for miss feedback)
@@ -149,16 +159,28 @@ class Game:
 
     def confirm(self):
         """Manual confirm from the computer (Enter / Start button). On the
-        select screen it starts a match; after a game it goes home."""
+        select screen it starts a match (with the pre-match show), during the
+        show it skips to the countdown, after a game it goes home."""
         if self.state == SELECT and self.highlight:
             self._start_match(self.highlight)
+        elif self.state == SHOW and self.now - self.state_t >= SHOW_SKIP_LOCK_S:
+            self._end_show(skipped=True)
         elif self.state == GAME_OVER:
             self.go_home()
 
     def rematch(self):
-        """Play the same opponent again (game-over screen only)."""
+        """Play the same opponent again (game-over screen only), after a short show."""
         if self.state == GAME_OVER and self._game_over_unlocked():
-            self._start_match(self.opp["key"])
+            self._start_match(self.opp["key"], rematch=True)
+
+    def end_show(self):
+        """The show's script is done: go to the countdown now."""
+        if self.state == SHOW:
+            self._end_show(skipped=False)
+
+    def set_show_len(self, seconds):
+        """Shorten the show (e.g. nothing to say with commentary muted). Never lengthens it."""
+        self.show_len = max(0.0, min(self.show_len, seconds))
 
     def go_home(self):
         """Back to the opponent-select screen. From the game-over screen this
@@ -172,16 +194,23 @@ class Game:
     def _game_over_unlocked(self):
         return self.now - self.state_t >= GAME_OVER_LOCK_S
 
-    def _start_match(self, opp_key):
+    def _start_match(self, opp_key, rematch=False):
         self.opp = OPPONENTS[opp_key]
         self.score = {PLAYER: 0, OPP: 0}
         self.winner = None
         self.server = PLAYER
         self.opp_x = 0.0
         self.streak = 0                 # streaks are per match; the record is per session
+        self.match_best = 0
         self.ball = Ball()
-        self._emit("start", opp=self.opp["key"])
+        self.show_len = SHOW_REMATCH_S if rematch else SHOW_MAX_S
+        self.show_rematch = rematch
+        self._emit("start", opp=self.opp["key"], rematch=rematch)
         self._say("intro")
+        self._enter(SHOW)
+
+    def _end_show(self, skipped):
+        self._emit("show_end", skipped=skipped)
         self._enter(COUNTDOWN)
 
     # --------------------------------------------------------------- update
@@ -193,7 +222,10 @@ class Game:
         # forget swings too old to matter
         self._swings = [s for s in self._swings if now - s.t <= SWING_EARLY_S + 0.5]
 
-        if self.state == COUNTDOWN:
+        if self.state == SHOW:
+            if now - self.state_t >= self.show_len:
+                self._end_show(skipped=False)
+        elif self.state == COUNTDOWN:
             if now - self.state_t >= COUNTDOWN_S:
                 self._start_serve()
         elif self.state == SERVE:
@@ -364,6 +396,7 @@ class Game:
         self.opp_target_x = pred_x + (self.rng.choice([-1, 1]) * 0.55 if self.opp_will_miss else 0)
 
         self.streak += 1
+        self.match_best = max(self.match_best, self.streak)
         self._emit("hit", streak=self.streak, strength=round(strength, 2), serve=serve)
         if self.streak > self.record:
             self.record = float(self.streak)
@@ -414,6 +447,8 @@ class Game:
         p, o = self.score[PLAYER], self.score[OPP]
         if max(p, o) >= GAME_POINTS and abs(p - o) >= 2:
             self.winner = PLAYER if p > o else OPP
+            self.history.append({"opp": self.opp["key"], "winner": self.winner, "you": p, "them": o,
+                                 "best_streak": self.match_best})
             self.ball = Ball()
             self._emit("game_over", winner=self.winner, score=dict(self.score))
             self._say("lose" if self.winner == PLAYER else "win")
@@ -443,6 +478,8 @@ class Game:
             "point_reason": self.point_reason,
             "countdown": max(0.0, COUNTDOWN_S - (self.now - self.state_t))
             if self.state == COUNTDOWN else 0,
+            "show": {"len": self.show_len, "rematch": self.show_rematch, "skip_lock": SHOW_SKIP_LOCK_S}
+            if self.state == SHOW else None,
             # velocity lets the browser extrapolate smoothly between server updates
             "ball": {"x": round(b.x, 4), "y": round(b.y, 4), "z": round(b.z, 4),
                      "vx": round(b.vx, 3), "vy": round(b.vy, 3), "vz": round(b.vz, 3), "ax": round(b.ax, 3),

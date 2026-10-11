@@ -76,18 +76,28 @@ def resolve_url(url_path):
 
 
 class ClipIndex:
-    """Which clips exist, read once at startup (no disk checks per call)."""
+    """Which clips exist and how long they are, read once at startup (no disk
+    checks per call)."""
+
+    BYTES_PER_S = 24000 * 2          # Kokoro: 24 kHz, 16-bit mono WAV
 
     def __init__(self):
-        self.names = set()
+        self.names = {}              # name -> file size
         if os.path.isdir(CLIP_DIR):
             for voice in os.listdir(CLIP_DIR):
                 folder = os.path.join(CLIP_DIR, voice)
                 if os.path.isdir(folder):
-                    self.names.update(f"{voice}/{f}" for f in os.listdir(folder) if f.endswith(".wav"))
+                    for f in os.listdir(folder):
+                        if f.endswith(".wav"):
+                            self.names[f"{voice}/{f}"] = os.path.getsize(os.path.join(folder, f))
 
     def __len__(self):
         return len(self.names)
+
+    def secs(self, speaker, text):
+        """Length of a line's clip in seconds, or None if it isn't rendered."""
+        size = self.names.get(clip_name(speaker, text))
+        return None if size is None else max(0.0, (size - 44) / self.BYTES_PER_S)
 
     def urls(self, speaker, parts):
         """Clip URLs for every part of a call, or None if any part is missing

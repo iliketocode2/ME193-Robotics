@@ -27,6 +27,7 @@ def new_game(opp="pip", seed=1):
     g.update(0.0, DT, Paddle())
     g.set_highlight(opp)
     g.confirm()
+    g.end_show()                    # (the pre-match show has its own tests below)
     return g
 
 
@@ -79,9 +80,33 @@ g.confirm()
 check(g.state == gl.SELECT, "confirm with no tag held does nothing")
 g.set_highlight("viktor")
 g.confirm()
-check(g.state == gl.COUNTDOWN and g.opp["key"] == "viktor", "tag + confirm starts countdown vs. chosen opponent")
+check(g.state == gl.SHOW and g.opp["key"] == "viktor", "tag + confirm starts the pre-match show vs. chosen opponent")
 ev = g.update(0.1, DT, Paddle())
 check({"start", "say"} <= set(types(ev)), "events raised by confirm() reach the next update() (start + intro line)")
+
+# --- the pre-match show -----------------------------------------------------
+check(not g.ball.visible and g.snapshot()["show"]["len"] == gl.SHOW_MAX_S, "show: no ball, full length")
+x0 = g.opp_x
+g.update(1.0, DT, Paddle())
+check(g.state == gl.SHOW and g.opp_x == x0, "show: nothing moves (no physics)")
+g = Game(); g.set_highlight("pip"); g.confirm(); g.update(0.0, DT, Paddle())
+g.update(0.3, DT, Paddle()); g.confirm()
+check(g.state == gl.SHOW, "show: a second ENTER right away doesn't skip it (habitual double-press)")
+g.update(gl.SHOW_SKIP_LOCK_S + 0.1, DT, Paddle()); g.confirm()
+ev = g.update(gl.SHOW_SKIP_LOCK_S + 0.2, DT, Paddle())
+check(g.state == gl.COUNTDOWN and {"type": "show_end", "skipped": True} in ev, "show: ENTER skips it -> countdown")
+g = Game(); g.set_highlight("pip"); g.confirm(); g.update(0.0, DT, Paddle())
+ev = g.update(gl.SHOW_MAX_S + 0.05, DT, Paddle())
+check(g.state == gl.COUNTDOWN and {"type": "show_end", "skipped": False} in ev, "show: ends by itself at its length")
+g = Game(); g.set_highlight("pip"); g.confirm(); g.update(0.0, DT, Paddle())
+g.set_show_len(99)
+check(g.show_len == gl.SHOW_MAX_S, "show: set_show_len never lengthens it")
+g.set_show_len(5); g.update(5.1, DT, Paddle())
+check(g.state == gl.COUNTDOWN, "show: set_show_len shortens it")
+g = Game(); g.set_highlight("pip"); g.confirm(); g.update(0.0, DT, Paddle()); g.end_show()
+check(g.state == gl.COUNTDOWN, "show: end_show() (script done) -> countdown")
+g = Game(); g.set_highlight("pip"); g.confirm(); g.update(0.0, DT, Paddle()); g.go_home()
+check(g.state == gl.SELECT, "show: home quits it")
 g = Game()
 g.set_highlight("nobody")
 check(g.highlight is None, "unknown opponent key is ignored")
@@ -178,8 +203,10 @@ g.rematch()
 check(g.state == gl.GAME_OVER, "rematch is locked right at game over too")
 g.now += gl.GAME_OVER_LOCK_S
 g.rematch()
-check(g.state == gl.COUNTDOWN and g.opp["key"] == "rita" and g.score == {gl.PLAYER: 0, gl.OPP: 0},
-      "rematch -> same opponent, score reset, countdown")
+check(g.state == gl.SHOW and g.show_rematch and g.show_len == gl.SHOW_REMATCH_S and g.opp["key"] == "rita"
+      and g.score == {gl.PLAYER: 0, gl.OPP: 0}, "rematch -> same opponent, score reset, a shorter show")
+check(g.history == [{"opp": "rita", "winner": gl.OPP, "you": 3, "them": 11, "best_streak": 0}],
+      f"the session history records the finished match ({g.history})")
 check(g.streak == 0, "a new match resets the streak (the record stays)")
 g._start_serve()
 g.go_home()

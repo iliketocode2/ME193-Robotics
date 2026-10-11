@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { makeCharacter, makePaddle, toon, part, HEAD_HEIGHT } from "./characters.js";
 import { GameAudio, savedVoicePref } from "./audio.js";
+import { createWeather } from "./weather.js";
 
 const TABLE_Y = 0.76;                          // table top height (game y=0)
 let T = { half_w: 0.7625, half_l: 1.37, net_h: 0.1525, hit_z: 1.55, opp_z: -1.55, hit_rx: 0.38 };
@@ -41,14 +42,11 @@ function canvasTex(w, h, draw, repeat) {
   return t;
 }
 
-scene.background = canvasTex(4, 256, (g, w, h) => {
-  const gr = g.createLinearGradient(0, 0, 0, h);
-  gr.addColorStop(0, "#5fb4ff"); gr.addColorStop(0.6, "#bfe6ff"); gr.addColorStop(1, "#fff4d6");
-  g.fillStyle = gr; g.fillRect(0, 0, w, h);
-});
+// The sky, fog colour and these two lights follow the live weather (weather.js).
 scene.fog = new THREE.Fog(0xcfeaff, 14, 34);
 
-scene.add(new THREE.HemisphereLight(0xe3f4ff, 0xc9a77a, 1.7));
+const hemi = new THREE.HemisphereLight(0xe3f4ff, 0xc9a77a, 1.7);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 2.3);
 sun.position.set(3, 7, 4);
 sun.castShadow = true;
@@ -64,20 +62,24 @@ scene.add(sun);
 // So: draw at most 60 fps at 1x pixel ratio (1.25x was measured to cause
 // 50-400 ms GPU stalls), and step quality down for the rest of the session
 // if frames stutter or run slow.
+// Weather effects (fx) are cut before shadows are.
 const QUALITY = [
-  { name: "high", pr: 1, shadows: true },
-  { name: "medium", pr: 1, shadows: false },
-  { name: "low", pr: 0.75, shadows: false },
+  { name: "high", pr: 1, shadows: true, fx: "high" },
+  { name: "high-lite", pr: 1, shadows: true, fx: "medium" },
+  { name: "medium", pr: 1, shadows: false, fx: "medium" },
+  { name: "low", pr: 0.75, shadows: false, fx: "low" },
 ];
 const FRAME_MS = 1000 / 60;
 const SLOW_FPS = 45;                     // average below this...
 const MAX_STUTTERS = 3;                  // ...or this many >50 ms frames per second, 2 s running -> step down
 let quality = 0, nextFrameMs = 0, rendered = 0, renderFps = 0, slowSeconds = 0;
 let stutters = 0, lastFrameMs = 0;
+let weather = null;
 function applyQuality() {
   const q = QUALITY[quality];
   renderer.setPixelRatio(q.pr);
   sun.castShadow = q.shadows;
+  weather?.setFx(q.fx);
   resize();
 }
 applyQuality();
@@ -85,9 +87,13 @@ setInterval(() => {                      // once a second: measure, adapt, repor
   renderFps = rendered; rendered = 0;
   const stuttered = stutters; stutters = 0;
   if (document.hidden) return;
-  slowSeconds = renderFps < SLOW_FPS || stuttered >= MAX_STUTTERS ? slowSeconds + 1 : 0;
+  // Menus, the pre-match show (camera flyover, Sonia writing on the GPU) and
+  // seconds when the AI is busy don't count: the quality stays down for the
+  // whole session, so only judge it on what play looks like.
+  const judge = S && !["select", "show"].includes(S.state) && !S.booth?.generating;
+  if (judge) slowSeconds = renderFps < SLOW_FPS || stuttered >= MAX_STUTTERS ? slowSeconds + 1 : 0;
   if (slowSeconds >= 2 && quality < QUALITY.length - 1) { quality++; slowSeconds = 0; applyQuality(); }
-  send("perf", { fps: renderFps, quality: QUALITY[quality].name });
+  send("perf", { fps: renderFps, quality: QUALITY[quality].name, fx: QUALITY[quality].fx });
 }, 1000);
 
 // ------------------------------------------------------------------- arena
@@ -364,6 +370,26 @@ function drawScoreboard() {
   sbTex.needsUpdate = true;
 }
 
+// ----------------------------------------------------------------- weather
+// Sky, light, rain/snow, wind and floodlights from the live Tufts weather.
+weather = createWeather({ scene, camera, renderer, hemi, sun, floor, court, ball, audio: () => audio });
+weather.setFx(QUALITY[quality].fx);
+window.__weather = weather;          // for poking at it from the browser console
+let lastWeather = null;
+const WX_ICON = (c) => c >= 95 ? "⛈" : c >= 71 && c <= 86 && ![80, 81, 82].includes(c) ? "🌨" : c >= 51 ? "🌧"
+  : c >= 45 ? "🌫" : c === 3 ? "☁" : c === 2 ? "⛅" : "☀";
+const wxIcon = (m) => m.params.daylight < 0.3 && m.code <= 2 ? "🌙" : WX_ICON(m.code);
+function onWeather(msg) {
+  lastWeather = msg;
+  weather.setTarget(msg.params);
+  audio?.setWeather(msg.params);
+  const src = { unoq: "UNO Q", pc: "PC (UNO Q silent)", demo: "demo" }[msg.src] ?? msg.src;
+  const el = $("wxBadge");
+  el.textContent = `${wxIcon(msg)} ${Math.round(msg.temp_f)}°F · ${src}`;
+  el.title = `${msg.desc}${msg.stale ? " (old reading)" : ""} -- ${msg.age_min} min ago, via ${src}`;
+  el.classList.remove("hidden");
+}
+
 // ------------------------------------------------------------------- audio
 // Browsers only allow sound after a click/key, so audio starts on the first one.
 let audio = null;
@@ -372,6 +398,7 @@ function ensureAudio() {
   audio = new GameAudio();
   audio.onCaption = showCaption;
   audio.setMood(S && S.state !== "select" ? "idle" : "quiet");
+  if (lastWeather) audio.setWeather(lastWeather.params);
   refreshSoundButtons();
   if (!audio.voiceOn) showSub("🎙 Commentary is muted: press M to turn it on", 4);   // remembered from last session
 }
@@ -474,6 +501,7 @@ function onJson(msg) {
     send("commentary", { on: audio ? audio.voiceOn : savedVoicePref() });   // muted = no AI work
     return;
   }
+  if (msg.type === "weather") return onWeather(msg);
   if (msg.type !== "state") return;
   ballRecv = performance.now();
   if (!S) {                                       // first state: jump straight to the right view
@@ -516,7 +544,6 @@ function onEvent(ev) {
     case "hit":
       rally++;
       if (ev.serve) audio?.stopChant();         // the chant fades as play starts
-      if (rally >= 4) audio?.dropQueued("sonia"); // her between-points line is stale once the rally is on
       if (ev.streak && ev.streak % 5 === 0) audio?.cheer(0.3);
       mySwingT = 0;
       burst(ball.position, 0xffd23f);
@@ -528,7 +555,6 @@ function onEvent(ev) {
     case "opp_hit":
       rally++;
       if (ev.serve) audio?.stopChant();
-      if (rally >= 4) audio?.dropQueued("sonia");
       opp?.swing(); blip(480, 0.07, "square", 0.08);
       break;
     case "bounce": blip(1100, 0.03, "sine", 0.08); break;
@@ -564,6 +590,7 @@ function onEvent(ev) {
       if (ev.reason === "bad_timing") audio?.ooh(0.7);                 // so close!
       break;
     case "say": say(ev.text); break;
+    case "show_end": audio?.endShow(ev.skipped); break;
   }
 }
 
@@ -572,12 +599,14 @@ function onStateChange(state, prev) {
   $("select").classList.toggle("hidden", inGame);
   $("hud").classList.toggle("hidden", !inGame);
   $("homeBtn").classList.toggle("hidden", !inGame || state === "game_over");
+  $("show").classList.toggle("hidden", state !== "show");
+  if (state === "show") startShowUI();
   disarmHome();
   if (state === "select") { banner.className = "banner hidden"; subBanner.classList.add("hidden"); }
   $("over").classList.toggle("hidden", state !== "game_over");
   if (state === "game_over") showGameOver();
   if (state === "serve") rally = 0;
-  audio?.setMood({ select: "quiet", countdown: "buzz", rally: "rally", game_over: "buzz" }[state] ?? "idle");
+  audio?.setMood({ select: "quiet", show: "buzz", countdown: "buzz", rally: "rally", game_over: "buzz" }[state] ?? "idle");
   if (state === "serve" && prev === "countdown") { showBanner("PLAY!", "good", 0.8); blip(1046, 0.25, "triangle", 0.12); }
 }
 
@@ -594,9 +623,7 @@ function updateHud() {
     const o = OPPONENTS.find((o) => o.key === S.highlight);
     c.classList.toggle("ready", !!o);
     c.disabled = !o;
-    const html = !o ? "Hold up an AprilTag to choose your opponent"
-      : S.hold != null ? `Sonia warming up… starting in ${Math.ceil(S.hold)} s <kbd>Enter</kbd> start now`
-      : `▶ Start match vs ${o.name} <kbd>Enter</kbd>`;
+    const html = !o ? "Hold up an AprilTag to choose your opponent" : `▶ Start match vs ${o.name} <kbd>Enter</kbd>`;
     if (c.innerHTML !== html) c.innerHTML = html;
   }
   if (S.state === "countdown") {
@@ -606,6 +633,7 @@ function updateHud() {
   } else lastCount = 0;
 
   updateBoothBadge(S.booth);
+  if (S.state === "show") updateShowUI();
 
   if (S.state === "game_over") {
     const ready = S.state_age >= GAME_OVER_LOCK;    // short lock so a stray swing/keypress can't skip the result
@@ -634,7 +662,9 @@ function updateHud() {
       `AI booth   ${S.booth?.status ?? "-"} ${S.booth?.device ?? ""}  ${S.booth?.gate ? "ball dead: may think" : "RALLY: AI paused"}` +
       `${S.booth?.generating ? "  (writing...)" : ""}  last line ${S.booth?.latency != null ? S.booth.latency.toFixed(1) + " s" : "-"}` +
       `  cut off ${S.booth?.cancelled ?? 0}   crowd ${audio?.crowdKind ?? "(click to start audio)"}\n` +
-      `speech     ${audio ? audio.speechInfo() : "(click to start audio)"}` +
+      `speech     ${audio ? audio.speechInfo() : "(click to start audio)"}\n` +
+      `weather    ${lastWeather ? `${lastWeather.desc} · ${lastWeather.src} · ${lastWeather.age_min} min old` : "(none yet)"}\n` +
+      `           ${weather.info()}` +
       `<span class="bar"><span style="position:absolute;left:0;top:0;bottom:0;width:${frac * 100}%;background:${d.gyro >= d.threshold ? "#06d6a0" : "#ffd23f"};border-radius:4px"></span>` +
       `<span style="position:absolute;left:50%;top:-3px;bottom:-3px;width:2px;background:#fff"></span></span>`;
   }
@@ -651,6 +681,7 @@ button("overHome", () => send("home"));
 button("overRematch", () => send("rematch"));
 button("voiceBtn", () => toggleVoice());
 button("crowdBtn", () => toggleCrowd());
+button("skipBtn", () => send("skip"));
 
 // Home mid-match takes two clicks so a stray click can't throw the game away.
 let homeArmed = 0;
@@ -694,6 +725,33 @@ function updateBoothBadge(b) {
     b.detail || (b.status === "off" ? "Started with --no-ai" : "Loading the AI model");
 }
 
+// ---------------------------------------------------------- pre-match show
+// Lower-third cards while Ray and Sonia introduce the match (Python runs the
+// show's script and timing; this just dresses it). Cards follow the show clock.
+const SHOW_CARDS = [["ltTitle", 0], ["ltWeather", 3.6], ["ltOpp", 7.5], ["ltPlayer", 11]];
+function startShowUI() {
+  const o = OPPONENTS.find((o) => o.key === S.opp) ?? { name: S.opp_name, level: "", tagline: "" };
+  $("ltTitle").innerHTML = `<b>ROGERS CUP</b><span>${S.show?.rematch ? "Rematch" : "Today's match"}: you vs ${o.name}</span>`;
+  $("ltWeather").innerHTML = lastWeather
+    ? `<b>${wxIcon(lastWeather)} ${Math.round(lastWeather.temp_f)}°F</b><span>Live from Tufts · ${lastWeather.desc}</span>`
+    : `<b>Live from Tufts</b><span>Centre court</span>`;
+  $("ltOpp").innerHTML = `<b>${o.name}</b><span>${o.level ?? ""} · ${o.tagline ?? ""}</span>`;
+  $("ltPlayer").innerHTML = `<b>YOU</b><span>Session record: ${(S.record ?? 0).toFixed(0)} in a row</span>`;
+  lastCard = "";
+  const bar = $("showBar");
+  bar.style.animation = "none"; void bar.offsetWidth;
+  bar.style.animation = `showBar ${S.show?.len ?? 15}s linear forwards`;
+}
+let lastCard = "";
+function updateShowUI() {
+  let card = SHOW_CARDS[0][0];
+  for (const [id, at] of SHOW_CARDS) if (S.state_age >= at) card = id;
+  if (S.show?.rematch && card === "ltOpp") card = "ltWeather";
+  if (card === lastCard) return;
+  lastCard = card;
+  for (const [id] of SHOW_CARDS) $(id).classList.toggle("on", id === card);
+}
+
 function showGameOver() {
   const won = S.winner === "player";
   const t = $("overTitle");
@@ -735,6 +793,7 @@ const camPos = new THREE.Vector3(0, 1.6, 1.5), camLook = new THREE.Vector3(0, 1,
 const VIEWS = {
   select: { pos: new THREE.Vector3(0, 1.6, 2.6), look: new THREE.Vector3(0, 0.75, STAGE_Z) },
   game: { pos: new THREE.Vector3(0, 1.95, 3.75), look: new THREE.Vector3(0, 0.8, -0.6) },
+  show: { pos: new THREE.Vector3(0, 2.3, 4), look: new THREE.Vector3(0, 2.9, -6) },     // tilted up: the sky is the star
 };
 let shake = 0;
 const clock = new THREE.Clock();
@@ -755,9 +814,14 @@ function frame() {
   const state = S?.state ?? "select";
   const inGame = state !== "select";
 
-  // camera
-  const view = inGame ? VIEWS.game : VIEWS.select;
-  const k = 1 - Math.pow(0.02, dt);
+  // camera (the pre-match show: a slow orbit that shows off the sky and the weather)
+  let view = inGame ? VIEWS.game : VIEWS.select;
+  if (state === "show") {
+    const a = -0.55 + (S.state_age ?? 0) * 0.07;
+    VIEWS.show.pos.set(Math.sin(a) * 5.2, 2.3 + 0.4 * Math.sin(a * 0.7), 1.2 + Math.cos(a) * 3.2);
+    view = VIEWS.show;
+  }
+  const k = 1 - Math.pow(state === "show" ? 0.25 : 0.02, dt);
   camPos.lerp(view.pos, k); camLook.lerp(view.look, k);
   camera.position.copy(camPos);
   shake = Math.max(0, shake - dt * 0.25);
@@ -818,8 +882,8 @@ function frame() {
   trail.forEach((m, i) => { m.visible = !!showBall && i < trailPos.length && i > 0; if (m.visible) m.position.copy(trailPos[i]); });
 
   // you: cut-out video lined up so your real hand sits on the virtual paddle
-  you.visible = myPaddle.visible = marker.visible = inGame;
-  if (inGame && S) {
+  you.visible = myPaddle.visible = marker.visible = inGame && state !== "show";
+  if (inGame && S && state !== "show") {
     const bd = S.body;
     const W = BODY.shoulder_world / Math.max(bd.w, 0.05), H = W * 0.75;
     const sx = (bd.u - 0.5) * BODY.body_x_gain, sy = TABLE_Y + BODY.shoulder_y;
@@ -863,6 +927,7 @@ function frame() {
 
   updateSparks(dt);
   updateCrowd(t, dt);
+  weather.update(dt, t, state);
   renderer.render(scene, camera);
 }
 

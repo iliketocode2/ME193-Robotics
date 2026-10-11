@@ -117,19 +117,28 @@ check(not m4.calls, "warm-up does not touch the GPU while a rally is on")
 loop4.feed({"type": "gate", "open": True})
 check(done.wait(2) and len(m4.calls) == 2, "warm-up runs both prompts once the ball is dead")
 
-# --- Sonia's natural voice: same dead-ball gate, answered with "spoken" -------------
+# --- Sonia's natural voice: CPU only, so it may run mid-rally -----------------------
 spoken_texts = []
 sent5 = []
-loop5 = WorkerLoop(FakeModel(), sent5.append, speak=spoken_texts.append)
+
+
+def say(text):
+    spoken_texts.append(text)
+    return 2.4                                   # seconds of audio written
+
+
+loop5 = WorkerLoop(FakeModel(), sent5.append, speak=say)
 th5 = threading.Thread(target=loop5.run, daemon=True)
 th5.start()
 loop5.feed({"type": "gate", "open": False})
 loop5.feed({"type": "speak", "id": 7, "text": "What a rally.", "expires_wall": time.time() + 10})
+check(wait_for(lambda: {"type": "spoken", "id": 7, "ok": True, "secs": 2.4} in sent5) and spoken_texts == ["What a rally."],
+      "voice: synthesized even while a rally is on (text stays gated), reported with its length")
+loop5.feed(req(70))
 time.sleep(0.2)
-check(not spoken_texts, "voice: nothing is synthesized while a rally is on")
+check(not any(m.get("id") == 70 for m in sent5), "...while a text request still waits for the dead ball")
 loop5.feed({"type": "gate", "open": True})
-check(wait_for(lambda: any(m.get("type") == "spoken" for m in sent5)) and spoken_texts == ["What a rally."]
-      and {"type": "spoken", "id": 7, "ok": True} in sent5, "voice: synthesized once the ball is dead, reported ok")
+check(wait_for(lambda: any(m.get("type") == "line" and m["id"] == 70 for m in sent5)), "...and runs once it opens")
 
 
 def broken(_text):
@@ -141,14 +150,52 @@ loop6 = WorkerLoop(FakeModel(), sent6.append, speak=broken)
 th6 = threading.Thread(target=loop6.run, daemon=True)
 th6.start()
 loop6.feed({"type": "speak", "id": 8, "text": "Hello there.", "expires_wall": time.time() + 10})
-check(wait_for(lambda: {"type": "spoken", "id": 8, "ok": False} in sent6) and th6.is_alive(),
+check(wait_for(lambda: {"type": "spoken", "id": 8, "ok": False, "secs": 0.0} in sent6) and th6.is_alive(),
       "voice: a synthesis error is reported (browser voice fallback) and the worker keeps going")
 loop6.feed({"type": "speak", "id": 9, "text": "Too late.", "expires_wall": time.time() - 1})
-check(wait_for(lambda: {"type": "spoken", "id": 9, "ok": False} in sent6), "voice: an expired request is answered, not left hanging")
+check(wait_for(lambda: {"type": "spoken", "id": 9, "ok": False, "secs": 0.0} in sent6),
+      "voice: an expired request is answered, not left hanging")
 loop7 = WorkerLoop(FakeModel(tokens=1, step=0), lambda m: None, speak=broken)
 loop7.warm_up([], voice_line="Warm up.")
 check(loop7.speak is None, "voice: a broken voice found during warm-up is switched off, the worker survives")
 loop5.close(); loop6.close()
+
+# --- priorities: voice first, then urgent text, then speculative (pre-match show) ----
+order = []
+m8 = FakeModel(tokens=3, step=0.01)
+loop8 = WorkerLoop(lambda msgs, seed, stop=None: (order.append(("req", seed)), m8(msgs, seed, stop))[1], lambda m: None,
+                   speak=lambda text: order.append(("speak", text)) or 1.0)
+loop8.feed({"type": "gate", "open": False})                          # queue everything first
+loop8.feed(dict(req(80), prio=2)); loop8.feed(dict(req(81), prio=1)); loop8.feed(dict(req(82), prio=2))
+loop8.feed({"type": "speak", "id": 83, "text": "say me", "expires_wall": time.time() + 10})
+th8 = threading.Thread(target=loop8.run, daemon=True); th8.start()
+wait_for(lambda: order == [("speak", "say me")])
+loop8.feed({"type": "gate", "open": True})
+check(wait_for(lambda: len(order) == 4) and order == [("speak", "say me"), ("req", 81), ("req", 80), ("req", 82)],
+      f"order: voice, then urgent text, then speculative in arrival order ({order})")
+loop8.feed({"type": "gate", "open": False})
+for i in (90, 91, 92):
+    loop8.feed(dict(req(i), prio=2))
+loop8.feed(dict(req(93), prio=1))
+check(sorted(m["id"] for m in loop8.pending) == [91, 92, 93], "a full queue evicts the oldest speculative request, not urgent ones")
+loop8.feed({"type": "drop", "ids": [91, 92]})
+check([m["id"] for m in loop8.pending] == [93], "drop removes queued requests")
+loop8.close()
+
+m9 = FakeModel(tokens=50, step=0.02)
+sent9 = []
+loop9 = WorkerLoop(m9, sent9.append)
+th9 = threading.Thread(target=loop9.run, daemon=True); th9.start()
+loop9.feed(req(95))
+wait_for(lambda: any(m.get("type") == "busy" for m in sent9))
+t_drop = time.perf_counter()
+loop9.feed({"type": "drop", "ids": [95]})
+check(wait_for(lambda: any(m.get("type") == "line" and m["cancelled"] for m in sent9))
+      and time.perf_counter() - t_drop < 0.2, "drop cancels the line being written within a token")
+loop9.feed(req(96))
+check(wait_for(lambda: any(m.get("type") == "line" and m["id"] == 96 and not m["cancelled"] for m in sent9)),
+      "...and the next request runs normally")
+loop9.close()
 
 # --- shutdown -----------------------------------------------------------------------
 loop.close(); loop2.close(); loop3.close()

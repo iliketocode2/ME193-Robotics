@@ -65,7 +65,7 @@ class MQTTClient:
         a message arrives on `topic`. Each call to subscribe() replaces
         any previous callback registered for that exact topic string.'''
         def _on_topic_message(client, userdata, message):
-            callback(message.topic, message.payload.decode())
+            callback(message.topic, message.payload.decode(errors="replace"))   # bad bytes can't kill the network thread
         self._client.message_callback_add(topic, _on_topic_message)
         self._client.subscribe(topic, qos=qos)
 

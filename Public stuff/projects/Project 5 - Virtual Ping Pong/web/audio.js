@@ -41,10 +41,10 @@ const DELIVERY = {
 };
 // Natural voices (Kokoro clips, see tts.py): a call's sentences play back to back.
 const CLIP_GAP_S = 0.12;
-// A queued line older than this is skipped. Sonia's is long because her line
-// usually has to wait for Ray's call to finish (his match welcome alone is ~7 s);
-// once the next point ends her queued line is dropped anyway (see say()).
-const LINE_TTL_MS = { ray: 8000, sonia: 12000 };
+// A queued line older than this is skipped. Sonia's is long on purpose: her
+// line may play over the next rally (TV analysts do) -- Ray's next point call
+// clears it anyway (see say()), which is the real "too late" rule.
+const LINE_TTL_MS = { ray: 8000, sonia: 30000 };
 // Edge's "Natural" voices are streamed from an online service. If it's slow,
 // blocked or stuck, speak() just never starts -- silently. A line that hasn't
 // started by then is retried with an installed (offline) voice instead.
@@ -84,7 +84,7 @@ export class GameAudio {
 
     this.voices = { ray: null, sonia: null };
     this.offlineOnly = false;                  // set once an online voice has failed: use installed voices
-    this.speech = { spoken: 0, natural: 0, failed: 0, lastError: "" };   // for the D overlay
+    this.speech = { spoken: 0, natural: 0, failed: 0, lastError: "", ray: 0, sonia: 0 };   // for the D overlay
     this.queue = [];
     this.current = null;
     this.onCaption = () => {};
@@ -123,9 +123,9 @@ export class GameAudio {
       setTimeout(() => this._next(), 0);
       return;
     }
-    // Anything still queued is about the last point -- except Sonia's match
-    // intro, which is still worth hearing after Ray's first call.
-    this.queue = [item, ...this.queue.filter((i) => i.kind === "intro")];
+    // Anything still queued is about the last point (the pre-match show's
+    // lines are managed by endShow()).
+    this.queue = [item, ...this.queue.filter((i) => i.kind === "show")];
     const c = this.current;
     if (c?.speaker === "sonia" && c.startedAt && c.endsAt - performance.now() <= SONIA_GRACE_MS) {
       return;                                      // she's nearly done: Ray goes straight after her
@@ -136,6 +136,16 @@ export class GameAudio {
 
   // Drop a speaker's queued (not yet spoken) lines -- e.g. Sonia's once the next rally is under way.
   dropQueued(speaker) { this.queue = this.queue.filter((i) => i.speaker !== speaker); }
+
+  // The pre-match show is over: its queued lines go. Skipped? The line being
+  // said is cut too (the countdown starts now).
+  endShow(skipped) {
+    this.queue = this.queue.filter((i) => i.kind !== "show");
+    if (skipped && this.current?.kind === "show") {
+      const wasTalking = this._cancelCurrent();
+      setTimeout(() => this._next(), wasTalking ? 40 : 0);
+    }
+  }
 
   _next() {
     if (this.current) return;
@@ -149,7 +159,7 @@ export class GameAudio {
   // A line in the natural voice: its clips, back to back. Falls back to the
   // browser voice if they can't be loaded.
   _playClips(item) {
-    const cur = (this.current = { speaker: item.speaker, startedAt: 0, endsAt: 0, timer: 0, stop: null });
+    const cur = (this.current = { speaker: item.speaker, kind: item.kind, startedAt: 0, endsAt: 0, timer: 0, stop: null });
     const fallback = (why) => {
       if (this.current !== cur) return;
       clearTimeout(cur.timer);
@@ -179,6 +189,7 @@ export class GameAudio {
       cur.startedAt = performance.now();
       cur.endsAt = cur.startedAt + ms;
       this.speech.spoken++;
+      this.speech[item.speaker] = (this.speech[item.speaker] ?? 0) + 1;
       this.speech.natural++;
       this._duck();
       cur.timer = setTimeout(() => {
@@ -227,7 +238,7 @@ export class GameAudio {
     u.rate = d.rate;
     u.volume = 1;
 
-    const cur = (this.current = { u, speaker: item.speaker, startedAt: 0, endsAt: 0, timer: 0 });
+    const cur = (this.current = { u, speaker: item.speaker, kind: item.kind, startedAt: 0, endsAt: 0, timer: 0 });
     const finish = () => {
       if (this.current !== cur) return;            // a cancelled line reporting late
       clearTimeout(cur.timer);
@@ -259,6 +270,7 @@ export class GameAudio {
       cur.endsAt = cur.startedAt + ms;
       cur.timer = setTimeout(finish, 2000 + ms * 1.8);   // in case onend never fires
       this.speech.spoken++;
+      this.speech[item.speaker] = (this.speech[item.speaker] ?? 0) + 1;
       this._duck();
     };
     u.onend = finish;
@@ -288,11 +300,50 @@ export class GameAudio {
     if (!this.voiceOn) return "MUTED (press M)";
     const v = (x) => (x ? x.name.replace(/^Microsoft /, "").replace(/ - .*$/, "") : "default");
     const s = this.speech;
-    return `natural ${s.natural} of ${s.spoken} lines   fallback: Ray ${v(this.voices.ray)} / Sonia ${v(this.voices.sonia)}` +
+    return `heard: Ray ${s.ray} · Sonia ${s.sonia} (natural voice ${s.natural}/${s.spoken})   fallback: Ray ${v(this.voices.ray)} / Sonia ${v(this.voices.sonia)}` +
       `${this.offlineOnly ? " [offline voices]" : ""}${s.failed ? `  FAILED ${s.failed}: ${s.lastError}` : ""}`;
   }
   _duck() { this.duck.gain.setTargetAtTime(0.4, this.ctx.currentTime, 0.08); }
   _unduck() { this.duck.gain.setTargetAtTime(1, this.ctx.currentTime, 0.35); }
+
+  // ------------------------------------------------------------ weather
+  // Rain and wind beds (synthesized noise, on the crowd's output: C mutes them)
+  // and thunder. Built on the first reading; gains only change afterwards.
+  setWeather(p) {
+    const ctx = this.ctx;
+    if (!this.wx) {
+      const bed = (lo, hi) => {
+        const src = ctx.createBufferSource(), g = ctx.createGain();
+        src.buffer = noiseBuffer(ctx, 4, "pink"); src.loop = true;
+        const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = lo;
+        const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = hi;
+        g.gain.value = 0;
+        src.connect(hp).connect(lp).connect(g).connect(this.crowdOut);
+        src.start(0, Math.random() * 3);
+        return g;
+      };
+      this.wx = { rain: bed(900, 7000), wind: bed(40, 520), windLevel: 0 };
+      this.wxGust = setInterval(() => {                 // the wind comes and goes
+        const lvl = this.wx.windLevel;
+        this.wx.wind.gain.setTargetAtTime(lvl * (0.55 + Math.random() * 0.9), ctx.currentTime, 0.8);
+      }, 900);
+    }
+    const t = ctx.currentTime;
+    this.wx.rain.gain.setTargetAtTime(0.22 * p.precip * (1 - p.snow_mix), t, 1.5);
+    this.wx.windLevel = 0.03 + 0.2 * p.wind + 0.08 * p.gust;
+  }
+
+  thunder(delay = 1, size = 0.7) {
+    const ctx = this.ctx, t = ctx.currentTime + delay;
+    const src = ctx.createBufferSource(), g = ctx.createGain(), lp = ctx.createBiquadFilter();
+    src.buffer = noiseBuffer(ctx, 4, "pink");
+    lp.type = "lowpass"; lp.frequency.setValueAtTime(900 * size, t); lp.frequency.exponentialRampToValueAtTime(90, t + 1.2);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5 * size, t + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 3.5);
+    src.connect(lp).connect(g).connect(this.crowdOut);
+    src.start(t); src.stop(t + 3.6);
+  }
 
   // ------------------------------------------------------------ crowd
   // mood: "quiet" (menus), "idle" (between points), "rally" (hushed), "buzz" (excited)

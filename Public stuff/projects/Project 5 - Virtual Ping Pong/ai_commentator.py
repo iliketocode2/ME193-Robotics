@@ -27,7 +27,6 @@ Check speed + sample lines on this machine:
 """
 
 import argparse
-import collections
 import json
 import os
 import queue
@@ -64,6 +63,7 @@ class Analyst:
         self.cancelled = 0             # lines cut off because a rally started
         self.gate_open = True
         self.voice = False             # Sonia's natural voice (tts.py) loaded in the worker
+        self._speaking = 0             # voice jobs sent, not yet answered
         self._queued = 0                 # requests not yet written to the worker (guarded by _qlock)
         self._qlock = threading.Lock()
         self._proc = None
@@ -119,31 +119,41 @@ class Analyst:
                         self._queued -= 1
 
     def request(self, req):
-        """Ask for a line. req: {"id", "messages", "seed", "expires"(game clock)}.
-        Never blocks: if the worker is backed up, the request is simply dropped
-        (the Booth treats a line that never arrives like a late one)."""
+        """Ask for a line. req: {"id", "messages", "seed", "expires"(game clock),
+        "prio"(1 = needed now, 2 = speculative)}. Never blocks: if the worker is
+        backed up, the request is simply dropped (the Booth treats a line that
+        never arrives like a late one). Returns whether it was sent."""
         if not self.ready:
-            return
+            return False
         with self._qlock:
             if self._queued >= MAX_QUEUED_REQUESTS:
-                return
+                return False
             self._queued += 1
         ttl = req["expires"] - time.monotonic()
         self._outbox.put({"type": "req", "id": req["id"], "messages": req["messages"], "seed": req["seed"],
-                          "expires_wall": time.time() + ttl})
+                          "prio": req.get("prio", 1), "expires_wall": time.time() + ttl})
+        return True
 
     def speak(self, req_id, text, ttl):
         """Ask the worker to synthesize Sonia's (already accepted) line into her
-        clip file. Answered by a {"type": "spoken", "id", "ok"} from poll().
-        Never blocks; dropped like request() if the worker is backed up."""
+        clip file -- even mid-rally (CPU only). Answered by a {"type": "spoken",
+        "id", "ok", "secs"} from poll(). Never blocks; dropped like request()
+        if the worker is backed up."""
         if not (self.ready and self.voice):
             return False
         with self._qlock:
             if self._queued >= MAX_QUEUED_REQUESTS:
                 return False
             self._queued += 1
+        self._speaking += 1
         self._outbox.put({"type": "speak", "id": req_id, "text": text, "expires_wall": time.time() + ttl})
         return True
+
+    def drop(self, ids):
+        """Cancel queued or running text requests the game no longer wants
+        (e.g. pre-match lines for an opponent who wasn't picked)."""
+        if self._proc is not None and ids:
+            self._outbox.put({"type": "drop", "ids": list(ids)})
 
     def set_gate(self, open_):
         """Open = the ball is dead and Sonia may use the GPU. Closing it cancels
@@ -179,6 +189,7 @@ class Analyst:
                     self.last_latency = msg["latency"]
                     out.append(msg)
             elif msg["type"] == "spoken":
+                self._speaking = max(0, self._speaking - 1)
                 out.append(msg)
         if self.status in ("loading", "ready") and self._proc.poll() is not None:
             self.status, self.detail = "offline", "AI process stopped"
@@ -187,7 +198,7 @@ class Analyst:
     def info(self):
         return {"status": self.status, "detail": self.detail, "device": self.device,
                 "latency": self.last_latency, "gate": self.gate_open, "generating": self.generating,
-                "voice": self.voice,
+                "voice": self.voice, "speaking": self._speaking > 0,
                 "cancelled": self.cancelled}
 
     def close(self):
@@ -285,7 +296,8 @@ def warm_up_prompts():
     first call can take 10+ s). Real booth-sized prompts, run once at startup
     -- through the same dead-ball gate as everything else."""
     from commentary import PERSONAS, build_messages
-    return [build_messages({"moment": "intro", "opponent": PERSONAS["pip"]}),
+    return [build_messages({"moment": "show", "opponent": PERSONAS["pip"], "conditions": "grey and overcast, chilly",
+                            "our_player": "first match today", "focus": "the opponent's style"}),
             build_messages({"moment": "point", "opponent": PERSONAS["rita"], "point_to": "player",
                             "how": "the opponent hit the net", "rally_shots": 4, "score_situation": "level"})]
 
@@ -330,31 +342,65 @@ def _send(msg):
     print(PROTO + json.dumps(msg), flush=True)
 
 
+# Sonia's VOICE (Kokoro, CPU, 2 threads) may run during a rally: measured, the
+# camera held 30 fps even with synthesis running non-stop. Her TEXT (the LLM on
+# the GPU) stays dead-ball only. False = voice dead-ball only too.
+SPEAK_WHILE_LIVE = True
+
+
 class WorkerLoop:
     """The worker's scheduling, separate from the model so it can be tested
-    with a fake generate(). feed() is called from the stdin-reader thread;
-    run() processes requests only while the dead-ball gate is open."""
+    with a fake generate(). feed() is called from the stdin-reader thread.
 
-    MAX_PENDING = 3
+    run() picks, in order: a voice job ("speak": the line is written and only
+    needs saying), then the most urgent text request ("req"; prio 1 = needed
+    now, 2 = speculative, e.g. pre-match show lines written on the menu).
+    Text only while the dead-ball gate is open; voice any time."""
+
+    MAX_PENDING = 3                          # text requests
+    MAX_SPEAK = 3                            # voice jobs
 
     def __init__(self, generate, send, speak=None):
         self.generate = generate             # (messages, seed, should_stop) -> (text, secs, cancelled)
         self.send = send
-        self.speak = speak                   # (text) -> writes Sonia's voice clip; None = no natural voice
-        self.pending = collections.deque()
+        self.speak = speak                   # (text) -> seconds of audio written; None = no natural voice
+        self.pending = []                    # in arrival order
         self.gate_open = True                # menus first: open
         self.closed = False
+        self.running_id = None               # the text request being generated
+        self.cancel_running = False          # ...which the game has dropped
         self.cond = threading.Condition()
 
     def feed(self, msg):
         with self.cond:
-            if msg.get("type") == "gate":
+            kind = msg.get("type")
+            if kind == "gate":
                 self.gate_open = bool(msg["open"])
-            elif msg.get("type") in ("req", "speak"):
+            elif kind in ("req", "speak"):
                 self.pending.append(msg)
-                while len(self.pending) > self.MAX_PENDING:
-                    self.pending.popleft()   # oldest first: it's the stalest
+                same = [m for m in self.pending if m["type"] == kind]
+                cap = self.MAX_PENDING if kind == "req" else self.MAX_SPEAK
+                while len(same) > cap:       # evict the least urgent, oldest first (it's the stalest)
+                    worst = max(range(len(same)), key=lambda i: (same[i].get("prio", 1), -i))
+                    self.pending.remove(same.pop(worst))
+            elif kind == "drop":
+                ids = set(msg.get("ids", ()))
+                self.pending = [m for m in self.pending if m["id"] not in ids]
+                if self.running_id in ids:
+                    self.cancel_running = True
             self.cond.notify_all()
+
+    def _next_job(self):
+        """The job run() should do now, or None. Caller holds the lock."""
+        if SPEAK_WHILE_LIVE or self.gate_open:
+            for m in self.pending:
+                if m["type"] == "speak":
+                    return m
+        if self.gate_open:
+            reqs = [m for m in self.pending if m["type"] == "req"]
+            if reqs:
+                return min(reqs, key=lambda m: m.get("prio", 1))   # ties: first to arrive
+        return None
 
     def close(self):
         with self.cond:
@@ -362,7 +408,7 @@ class WorkerLoop:
             self.cond.notify_all()
 
     def should_stop(self):
-        return self.closed or not self.gate_open
+        return self.closed or not self.gate_open or self.cancel_running
 
     def wait_for_gate(self):
         """Block until the ball is dead. False if the game has gone away."""
@@ -385,24 +431,27 @@ class WorkerLoop:
     def run(self):
         while True:
             with self.cond:
-                self.cond.wait_for(lambda: self.closed or (self.gate_open and self.pending))
+                self.cond.wait_for(lambda: self.closed or self._next_job() is not None)
                 if self.closed:
                     return
-                req = self.pending.popleft()
+                req = self._next_job()
+                self.pending.remove(req)
+                if req["type"] == "req":
+                    self.running_id, self.cancel_running = req["id"], False
             if time.time() > req["expires_wall"]:
                 if req["type"] == "speak":
-                    self.send({"type": "spoken", "id": req["id"], "ok": False})
+                    self.send({"type": "spoken", "id": req["id"], "ok": False, "secs": 0.0})
                 continue                     # already too late to be useful -- skip it
             if req["type"] == "speak":
-                # Sonia's voice: CPU only (2 threads), and only started while the ball is dead.
-                ok = False
+                # Sonia's voice: CPU only (2 threads); may run while the ball is live.
+                ok, secs = False, 0.0
                 if self.speak:
                     try:
-                        self.speak(req["text"])
+                        secs = float(self.speak(req["text"]) or 0.0)
                         ok = True
                     except Exception:
                         pass
-                self.send({"type": "spoken", "id": req["id"], "ok": ok})
+                self.send({"type": "spoken", "id": req["id"], "ok": ok, "secs": round(secs, 2)})
                 continue
             self.send({"type": "busy", "id": req["id"]})
             try:
@@ -410,6 +459,9 @@ class WorkerLoop:
             except Exception as e:
                 text, secs, cancelled = "", 0.0, False
                 self.send({"type": "status", "status": "ready", "detail": f"last line failed: {e}"})
+            finally:
+                with self.cond:
+                    self.running_id = None
             self.send({"type": "line", "id": req["id"], "text": text, "latency": secs, "cancelled": cancelled})
 
 
