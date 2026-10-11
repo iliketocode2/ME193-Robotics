@@ -83,6 +83,42 @@ g = Game(); g.opp = gl.OPPONENTS["viktor"]
 welcome = a.update(0.0, [{"type": "start", "opp": "viktor"}], g, handoff=True)[0]["text"]
 check("Sonia" in welcome and "banana" not in welcome, f"with the AI booth ready, Ray hands over to Sonia: '{welcome}'")
 
+# --- when Sonia is cued for a point, Ray just calls the score (her line isn't stuck behind his) ---
+a = Announcer(rng=random.Random(0))
+g = Game(); g.opp = gl.OPPONENTS["pip"]
+pt = [{"type": "miss", "reason": "no_swing"},
+      {"type": "point", "winner": gl.OPP, "reason": "miss", "score": {gl.PLAYER: 2, gl.OPP: 4}}]
+full = a.update(1.0, pt, g)[0]["text"]
+brief = Announcer(rng=random.Random(0)).update(1.0, pt, g, sonia_cued=True)[0]["text"]
+check(brief == "Four, two, to Pip.", f"Sonia cued: Ray calls only the score: '{brief}'")
+check(full.endswith("Four, two, to Pip.") and len(full) > len(brief), f"score calls use the short name: '{full}'")
+
+# --- every sentence Ray says has a pre-rendered natural-voice clip (tts.py --setup) ---
+from commentary import ray_phrases  # noqa: E402
+phrases = ray_phrases()
+said = [p for c in calls for p in c["parts"]]
+for seed in range(6):                      # more matches: every opponent, AI booth on and off
+    g2, a2 = Game(rng=random.Random(seed)), Announcer(rng=random.Random(seed))
+    g2.set_highlight(["pip", "rita", "viktor"][seed % 3]); g2.confirm()
+    t2 = 0.0
+    while g2.state != gl.GAME_OVER and t2 < 600:
+        t2 += DT
+        b = g2.ball
+        swing = (g2.state == gl.SERVE and g2.server == gl.PLAYER) or \
+                (g2.state == gl.RALLY and b.hitter == gl.OPP and 1.3 < b.z < 1.55 and random.random() < 0.5)
+        ev = g2.update(t2, DT, Paddle(b.x, b.y, 0, True), [Swing(t2, 1.3 + seed / 5)] if swing else [])
+        said += [p for c in a2.update(t2, ev, g2, handoff=seed % 2 == 0, sonia_cued=seed % 3 == 0) for p in c["parts"]]
+    for _ in range(int(3 / DT)):
+        t2 += DT
+        said += [p for c in a2.update(t2, g2.update(t2, DT, Paddle(), []), g2) for p in c["parts"]]
+missing = sorted({p for p in said if p not in phrases})
+check(not missing, f"all {len(said)} sentences Ray said in 7 matches have a clip ({len(phrases)} pre-rendered); missing: {missing[:5]}")
+check(all(c["text"] == " ".join(c["parts"]) for c in calls), "a call's text is its parts, in order")
+
+end = {"type": "point", "winner": gl.PLAYER, "reason": "opp_miss", "score": {gl.PLAYER: 11, gl.OPP: 5}}
+check(Announcer(rng=random.Random(0)).update(1.0, [end], g, sonia_cued=True)[0]["text"],
+      "a game-ending point is never left blank")
+
 # =================================================================== Sonia
 from commentary import Booth, MatchStory, build_messages, sanitize_line, too_similar  # noqa: E402
 

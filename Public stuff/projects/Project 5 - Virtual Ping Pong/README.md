@@ -25,13 +25,15 @@ Print the cards in `tags/`. To regenerate them, run `make_tags.py`. Keep the whi
 
 ## Setup
 ```
-my_env/Scripts/pip install websockets openvino-genai huggingface_hub
+my_env/Scripts/pip install websockets openvino-genai huggingface_hub kokoro-onnx
 my_env/Scripts/python "Public stuff/projects/Project 5 - Virtual Ping Pong/ai_commentator.py" --setup
+my_env/Scripts/python "Public stuff/projects/Project 5 - Virtual Ping Pong/tts.py" --setup
 ```
-- `--setup` downloads the AI model, Qwen3-4B (about 2.2 GB), into the gitignored repo-root `models/` folder. Skip it and the game still runs, just with Ray alone.
+- `ai_commentator.py --setup` downloads the AI model, Qwen3-4B (about 2.2 GB), into the gitignored repo-root `models/` folder. Skip it and the game still runs, just with Ray alone.
+- `tts.py --setup` downloads the natural-voice model, Kokoro-82M (about 350 MB), and renders every line Ray can say (822 clips, about 100 MB in `models/tts/`; 20–40 min, once). Skip it and the commentators use the browser's voices.
 - The first run downloads `pose_landmarker_lite.task` into the repo-root `models/` folder, which is gitignored.
 - The browser page loads Three.js and the font from a CDN, so you need internet (the MQTT broker needs it anyway).
-- **Use Microsoft Edge for the best voices.** Edge has natural-sounding British voices: "Ryan" for Ray and "Sonia" for Sonia. Chrome falls back to its Google UK voices.
+- **Browser voices (fallback only):** without `tts.py --setup`, Edge's "Ryan" and "Sonia" voices are the best fallback; Chrome uses its Google UK voices.
 
 ## Run
 ```
@@ -143,8 +145,19 @@ Sonia's lines are written live by **Qwen3-4B**, an open-source language model. I
 - To try another model, set `PINGPONG_AI_MODEL` (for example `OpenVINO/Qwen3-1.7B-int4-ov`) and rerun `--setup`.
 
 ### Voices and captions
+Both commentators speak with **Kokoro-82M**, a small open-source neural voice model (`tts.py`), because the browser's built-in voices sound robotic. Ray is `bm_george` and Sonia is `bf_emma`, both British; change `VOICES` in `tts.py` to try others.
+
+| | How | In-game cost |
+|---|---|---|
+| **Ray** | Every sentence he can say is rendered once by `tts.py --setup`. A call like "Caught flat-footed! Four, two, to Pip." plays two clips back to back. | None. The browser just plays files. |
+| **Sonia** | Her line is written live, so it's voiced live. The AI worker synthesizes it on 2 CPU threads right after the text, and only while the ball is dead (the same gate as her text). The line is held until its audio is ready, and it's dropped if the match has moved on by then. | About 3 s of 2 CPU cores per line, between points. Measured: see "Performance". |
+
+- **Speed:** ~0.85 s of CPU per second of speech on this laptop. 2 threads is as fast as 8, so it leaves the camera's cores alone. The Arc GPU can't run Kokoro (OpenVINO's GPU plugin lacks one of its ops), and ONNX Runtime was 2–3× slower than OpenVINO.
+- **Fallback:** a line with no clip (a rare number above 100, a Sonia line the worker couldn't voice in time, or no setup) uses the browser's voice. A call never mixes two voices.
 - Both commentators share one speech queue, so they never talk over each other. Ray's point calls cut in; Sonia waits her turn.
-- Every line also appears as a caption labelled **Ray** or **Sonia**.
+- **Sharing the airtime:** on a point Sonia has been asked about, Ray calls only the score ("Four, two, to Pip.") and leaves the colour to her. If his next point call comes while she's finishing a sentence, he waits for her. Her match intro survives his first point call.
+- **Speech never fails silently:** Edge's "Natural" voices stream from an online service. If a line hasn't started within 2.5 s (slow or blocked network, stuck speech engine), it's replayed with an installed Windows voice (David / Zira, or George / Hazel), and those are used for the rest of the session. Press **D** to see the voices in use, lines spoken, and any failure.
+- Every line also appears as a caption labelled **Ray** or **Sonia**, even if the speech fails.
 
 ## Stadium crowd
 The crowd is made of real recordings: about 2.5 MB of trimmed clips in `web/audio/crowd/`.
@@ -199,6 +212,7 @@ The camera (MediaPipe on the CPU), the 3D graphics (WebGL on the GPU) and Sonia'
 |---|---|
 | **Sonia only thinks when the ball is dead.** The game holds a gate that closes the moment a rally starts; a line in progress is cancelled within one token. | While she generated during play, camera fps fell from 30 to ~22; during her warm-up, to ~17 with 4 s frame lag. Gated: **30 fps** in every rally second. |
 | **The match start waits up to 25 s for her warm-up.** Pressing Start again starts at once; otherwise the match starts with Ray alone after 25 s. | Her one-time GPU compile must never overlap play. |
+| **Natural voices: Ray is pre-rendered, Sonia is voiced on 2 CPU threads, starting only when the ball is dead.** | Real pose pipeline at 30 fps: still **30 fps** with her voice synthesizing non-stop (far more than real play); frame age +5 ms (median 27 → 33 ms). Kokoro is no faster on 8 threads than on 2. |
 | **Muting commentary (🎙) switches her off entirely.** | Nothing is heard, so nothing is generated. |
 | **1 ms Windows timer for the game loop.** | Windows' default 15.6 ms timer made the "60 Hz" loop run at 32 Hz with 100–150 ms hitches. Now 60 Hz, worst gap about 20 ms. |
 | **The game process runs at above-normal priority and opts out of power throttling** (prefers the performance cores). | Worst tick gap 91 → 19 ms, worst frame age 142 → 87 ms. |

@@ -63,6 +63,7 @@ class Analyst:
         self.generating = False
         self.cancelled = 0             # lines cut off because a rally started
         self.gate_open = True
+        self.voice = False             # Sonia's natural voice (tts.py) loaded in the worker
         self._queued = 0                 # requests not yet written to the worker (guarded by _qlock)
         self._qlock = threading.Lock()
         self._proc = None
@@ -113,7 +114,7 @@ class Analyst:
                 self._results.put({"type": "status", "status": "offline", "detail": "AI process stopped"})
                 return
             finally:
-                if msg.get("type") == "req":
+                if msg.get("type") in ("req", "speak"):
                     with self._qlock:
                         self._queued -= 1
 
@@ -131,6 +132,19 @@ class Analyst:
         self._outbox.put({"type": "req", "id": req["id"], "messages": req["messages"], "seed": req["seed"],
                           "expires_wall": time.time() + ttl})
 
+    def speak(self, req_id, text, ttl):
+        """Ask the worker to synthesize Sonia's (already accepted) line into her
+        clip file. Answered by a {"type": "spoken", "id", "ok"} from poll().
+        Never blocks; dropped like request() if the worker is backed up."""
+        if not (self.ready and self.voice):
+            return False
+        with self._qlock:
+            if self._queued >= MAX_QUEUED_REQUESTS:
+                return False
+            self._queued += 1
+        self._outbox.put({"type": "speak", "id": req_id, "text": text, "expires_wall": time.time() + ttl})
+        return True
+
     def set_gate(self, open_):
         """Open = the ball is dead and Sonia may use the GPU. Closing it cancels
         a line in progress. Only changes are sent."""
@@ -140,8 +154,9 @@ class Analyst:
         self._outbox.put({"type": "gate", "open": open_})
 
     def poll(self):
-        """Finished lines since the last call: [{"id", "text", "latency"}]. Also
-        picks up status changes (loading -> ready / offline)."""
+        """Finished work since the last call: lines {"type": "line", "id", "text",
+        "latency"} and voice clips {"type": "spoken", "id", "ok"}. Also picks up
+        status changes (loading -> ready / offline)."""
         if self._proc is None:
             return []
         out = []
@@ -152,6 +167,7 @@ class Analyst:
                 break
             if msg["type"] == "status":
                 self.status, self.detail, self.device = msg["status"], msg.get("detail", ""), msg.get("device")
+                self.voice = msg.get("voice", self.voice)
                 print(f"[AI booth] {self.status} {self.device or ''} {self.detail}".rstrip())
             elif msg["type"] == "busy":
                 self.generating = True
@@ -162,6 +178,8 @@ class Analyst:
                 else:
                     self.last_latency = msg["latency"]
                     out.append(msg)
+            elif msg["type"] == "spoken":
+                out.append(msg)
         if self.status in ("loading", "ready") and self._proc.poll() is not None:
             self.status, self.detail = "offline", "AI process stopped"
         return out
@@ -169,6 +187,7 @@ class Analyst:
     def info(self):
         return {"status": self.status, "detail": self.detail, "device": self.device,
                 "latency": self.last_latency, "gate": self.gate_open, "generating": self.generating,
+                "voice": self.voice,
                 "cancelled": self.cancelled}
 
     def close(self):
@@ -250,6 +269,17 @@ def make_generator(pipe):
     return generate
 
 
+def load_voice():
+    """(speak(text), note): Sonia's natural voice (tts.py), or (None, why not)
+    -- then her lines use the browser's voice."""
+    try:
+        import tts
+        synth = tts.Synth()
+    except Exception as e:                       # no kokoro-onnx / model not downloaded
+        return None, f"natural voice off: {str(e)[:120]}"
+    return (lambda text: synth.say("sonia", text, tts.clip_path("sonia", text))), ""
+
+
 def warm_up_prompts():
     """The GPU compiles kernels the first time it sees each prompt shape (that
     first call can take 10+ s). Real booth-sized prompts, run once at startup
@@ -307,9 +337,10 @@ class WorkerLoop:
 
     MAX_PENDING = 3
 
-    def __init__(self, generate, send):
+    def __init__(self, generate, send, speak=None):
         self.generate = generate             # (messages, seed, should_stop) -> (text, secs, cancelled)
         self.send = send
+        self.speak = speak                   # (text) -> writes Sonia's voice clip; None = no natural voice
         self.pending = collections.deque()
         self.gate_open = True                # menus first: open
         self.closed = False
@@ -319,7 +350,7 @@ class WorkerLoop:
         with self.cond:
             if msg.get("type") == "gate":
                 self.gate_open = bool(msg["open"])
-            elif msg.get("type") == "req":
+            elif msg.get("type") in ("req", "speak"):
                 self.pending.append(msg)
                 while len(self.pending) > self.MAX_PENDING:
                     self.pending.popleft()   # oldest first: it's the stalest
@@ -339,12 +370,17 @@ class WorkerLoop:
             self.cond.wait_for(lambda: self.closed or self.gate_open)
             return not self.closed
 
-    def warm_up(self, prompts):
+    def warm_up(self, prompts, voice_line=None):
         for i, messages in enumerate(prompts):
             while self.wait_for_gate():
                 _, _, cancelled = self.generate(messages, i + 1, self.should_stop)
                 if not cancelled:
                     break
+        if self.speak and voice_line and self.wait_for_gate():
+            try:
+                self.speak(voice_line)           # the first synthesis is the slow one
+            except Exception:
+                self.speak = None                # her voice is broken: the browser voice it is
 
     def run(self):
         while True:
@@ -354,7 +390,20 @@ class WorkerLoop:
                     return
                 req = self.pending.popleft()
             if time.time() > req["expires_wall"]:
+                if req["type"] == "speak":
+                    self.send({"type": "spoken", "id": req["id"], "ok": False})
                 continue                     # already too late to be useful -- skip it
+            if req["type"] == "speak":
+                # Sonia's voice: CPU only (2 threads), and only started while the ball is dead.
+                ok = False
+                if self.speak:
+                    try:
+                        self.speak(req["text"])
+                        ok = True
+                    except Exception:
+                        pass
+                self.send({"type": "spoken", "id": req["id"], "ok": ok})
+                continue
             self.send({"type": "busy", "id": req["id"]})
             try:
                 text, secs, cancelled = self.generate(req["messages"], req["seed"], self.should_stop)
@@ -373,7 +422,8 @@ def worker():
         # touch the standard handles while loading) -- the worker hung forever.
         # Messages sent meanwhile just wait in the pipe.
         pipe, device = load_pipeline(log=lambda m: None)   # normal priority: finishes during camera pick
-        loop = WorkerLoop(make_generator(pipe), _send)
+        speak, voice_note = load_voice()
+        loop = WorkerLoop(make_generator(pipe), _send, speak)
         prompts = warm_up_prompts()
     except Exception as e:
         _send({"type": "status", "status": "offline", "detail": str(e)[:300]})
@@ -388,13 +438,14 @@ def worker():
         loop.close()                         # game gone
 
     threading.Thread(target=read_stdin, name="stdin", daemon=True).start()
-    loop.warm_up(prompts)
+    loop.warm_up(prompts, voice_line="Welcome to the booth.")
     if loop.closed:
         return
     # No priority games needed: the gate keeps the model off the hardware during
     # rallies, and at normal priority lines come out faster (measured A/B:
     # median ~3.0 s vs ~3.7 s at below-normal under full load; rallies 30 fps either way).
-    _send({"type": "status", "status": "ready", "device": device})
+    _send({"type": "status", "status": "ready", "device": device, "voice": loop.speak is not None,
+           "detail": voice_note if speak is None else ("" if loop.speak else "natural voice failed its warm-up")})
     loop.run()
 
 

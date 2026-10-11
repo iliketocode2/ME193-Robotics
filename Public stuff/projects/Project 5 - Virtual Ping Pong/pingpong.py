@@ -29,6 +29,7 @@ import os
 import sys
 import threading
 import time
+import urllib.parse
 import webbrowser
 
 import legoeducation as le  # noqa: F401 -- for le.LEGO_COLOR_* in PADDLE_CARD_COLOR
@@ -40,6 +41,7 @@ from camlib import pick_camera  # noqa: E402
 from mqttlib import MQTTClient  # noqa: E402
 
 import game_logic as gl  # noqa: E402
+import tts  # noqa: E402
 from ai_commentator import Analyst, set_process_mode  # noqa: E402
 from commentary import Announcer, Booth  # noqa: E402
 from opponents import public_info  # noqa: E402
@@ -62,6 +64,7 @@ WS_PORT = HTTP_PORT + 1          # web/game.js assumes page port + 1
 TICK_HZ = 60
 VIDEO_HZ = 60                    # cap only -- a frame is sent as soon as vision finishes it
 START_HOLD_S = 25                # wait this long for Sonia's warm-up before starting a match
+SPEAK_TTL_S = 8                  # Sonia's voice clip must start rendering within this, or she's skipped
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "logs")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -76,6 +79,7 @@ class App:
         self.announcer = Announcer()      # Ray: scripted play-by-play
         self.booth = Booth()              # Sonia: decides when the AI analyst speaks
         self.analyst = analyst            # Sonia's AI model, in its own process
+        self.clips = tts.ClipIndex()      # Ray's pre-rendered natural-voice lines (tts.py --setup)
         self.clients = set()
         self.stop = asyncio.Event()
         self._last_frame_id = -1
@@ -184,8 +188,12 @@ class App:
             paddle = gl.Paddle(vs.paddle_x, vs.paddle_y, vs.paddle_vx, vs.visible)
             swings = self.paddle.take_swings()
             events = self.game.update(now, dt, paddle, swings)
-            events += self.announcer.update(now, events, self.game, handoff=self.analyst.ready)
-            events += self._booth(now, events)
+            # Sonia's cue first, so Ray knows to keep his point call short and leave her the colour
+            sonia_on = self.analyst.ready and self.commentary_on
+            asks = self.booth.update(now, events, self.game, sonia_on)
+            events += self.announcer.update(now, events, self.game, handoff=sonia_on,
+                                            sonia_cued=any(r["kind"] == "point" for r in asks))
+            events += self._booth(now, asks)
             for ev in events:
                 self._on_event(ev)
             # Sonia may only use the GPU while the ball is dead (and someone is listening)
@@ -262,17 +270,30 @@ class App:
         elif kind == "say":
             print(f'  {self.game.opp["name"]}: "{ev["text"]}"')
         elif kind == "call":
+            if ev["speaker"] == "ray":
+                ev["clips"] = self.clips.urls("ray", ev["parts"])     # None: the browser voice says it
             who = "Ray" if ev.get("speaker") == "ray" else f'Sonia, AI {ev.get("latency", 0):.1f}s'
             print(f'  [{who}] {ev["text"]}')
 
-    def _booth(self, now, events):
-        """Ask the AI analyst for lines when the Booth wants one; turn finished
-        lines into Sonia call events (late or stale ones are dropped)."""
-        for req in self.booth.update(now, events, self.game, self.analyst.ready and self.commentary_on):
+    def _booth(self, now, asks):
+        """Send the Booth's requests to the AI analyst; turn finished lines into
+        Sonia call events (late or stale ones are dropped). With her natural
+        voice on, a line is held back until the worker has rendered its clip."""
+        for req in asks:
             self.analyst.request(req)
         calls = []
         for res in self.analyst.poll():
-            call = self.booth.accept(res, now, self.game)
+            if res["type"] == "line":
+                hold = self.analyst.voice
+                call = self.booth.accept(res, now, self.game, hold=hold)
+                if call and hold and not self.analyst.speak(res["id"], call["text"], SPEAK_TTL_S):
+                    call = self.booth.release(res["id"], now, self.game)   # worker busy: browser voice
+                elif hold:
+                    call = None                                              # comes back as "spoken"
+            else:                                                            # "spoken": her clip is ready
+                call = self.booth.release(res["id"], now, self.game)
+                if call and res["ok"]:
+                    call["clips"] = [tts.clip_url("sonia", call["text"])]
             if call:
                 calls.append(call)
         return calls
@@ -298,6 +319,10 @@ def start_http():
         def end_headers(self):
             self.send_header("Cache-Control", "no-store")
             super().end_headers()
+
+        def translate_path(self, path):
+            # /tts/<voice>/<hash>.wav -> the natural-voice clip cache (outside web/)
+            return tts.resolve_url(urllib.parse.urlsplit(path).path) or super().translate_path(path)
 
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", HTTP_PORT),
                                             functools.partial(Quiet, directory=WEB_DIR))
@@ -357,6 +382,8 @@ def main():
 
         httpd = start_http()
         app = App(vision, paddle, mqtt, args.sim, analyst, perf_log)
+        print(f"Natural voices: {len(app.clips)} of Ray's lines rendered" if len(app.clips)
+              else "Natural voices: none rendered yet (tts.py --setup) -- using the browser's voices")
         webbrowser.open(f"http://localhost:{HTTP_PORT}/")
         asyncio.run(app.run())
     except KeyboardInterrupt:

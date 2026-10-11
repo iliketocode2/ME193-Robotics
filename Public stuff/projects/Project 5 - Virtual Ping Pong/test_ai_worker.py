@@ -117,6 +117,39 @@ check(not m4.calls, "warm-up does not touch the GPU while a rally is on")
 loop4.feed({"type": "gate", "open": True})
 check(done.wait(2) and len(m4.calls) == 2, "warm-up runs both prompts once the ball is dead")
 
+# --- Sonia's natural voice: same dead-ball gate, answered with "spoken" -------------
+spoken_texts = []
+sent5 = []
+loop5 = WorkerLoop(FakeModel(), sent5.append, speak=spoken_texts.append)
+th5 = threading.Thread(target=loop5.run, daemon=True)
+th5.start()
+loop5.feed({"type": "gate", "open": False})
+loop5.feed({"type": "speak", "id": 7, "text": "What a rally.", "expires_wall": time.time() + 10})
+time.sleep(0.2)
+check(not spoken_texts, "voice: nothing is synthesized while a rally is on")
+loop5.feed({"type": "gate", "open": True})
+check(wait_for(lambda: any(m.get("type") == "spoken" for m in sent5)) and spoken_texts == ["What a rally."]
+      and {"type": "spoken", "id": 7, "ok": True} in sent5, "voice: synthesized once the ball is dead, reported ok")
+
+
+def broken(_text):
+    raise RuntimeError("no espeak")
+
+
+sent6 = []
+loop6 = WorkerLoop(FakeModel(), sent6.append, speak=broken)
+th6 = threading.Thread(target=loop6.run, daemon=True)
+th6.start()
+loop6.feed({"type": "speak", "id": 8, "text": "Hello there.", "expires_wall": time.time() + 10})
+check(wait_for(lambda: {"type": "spoken", "id": 8, "ok": False} in sent6) and th6.is_alive(),
+      "voice: a synthesis error is reported (browser voice fallback) and the worker keeps going")
+loop6.feed({"type": "speak", "id": 9, "text": "Too late.", "expires_wall": time.time() - 1})
+check(wait_for(lambda: {"type": "spoken", "id": 9, "ok": False} in sent6), "voice: an expired request is answered, not left hanging")
+loop7 = WorkerLoop(FakeModel(tokens=1, step=0), lambda m: None, speak=broken)
+loop7.warm_up([], voice_line="Warm up.")
+check(loop7.speak is None, "voice: a broken voice found during warm-up is switched off, the worker survives")
+loop5.close(); loop6.close()
+
 # --- shutdown -----------------------------------------------------------------------
 loop.close(); loop2.close(); loop3.close()
 check(wait_for(lambda: not th.is_alive() and not th2.is_alive() and not th3.is_alive()),

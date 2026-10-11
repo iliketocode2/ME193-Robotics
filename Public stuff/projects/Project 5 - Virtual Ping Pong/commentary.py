@@ -67,8 +67,25 @@ POINT_LINES = {
     (gl.OPP, "fault"): ["That one misses the table.", "Just off the edge!"],
     (gl.OPP, "out"): ["Long! Too much on that one.", "That sails past the end!"],
 }
-SPIN_LINES = {"viktor": ["Look at the curve on that!", "Wicked spin from Viktor!"],
+# Point and score calls use the short name: "Four, two, to Pip." is a second
+# shorter than "...to Pip the Penguin." -- airtime Sonia gets instead.
+SHORT_NAMES = {"pip": "Pip", "rita": "Rita", "viktor": "Viktor"}
+SPIN_LINES = {"viktor":["Look at the curve on that!", "Wicked spin from Viktor!"],
               "rita": ["Right into the corner!", "Rita goes wide!"]}
+WELCOMES = ["Welcome to the Rogers Cup! It's you versus {opp}.",
+            "Good evening, and welcome to centre court! It's you against {opp}."]
+HANDOFFS = ["Sonia, what do we make of this one?", "Sonia, your thoughts?"]
+STREAK_LINES = ["That's {n} in a row!", "{N} straight hits!", "{N} consecutive returns. Superb!"]
+SMASH_LINES = ["Big forehand!", "Smash!", "What power!"]
+RALLY_LENGTH = "That rally lasted {n} shots!"
+RECORD_LINES = {gl.PLAYER: "And a new personal best: {n} in a row!",
+                gl.OPP: "Still, that's a new personal best: {n} in a row!"}
+COMEBACK = "What a comeback!"
+GAME_OVER_LINES = {gl.PLAYER: ["Game! You win it, {hi} to {lo}! What a performance!",
+                               "And that's the game! You beat {opp}, {hi} to {lo}!"],
+                   gl.OPP: ["And that's the game. {opp} takes it, {hi} to {lo}.",
+                            "Game to {opp}, {hi} to {lo}. A valiant effort!"]}
+NO_OPP = "your opponent"
 
 
 def say_num(n):
@@ -100,24 +117,22 @@ class Announcer:
         self.record_at_rally_start = 0.0
         self.last_miss_reason = None
 
-    def update(self, now, events, game, handoff=False):
+    def update(self, now, events, game, handoff=False, sonia_cued=False):
         """Game events from this tick -> list of call events. handoff=True
         when Sonia (the AI analyst) is ready: Ray keeps the welcome short and
-        hands over to her for the opponent introduction."""
+        hands over to her for the opponent introduction. sonia_cued=True when
+        she's been asked about this point: Ray just calls the score and leaves
+        the colour to her, so her line isn't stuck waiting behind his."""
         calls = []
-        opp = game.opp["name"] if game.opp else "your opponent"
+        opp = game.opp["name"] if game.opp else NO_OPP
+        short = SHORT_NAMES.get(game.opp["key"], opp) if game.opp else opp
         for ev in events:
             kind = ev["type"]
             if kind == "start":
                 self.__init__(self.rng)
-                key = ev["opp"]
-                text = self.rng.choice([
-                    f"Welcome to the Rogers Cup! Today's match: you, versus {opp}.",
-                    f"Good evening, and welcome to centre court! It's you against {opp}.",
-                ])
-                text += " " + (self.rng.choice(["Sonia, what do we make of this one?",
-                                                "Sonia, your thoughts?"]) if handoff else INTROS.get(key, ""))
-                calls.append(self._call(now, text, 0.55, interrupt=True))
+                parts = [self.rng.choice(WELCOMES).format(opp=opp),
+                         self.rng.choice(HANDOFFS) if handoff else INTROS.get(ev["opp"], "")]
+                calls.append(self._call(now, parts, 0.55, interrupt=True))
             elif kind == "hit":
                 self.rally += 1
                 calls += self._rally_calls(now, ev)
@@ -135,20 +150,23 @@ class Announcer:
             elif kind == "miss":
                 self.last_miss_reason = ev["reason"]
             elif kind == "point":
-                calls.append(self._point_call(now, ev, game, opp))
+                calls.append(self._point_call(now, ev, game, short, brief=sonia_cued))
             elif kind == "game_over":
                 calls.append(self._game_over_call(now, ev, game, opp))
         return [c for c in calls if c]
 
     # ------------------------------------------------------------ internals
-    def _call(self, now, text, excite, interrupt=False, optional=False):
-        """optional lines are dropped if the announcer is still talking."""
+    def _call(self, now, parts, excite, interrupt=False, optional=False):
+        """parts: the call's sentences (one clip each in the natural voice; see
+        tts.py). optional lines are dropped if the announcer is still talking."""
         if optional and now < self.busy_until:
             return None
+        parts = [p for p in ([parts] if isinstance(parts, str) else parts) if p]
+        text = " ".join(parts)
         start = now if interrupt else max(now, self.busy_until)
         self.busy_until = start + len(text) * SECONDS_PER_CHAR / (1 + 0.25 * excite)
-        return {"type": "call", "speaker": "ray", "text": text, "excite": round(min(1.0, excite), 2),
-                "interrupt": interrupt}
+        return {"type": "call", "speaker": "ray", "text": text, "parts": parts,
+                "excite": round(min(1.0, excite), 2), "interrupt": interrupt}
 
     def _rally_calls(self, now, ev):
         if self.rally in RALLY_CALLS:
@@ -156,32 +174,30 @@ class Announcer:
             return [self._call(now, self.rng.choice(lines), excite, optional=True)]
         n = ev.get("streak", 0)
         if n and n % STREAK_EVERY == 0:
-            return [self._call(now, self.rng.choice(
-                [f"That's {say_num(n)} in a row!", f"{say_num(n).capitalize()} straight hits!",
-                 f"{say_num(n).capitalize()} consecutive returns. Superb!"]), 0.6, optional=True)]
+            return [self._call(now, streak_line(self.rng.choice(STREAK_LINES), n), 0.6, optional=True)]
         if ev.get("strength", 0) >= BIG_SWING:
-            return [self._call(now, self.rng.choice(["Big forehand!", "Smash!", "What power!"]), 0.7,
-                               optional=True)]
+            return [self._call(now, self.rng.choice(SMASH_LINES), 0.7, optional=True)]
         return []
 
-    def _point_call(self, now, ev, game, opp):
+    def _point_call(self, now, ev, game, opp, brief=False):
         winner, reason = ev["winner"], ev["reason"]
         you, them = ev["score"][gl.PLAYER], ev["score"][gl.OPP]
         if reason == "miss":
             reason = self.last_miss_reason or "wrong_place"
         self.last_miss_reason = None
+        game_ends = max(you, them) >= gl.GAME_POINTS and abs(you - them) >= 2
 
-        parts = [self.rng.choice(POINT_LINES.get((winner, reason), ["Point."])).format(opp=opp)]
+        parts = []
+        if not brief or game_ends:             # brief: Sonia is about to describe the point
+            parts.append(self.rng.choice(POINT_LINES.get((winner, reason), ["Point."])).format(opp=opp))
         if self.rally >= 8:
-            parts.append(f"That rally lasted {say_num(self.rally)} shots!")
+            parts.append(RALLY_LENGTH.format(n=say_num(self.rally)))
         if game.record > self.record_at_rally_start and game.record >= 3:
-            lead = "And a new personal best" if winner == gl.PLAYER else "Still, that's a new personal best"
-            parts.append(f"{lead}: {say_num(int(game.record))} in a row!")
+            parts.append(RECORD_LINES[winner].format(n=say_num(int(game.record))))
 
         self.max_deficit = max(self.max_deficit, them - you)
-        game_ends = max(you, them) >= gl.GAME_POINTS and abs(you - them) >= 2
         if (not self.comeback_called and self.max_deficit >= 4 and you >= them and not game_ends):
-            parts.append("What a comeback!")
+            parts.append(COMEBACK)
             self.comeback_called = True
         if not game_ends:                      # the game-over call announces the final score
             parts.append(score_call(you, them, opp))
@@ -191,21 +207,54 @@ class Announcer:
             excite += 0.25
         if winner == gl.OPP:
             excite -= 0.1
-        return self._call(now, " ".join(parts), excite, interrupt=True)
+        return self._call(now, parts, excite, interrupt=True)
 
     def _game_over_call(self, now, ev, game, opp):
         you, them = ev["score"][gl.PLAYER], ev["score"][gl.OPP]
-        hi, lo = say_num(max(you, them)), say_num(min(you, them))
-        if ev["winner"] == gl.PLAYER:
-            text = self.rng.choice([f"Game! You win it, {hi} to {lo}! What a performance!",
-                                    f"And that's the game! You beat {opp}, {hi} to {lo}!"])
-            excite = 1.0
-        else:
-            text = self.rng.choice([f"And that's the game. {opp} takes it, {hi} to {lo}.",
-                                    f"Game to {opp}, {hi} to {lo}. A valiant effort!"])
-            excite = 0.55
+        winner = ev["winner"]
+        text = game_over_line(self.rng.choice(GAME_OVER_LINES[winner]), you, them, opp)
         # queued (not interrupting) so the final point's call finishes first
-        return self._call(now, text, excite)
+        return self._call(now, text, 1.0 if winner == gl.PLAYER else 0.55)
+
+
+def streak_line(template, n):
+    return template.format(n=say_num(n), N=say_num(n).capitalize())
+
+
+def game_over_line(template, you, them, opp):
+    return template.format(hi=say_num(max(you, them)), lo=say_num(min(you, them)), opp=opp)
+
+
+def ray_phrases(max_count=100, max_score=25):
+    """Every sentence Ray can say (each call is made of these), for
+    pre-rendering his voice (tts.py --setup). Counts above max_count and
+    scores above max_score (and rallies over 60 shots) are rare enough to fall back to the browser voice."""
+    shorts = list(SHORT_NAMES.values())                 # (Ray only talks in a match: there's always an opponent)
+    fulls = [o["name"] for o in gl.OPPONENTS.values()]
+    out = {"Point.", COMEBACK, *SMASH_LINES, *HANDOFFS, *INTROS.values()}
+    for lines in POINT_LINES.values():
+        out.update(line.format(opp=name) for line in lines for name in shorts)
+    for lines, _ in RALLY_CALLS.values():
+        out.update(lines)
+    for lines in SPIN_LINES.values():
+        out.update(lines)
+    out.update(w.format(opp=name) for w in WELCOMES for name in fulls)
+    for n in range(STREAK_EVERY, max_count + 1, STREAK_EVERY):
+        out.update(streak_line(t, n) for t in STREAK_LINES)
+    out.update(RALLY_LENGTH.format(n=say_num(n)) for n in range(8, 61))
+    out.update(t.format(n=say_num(n)) for t in RECORD_LINES.values() for n in range(3, max_count + 1))
+    g = gl.GAME_POINTS
+    for you in range(max_score + 1):
+        for them in range(max_score + 1):
+            hi, lo = max(you, them), min(you, them)
+            if hi >= g and hi - lo >= 2:                       # a finished game
+                if hi == g or hi - lo == 2:                    # ...that can actually happen
+                    winner = gl.PLAYER if you > them else gl.OPP
+                    out.update(game_over_line(t, you, them, name)
+                               for t in GAME_OVER_LINES[winner] for name in fulls)
+            elif hi <= g or hi - lo <= 1:                      # a score mid-game
+                out.update(score_call(you, them, name) for name in shorts)
+    return out
 
 
 # =========================================================================
@@ -469,6 +518,7 @@ class Booth:
         self.story = MatchStory()
         self.next_id = 0
         self.pending = {}          # id -> request
+        self.held = {}             # id -> (request, call): accepted lines waiting for their voice clip
         self.recent = []           # Sonia's last lines (anti-repetition)
         self.last_spoke = -1e9
         self.last_asked = -1e9
@@ -485,6 +535,7 @@ class Booth:
             kind = ev["type"]
             if kind == "start":
                 self.pending.clear()
+                self.held.clear()
                 self.points_since_line = 0
                 out.append(self._request(now, "intro", game, ttl=12.0))
             elif kind == "point" and not self._game_ends(ev):
@@ -495,16 +546,12 @@ class Booth:
                 out.append(self._request(now, "game_over", game, ttl=15.0))
         return out
 
-    def accept(self, result, now, game):
+    def accept(self, result, now, game, hold=False):
         """Worker result {"id", "text", "latency"} -> Sonia call event, or None if
-        it's late, stale, malformed or repetitive."""
+        it's late, stale, malformed or repetitive. hold=True: the line is kept
+        back while her voice clip is rendered -- release() it afterwards."""
         req = self.pending.pop(result["id"], None)
-        if req is None or now > req["expires"]:
-            return None
-        moved_on = self.story.rally >= self.STALE_RALLY_SHOTS and game.state == gl.RALLY
-        if req["kind"] == "point" and (len(self.story.points) != req["points"] or moved_on):
-            return None
-        if req["kind"] == "intro" and moved_on:
+        if req is None or self._stale(req, now, game):
             return None
         text = sanitize_line(result.get("text", ""))
         if not text or too_similar(text, self.recent):
@@ -512,8 +559,28 @@ class Booth:
         self.recent = (self.recent + [text])[-6:]
         self.last_spoke = now
         self.points_since_line = 0
-        return {"type": "call", "speaker": "sonia", "text": text, "excite": req["excite"],
-                "interrupt": False, "latency": round(result.get("latency", 0.0), 2)}
+        call = {"type": "call", "speaker": "sonia", "text": text, "excite": req["excite"],
+                "interrupt": False, "kind": req["kind"], "latency": round(result.get("latency", 0.0), 2)}
+        if hold:
+            self.held[result["id"]] = (req, call)
+        return call
+
+    def release(self, req_id, now, game):
+        """A held line whose voice clip is done (or failed: then the browser
+        voice says it) -> the call event, or None if the match has moved on
+        in the meantime."""
+        req, call = self.held.pop(req_id, (None, None))
+        if req is None or self._stale(req, now, game):
+            return None
+        return call
+
+    def _stale(self, req, now, game):
+        if now > req["expires"]:
+            return True
+        moved_on = self.story.rally >= self.STALE_RALLY_SHOTS and game.state == gl.RALLY
+        if req["kind"] == "point" and (len(self.story.points) != req["points"] or moved_on):
+            return True
+        return req["kind"] == "intro" and moved_on
 
     # ------------------------------------------------------------ internals
     def _request(self, now, kind, game, ttl):

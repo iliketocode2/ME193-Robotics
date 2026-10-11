@@ -20,6 +20,7 @@ const RAY_PREFS = [
   (v) => /(Guy|Christopher|Eric|Andrew|Brian|Davis|Roger).*Natural/i.test(v.name),
   (v) => /Natural/i.test(v.name) && v.lang.startsWith("en"),
   (v) => /Google UK English Male/i.test(v.name),
+  (v) => v.localService && /(George|David|Mark)/.test(v.name),   // installed Windows voices (offline fallback)
   (v) => v.lang === "en-GB",
   (v) => v.lang.startsWith("en"),
 ];
@@ -28,15 +29,28 @@ const SONIA_PREFS = [
   (v) => /(Aria|Jenny|Ava|Emma|Michelle|Natasha|Clara|Emily).*Natural/i.test(v.name),
   (v) => /Natural/i.test(v.name) && v.lang.startsWith("en"),
   (v) => /Google UK English Female/i.test(v.name),
+  (v) => v.localService && /(Hazel|Susan|Zira)/.test(v.name),   // installed Windows voices (offline fallback)
   (v) => v.lang === "en-GB",
   (v) => v.lang.startsWith("en"),
 ];
-// How each commentator delivers a line (excite 0..1 from Python)
+// Browser-voice fallback delivery (excite 0..1 from Python). Pitch stays at
+// 1: shifting it is what made the neural voices sound processed and robotic.
 const DELIVERY = {
-  ray: (e) => ({ pitch: 0.95 + 0.3 * e, rate: 1.0 + 0.3 * e }),       // play-by-play: hyped when it matters
-  sonia: (e) => ({ pitch: 1.0 + 0.12 * e, rate: 0.98 + 0.15 * e }),   // analyst: calmer, conversational
+  ray: (e) => ({ pitch: 1, rate: 1.0 + 0.15 * e }),       // play-by-play: a touch quicker when it matters
+  sonia: (e) => ({ pitch: 1, rate: 0.98 + 0.08 * e }),    // analyst: calmer, conversational
 };
-const LINE_TTL_MS = { ray: 8000, sonia: 6000 };   // a queued line older than this is skipped
+// Natural voices (Kokoro clips, see tts.py): a call's sentences play back to back.
+const CLIP_GAP_S = 0.12;
+// A queued line older than this is skipped. Sonia's is long because her line
+// usually has to wait for Ray's call to finish (his match welcome alone is ~7 s);
+// once the next point ends her queued line is dropped anyway (see say()).
+const LINE_TTL_MS = { ray: 8000, sonia: 12000 };
+// Edge's "Natural" voices are streamed from an online service. If it's slow,
+// blocked or stuck, speak() just never starts -- silently. A line that hasn't
+// started by then is retried with an installed (offline) voice instead.
+const START_TIMEOUT_MS = 2500;
+const MS_PER_CHAR = 62;                 // rough speaking speed at rate 1 (matches commentary.py)
+const SONIA_GRACE_MS = 4500;            // Ray waits for Sonia to finish her sentence if it ends within this
 
 export class GameAudio {
   constructor() {
@@ -64,11 +78,17 @@ export class GameAudio {
       if (ok) { this.synth.stop(); this.samples.setMood(this.mood); }
     });
 
+    this.voiceBus = ctx.createGain();          // the natural-voice clips (not ducked)
+    this.voiceBus.connect(this.master);
+    this.clipCache = new Map();                // url -> Promise<AudioBuffer>
+
     this.voices = { ray: null, sonia: null };
+    this.offlineOnly = false;                  // set once an online voice has failed: use installed voices
+    this.speech = { spoken: 0, natural: 0, failed: 0, lastError: "" };   // for the D overlay
     this.queue = [];
     this.current = null;
     this.onCaption = () => {};
-    const pick = () => { this.voices = pickVoices(); };
+    const pick = () => { this.voices = pickVoices(this.offlineOnly); };
     pick();
     speechSynthesis.addEventListener?.("voiceschanged", pick);
   }
@@ -90,12 +110,28 @@ export class GameAudio {
 
   // ------------------------------------------------------------ the booth
   // One queue for both voices so Ray and Sonia never talk over each other.
-  // interrupt (Ray's point calls) clears the queue and cuts in immediately.
-  say(text, excite = 0.5, interrupt = false, speaker = "ray") {
-    if (!this.voiceOn || !("speechSynthesis" in window)) { this.onCaption(text, speaker); return; }
-    if (interrupt) { this.queue = []; this._cancelCurrent(); }
-    this.queue.push({ text, excite, speaker, expires: performance.now() + (LINE_TTL_MS[speaker] ?? 6000) });
-    setTimeout(() => this._next(), interrupt ? 40 : 0);   // Chrome drops a speak() issued right after cancel()
+  // interrupt (Ray's point calls) clears the queue and cuts in immediately --
+  // except that Sonia, if she's nearly done, finishes her sentence first.
+  // kind (Sonia only): "intro" | "point" | "game_over".
+  // clips: natural-voice audio for the line (one per sentence), or null for the browser voice.
+  say(text, excite = 0.5, interrupt = false, speaker = "ray", kind = "", clips = null) {
+    if (!this.voiceOn || (!clips && !("speechSynthesis" in window))) { this.onCaption(text, speaker); return; }
+    const item = { text, excite, speaker, kind, clips, expires: performance.now() + (LINE_TTL_MS[speaker] ?? 6000) };
+    clips?.forEach((u) => this._load(u));          // fetch + decode now, so it's ready when its turn comes
+    if (!interrupt) {
+      this.queue.push(item);
+      setTimeout(() => this._next(), 0);
+      return;
+    }
+    // Anything still queued is about the last point -- except Sonia's match
+    // intro, which is still worth hearing after Ray's first call.
+    this.queue = [item, ...this.queue.filter((i) => i.kind === "intro")];
+    const c = this.current;
+    if (c?.speaker === "sonia" && c.startedAt && c.endsAt - performance.now() <= SONIA_GRACE_MS) {
+      return;                                      // she's nearly done: Ray goes straight after her
+    }
+    const wasTalking = this._cancelCurrent();
+    setTimeout(() => this._next(), wasTalking ? 40 : 0);   // Chrome drops a speak() issued right after cancel()
   }
 
   // Drop a speaker's queued (not yet spoken) lines -- e.g. Sonia's once the next rally is under way.
@@ -106,6 +142,80 @@ export class GameAudio {
     let item;
     while ((item = this.queue.shift()) && performance.now() > item.expires) { /* stale: skip */ }
     if (!item) { this._unduck(); return; }
+    if (item.clips) this._playClips(item);
+    else this._speak(item);
+  }
+
+  // A line in the natural voice: its clips, back to back. Falls back to the
+  // browser voice if they can't be loaded.
+  _playClips(item) {
+    const cur = (this.current = { speaker: item.speaker, startedAt: 0, endsAt: 0, timer: 0, stop: null });
+    const fallback = (why) => {
+      if (this.current !== cur) return;
+      clearTimeout(cur.timer);
+      this.current = null;
+      this.speech.failed++;
+      this.speech.lastError = why;
+      item.clips = null;
+      this._speak(item);
+    };
+    cur.timer = setTimeout(() => fallback("voice clip load timed out"), START_TIMEOUT_MS);
+    this.onCaption(item.text, item.speaker);
+    Promise.all(item.clips.map((u) => this._load(u))).then((bufs) => {
+      if (this.current !== cur) return;           // cut off while loading
+      clearTimeout(cur.timer);
+      const ctx = this.ctx, t0 = ctx.currentTime + 0.03;
+      let t = t0;
+      const srcs = bufs.map((buf) => {
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(this.voiceBus);
+        src.start(t);
+        t += buf.duration + CLIP_GAP_S;
+        return src;
+      });
+      const ms = (t - t0 - CLIP_GAP_S) * 1000;
+      cur.stop = () => srcs.forEach((s) => { try { s.stop(); } catch { /* not started */ } });
+      cur.startedAt = performance.now();
+      cur.endsAt = cur.startedAt + ms;
+      this.speech.spoken++;
+      this.speech.natural++;
+      this._duck();
+      cur.timer = setTimeout(() => {
+        if (this.current !== cur) return;
+        this.current = null;
+        this._next();
+      }, ms + 30);
+    }, () => fallback("voice clip failed to load"));
+  }
+
+  _load(url) {
+    let p = this.clipCache.get(url);
+    if (!p) {
+      p = fetch(url)
+        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
+        .then((b) => this.ctx.decodeAudioData(b));
+      p.catch(() => this.clipCache.delete(url));   // let a later call try again
+      this.clipCache.set(url, p);
+      if (this.clipCache.size > 300) this.clipCache.delete(this.clipCache.keys().next().value);
+    }
+    return p;
+  }
+
+  _speak(item) {
+    const ss = speechSynthesis;
+    // A previous utterance can be left stuck in the engine (no end event ever
+    // came) and blocks everything after it; a paused engine never speaks.
+    // Clear both before speaking -- otherwise the booth goes silent for good.
+    if ((ss.speaking || ss.pending) && !item.cleared) {
+      item.cleared = true;                         // once: never loop on an engine that stays "busy"
+      ss.cancel();
+      const hold = (this.current = { speaker: item.speaker, timer: 0 });   // keeps _next() from double-speaking
+      hold.timer = setTimeout(() => { if (this.current === hold) { this.current = null; this._speak(item); } }, 40);
+      return;
+    }
+    if (ss.paused) ss.resume();
+
     const u = new SpeechSynthesisUtterance(item.text);
     const sonia = item.speaker === "sonia";
     const voice = sonia ? this.voices.sonia : this.voices.ray;
@@ -116,23 +226,70 @@ export class GameAudio {
     u.pitch = Math.min(2, d.pitch + (same ? 0.35 : 0));
     u.rate = d.rate;
     u.volume = 1;
-    const done = () => {
-      if (this.current?.u !== u) return;           // a cancelled line reporting late
-      clearTimeout(this.current.timer);
+
+    const cur = (this.current = { u, speaker: item.speaker, startedAt: 0, endsAt: 0, timer: 0 });
+    const finish = () => {
+      if (this.current !== cur) return;            // a cancelled line reporting late
+      clearTimeout(cur.timer);
       this.current = null;
       this._next();
     };
-    this.current = { u, timer: setTimeout(done, 2000 + item.text.length * 110) };   // in case onend never fires
-    u.onstart = () => { this._duck(); this.onCaption(item.text, item.speaker); };
-    u.onend = u.onerror = done;
-    speechSynthesis.speak(u);
+    // The voice never started (online voice service slow/blocked) or broke:
+    // switch to installed voices for the rest of the session and say it again.
+    const fail = (why) => {
+      if (this.current !== cur) return;
+      clearTimeout(cur.timer);
+      this.current = null;
+      this.speech.failed++;
+      this.speech.lastError = `${why} (${voice?.name ?? "default voice"})`;
+      console.warn("Commentary voice failed:", this.speech.lastError);
+      ss.cancel();
+      if (!this.offlineOnly && voice && !voice.localService) {
+        this.offlineOnly = true;
+        this.voices = pickVoices(true);
+        if (!item.retried) { item.retried = true; this.queue.unshift(item); }
+      }
+      setTimeout(() => this._next(), 40);
+    };
+    u.onstart = () => {
+      if (this.current !== cur) return;
+      clearTimeout(cur.timer);
+      const ms = (item.text.length * MS_PER_CHAR) / u.rate;
+      cur.startedAt = performance.now();
+      cur.endsAt = cur.startedAt + ms;
+      cur.timer = setTimeout(finish, 2000 + ms * 1.8);   // in case onend never fires
+      this.speech.spoken++;
+      this._duck();
+    };
+    u.onend = finish;
+    u.onerror = (e) => {
+      if (e.error === "interrupted" || e.error === "canceled") finish();   // we cut it off ourselves
+      else fail(e.error || "error");
+    };
+    cur.timer = setTimeout(() => fail("never started"), START_TIMEOUT_MS);
+    // Caption now, not on start: the line is visible even if speech fails.
+    this.onCaption(item.text, item.speaker);
+    ss.speak(u);
   }
 
+  // Cut off the current line. Returns true if the browser's speech engine had
+  // to be cancelled (its next speak() then needs a short pause).
   _cancelCurrent() {
     const c = this.current;
     this.current = null;
-    if (c) clearTimeout(c.timer);
-    speechSynthesis.cancel();
+    if (c) { clearTimeout(c.timer); c.stop?.(); }
+    const busy = "speechSynthesis" in window && (speechSynthesis.speaking || speechSynthesis.pending);
+    if (busy) speechSynthesis.cancel();
+    return busy;
+  }
+
+  // One line for the D overlay: which voices, how many lines spoken, any failures.
+  speechInfo() {
+    if (!this.voiceOn) return "MUTED (press M)";
+    const v = (x) => (x ? x.name.replace(/^Microsoft /, "").replace(/ - .*$/, "") : "default");
+    const s = this.speech;
+    return `natural ${s.natural} of ${s.spoken} lines   fallback: Ray ${v(this.voices.ray)} / Sonia ${v(this.voices.sonia)}` +
+      `${this.offlineOnly ? " [offline voices]" : ""}${s.failed ? `  FAILED ${s.failed}: ${s.lastError}` : ""}`;
   }
   _duck() { this.duck.gain.setTargetAtTime(0.4, this.ctx.currentTime, 0.08); }
   _unduck() { this.duck.gain.setTargetAtTime(1, this.ctx.currentTime, 0.35); }
@@ -432,8 +589,11 @@ class SynthCrowd {
 // =========================================================================
 // helpers
 // =========================================================================
-function pickVoices() {
-  const voices = speechSynthesis.getVoices().filter((v) => !/undefined/i.test(v.name));   // Edge 150 bug
+// offlineOnly: only installed voices (after an online "Natural" voice failed).
+function pickVoices(offlineOnly = false) {
+  const voices = speechSynthesis.getVoices()
+    .filter((v) => !/undefined/i.test(v.name))                     // Edge 150 bug
+    .filter((v) => !offlineOnly || v.localService);
   const first = (prefs, exclude) => {
     for (const pref of prefs) {
       const v = voices.find((v) => pref(v) && v !== exclude);

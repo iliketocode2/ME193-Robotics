@@ -8,3 +8,4 @@ ultralytics==8.4.171      # Project 4 -- YOLO object detection (pulls in torch)
 websockets==17.2          # Project 5 -- Python game server -> Three.js browser renderer
 openvino-genai==2026.4.1.0  # Project 5 -- local AI colour commentator on the Intel GPU
 huggingface_hub==2.2.0    # Project 5 -- downloads the AI model (ai_commentator.py --setup)
+kokoro-onnx==0.4.7        # Project 5 -- natural commentator voices (tts.py; runs on OpenVINO, CPU)

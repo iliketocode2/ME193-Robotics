@@ -373,6 +373,7 @@ function ensureAudio() {
   audio.onCaption = showCaption;
   audio.setMood(S && S.state !== "select" ? "idle" : "quiet");
   refreshSoundButtons();
+  if (!audio.voiceOn) showSub("🎙 Commentary is muted: press M to turn it on", 4);   // remembered from last session
 }
 addEventListener("pointerdown", ensureAudio);
 const blip = (...a) => audio?.blip(...a);
@@ -509,7 +510,7 @@ function onEvent(ev) {
       setTimeout(() => audio?.chant(), 1200);
       break;
     case "call":
-      if (audio) audio.say(ev.text, ev.excite, ev.interrupt, ev.speaker);
+      if (audio) audio.say(ev.text, ev.excite, ev.interrupt, ev.speaker, ev.kind, ev.clips);
       else showCaption(ev.text, ev.speaker);
       break;
     case "hit":
@@ -632,7 +633,8 @@ function updateHud() {
       `render     ${renderFps} fps  quality ${QUALITY[quality].name}   server tick ${d.tick_hz} Hz (worst gap ${d.tick_gap_ms} ms)\n` +
       `AI booth   ${S.booth?.status ?? "-"} ${S.booth?.device ?? ""}  ${S.booth?.gate ? "ball dead: may think" : "RALLY: AI paused"}` +
       `${S.booth?.generating ? "  (writing...)" : ""}  last line ${S.booth?.latency != null ? S.booth.latency.toFixed(1) + " s" : "-"}` +
-      `  cut off ${S.booth?.cancelled ?? 0}   crowd ${audio?.crowdKind ?? "(click to start audio)"}` +
+      `  cut off ${S.booth?.cancelled ?? 0}   crowd ${audio?.crowdKind ?? "(click to start audio)"}\n` +
+      `speech     ${audio ? audio.speechInfo() : "(click to start audio)"}` +
       `<span class="bar"><span style="position:absolute;left:0;top:0;bottom:0;width:${frac * 100}%;background:${d.gyro >= d.threshold ? "#06d6a0" : "#ffd23f"};border-radius:4px"></span>` +
       `<span style="position:absolute;left:50%;top:-3px;bottom:-3px;width:2px;background:#fff"></span></span>`;
   }
