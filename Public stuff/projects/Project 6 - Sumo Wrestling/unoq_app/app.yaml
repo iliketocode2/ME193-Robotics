@@ -1,0 +1,5 @@
+name: Sumo Robot
+description: "MQTT <-> BLE relay for the LEGO double motor + color sensor, and the fan RPM sensor"
+ports: []
+bricks: []
+icon: 🤼

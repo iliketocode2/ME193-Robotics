@@ -1,0 +1,5 @@
+name: Sumo BLE Probe
+description: "Checks whether the App Lab container can reach the LEGO motor + color sensor over Bluetooth"
+ports: []
+bricks: []
+icon: 🔎

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sumo Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">相撲</div>
+      <div>
+        <div class="title">SUMO CONTROL</div>
+        <div class="subtitle" id="team">connecting…</div>
+      </div>
+    </div>
+    <div class="match" id="match">IDLE</div>
+    <div class="links" id="links">
+      <span class="pill" data-link="ws">UI</span>
+      <span class="pill" data-link="mqtt">MQTT</span>
+      <span class="pill" data-link="robot">Robot</span>
+      <span class="pill" data-link="motor">Motor</span>
+      <span class="pill" data-link="color">Color</span>
+      <span class="pill" data-link="camera">Camera</span>
+      <span class="pill" data-link="fan">Fan</span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- ======================= video + chat ======================= -->
+    <div class="main-col">
+    <section class="card video-card">
+      <div class="card-head">
+        <h2>Arena</h2>
+        <div class="head-meta mono" id="camMeta">—</div>
+      </div>
+      <div class="video-wrap" id="videoWrap">
+        <canvas id="video"></canvas>
+        <div class="video-empty" id="videoEmpty">Waiting for phone camera…</div>
+        <div class="legend">
+          <span><i class="sw sw-us"></i>us (tag #6)</span>
+          <span><i class="sw sw-opp"></i>opponent</span>
+          <span><i class="sw sw-ring"></i>ring</span>
+          <span><i class="sw sw-edge"></i>edge limit</span>
+          <span class="hint">click = go here · right-click = clear</span>
+        </div>
+      </div>
+      <div class="tree" id="tree"></div>
+    </section>
+    <section class="card chat-card">
+      <div class="card-head">
+        <h2>MQTT feed</h2>
+        <label class="toggle small"><input type="checkbox" id="showHi"><span>telemetry</span></label>
+      </div>
+      <ul class="chat" id="chat"></ul>
+      <form class="say" id="sayForm">
+        <input id="sayText" placeholder="Message our channel…" autocomplete="off">
+        <button class="btn primary">Send</button>
+      </form>
+    </section>
+    </div>
+
+    <!-- ======================= right column ======================= -->
+    <aside class="side">
+      <section class="card action-card" id="actionCard">
+        <div class="eyebrow">NEXT ACTION</div>
+        <div class="action" id="action">—</div>
+        <div class="motors">
+          <div class="motor"><span>L</span><div class="bar"><div class="fill" id="barL"></div></div><b class="mono" id="valL">0</b></div>
+          <div class="motor"><span>R</span><div class="bar"><div class="fill" id="barR"></div></div><b class="mono" id="valR">0</b></div>
+        </div>
+        <div class="flags mono" id="flags"></div>
+      </section>
+
+      <section class="card sensor-card">
+        <div class="card-head"><h2>Color sensor <small>(rear, facing floor)</small></h2><span class="mono dim" id="sensorAge">—</span></div>
+        <div class="sensor">
+          <div class="swatch" id="swatch"><span id="swatchName">?</span></div>
+          <dl class="readings mono">
+            <dt>reflection</dt><dd id="sRefl">—</dd>
+            <dt>hue / sat / val</dt><dd id="sHsv">—</dd>
+            <dt>raw RGB</dt><dd id="sRgb">—</dd>
+          </dl>
+        </div>
+        <div class="edge-warn" id="edgeWarn">BLUE TAPE UNDER REAR</div>
+      </section>
+
+      <section class="card controls">
+        <button class="estop" id="estop">E-STOP <small>space</small></button>
+        <div class="row">
+          <button class="btn primary" id="btnStart">Start</button>
+          <button class="btn" id="btnPause">Pause</button>
+          <button class="btn" id="btnReset">Reset</button>
+        </div>
+        <label class="slider">
+          <div class="slider-head"><span>Strategy</span><b id="stratLabel">Balanced</b></div>
+          <input type="range" id="strategy" min="0" max="1" step="0.05" value="0.5">
+          <div class="slider-foot"><span>Defensive</span><span class="mono" id="stratParams"></span><span>Aggressive</span></div>
+        </label>
+        <div class="row toggles">
+          <label class="toggle"><input type="checkbox" id="dry"><span>Dry run</span></label>
+          <label class="slider mini"><span>Manual speed <b id="manSpeedVal">70</b></span>
+            <input type="range" id="manSpeed" min="20" max="100" step="5" value="70"></label>
+        </div>
+        <div class="keys" aria-label="manual drive keys">
+          <span></span><kbd data-key="w">W</kbd><span></span>
+          <kbd data-key="a">A</kbd><kbd data-key="s">S</kbd><kbd data-key="d">D</kbd>
+        </div>
+        <details>
+          <summary>Calibrate &amp; test</summary>
+          <div class="hsv" id="hsv"></div>
+          <div class="row">
+            <button class="btn" id="btnRefit">Re-fit ring</button>
+            <button class="btn" id="btnWin">Test win song</button>
+            <button class="btn" id="btnLose">Test lose song</button>
+          </div>
+        </details>
+      </section>
+
+    </aside>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
