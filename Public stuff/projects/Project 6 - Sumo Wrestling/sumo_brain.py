@@ -42,9 +42,14 @@ import songs_bridge
 from config import (BROKER_HOST, BROKER_PORT, CAMERA_STALE_S, FRAME_ROTATION, HERE,
                     HTTP_PORT, PHONE_STREAM_URL, PROCESS_WIDTH, ROBOT_STALE_S, SENSOR_STALE_S,
                     TEAM, TICK_HZ, TOPIC_CMD, TOPIC_REFEREE, TOPIC_ROOT, TOPIC_SENSOR,
-                    TOPIC_STATUS, TOPIC_UNOQ, UNOQ_STALE_S, VIDEO_JPEG_QUALITY, VIDEO_MAX_FPS,
-                    WS_PORT)
+                    TOPIC_STATUS, TOPIC_UNOQ, UNOQ_STALE_S, VIDEO_JPEG_QUALITY,
+                    VIDEO_WIDTH, WS_PORT)
 from vision import Vision
+
+# OpenCV's own worker threads (8 by default here) fight our camera, vision and
+# server threads for the same cores: measured 123 ms/frame with the default vs
+# 42 ms/frame with 2 inside the brain -- the main cause of the laggy feed.
+cv2.setNumThreads(2)
 
 WEB_DIR = os.path.join(HERE, "web")
 TOPIC_CHAT = f"{TOPIC_ROOT}/chat"
@@ -52,6 +57,7 @@ TOPIC_RESULT = f"{TOPIC_ROOT}/result"
 HIGH_RATE = {TOPIC_SENSOR, TOPIC_CMD, TOPIC_STATUS, TOPIC_UNOQ}
 TAG_PREFIX = re.compile(r"^\s*\[[^\]]*\]\s*")       # "[ME193/Rogers] start" -> "start" (Project 3)
 MANUAL_FRESH_S = 0.35
+FRAME_ACK_TIMEOUT_S = 1.5                           # resend video to a browser that never acked
 TARGET_TTL_S = 8.0
 BLUE_DEBOUNCE = 2                                   # consecutive sensor samples to flip on/off blue
 BLUE_RECENT_S = 3.0
@@ -69,6 +75,8 @@ class Brain:
         self.result, self.result_t = None, 0.0
         self.jpeg, self.jpeg_seq, self.sent_seq = None, 0, 0
         self.cam_fps, self.cam_status = 0.0, "starting"
+        self.new_frame = threading.Event()          # camera -> vision: "a fresh frame is waiting"
+        self.fps_count, self.fps_t0 = 0, time.monotonic()
         # robot links
         self.mqtt_ok = False
         self.status, self.status_t = {}, 0.0
@@ -92,6 +100,8 @@ class Brain:
         self.chat_last = {}
         self.chat_id = self.chat_sent_id = 0
         self.clients = set()
+        self.loop = None                            # asyncio loop, set in run(); vision thread pushes frames to it
+        self.video_state = {}                       # ws -> {"seq", "waiting", "t"}: per-browser flow control
         self.stop = threading.Event()
         # MQTT
         self.mq = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -201,16 +211,18 @@ class Brain:
                     frame = cv2.rotate(frame, FRAME_ROTATION)
                 with self.lock:
                     self.frame, self.frame_t = frame, time.monotonic()
+                self.new_frame.set()
             cap.release()
             time.sleep(1)
 
     def vision_loop(self):
-        last_t, last_jpeg = 0.0, 0.0
+        last_t = 0.0
         while not self.stop.is_set():
             with self.lock:
                 frame, t = self.frame, self.frame_t
             if frame is None or t == last_t:
-                time.sleep(0.005)
+                self.new_frame.wait(0.5)            # wakes the instant a frame arrives (no polling lag)
+                self.new_frame.clear()
                 continue
             last_t = t
             h, w = frame.shape[:2]
@@ -224,15 +236,22 @@ class Brain:
             result["size"] = [frame.shape[1], frame.shape[0]]
             now = time.monotonic()
             with self.lock:
-                dt = now - self.result_t if self.result_t else 0
-                self.cam_fps = 0.8 * self.cam_fps + 0.2 * (1 / dt) if dt > 0 else self.cam_fps
+                self.fps_count += 1                 # true processed frames per second, over ~1 s windows
+                if now - self.fps_t0 >= 1.0:
+                    self.cam_fps = self.fps_count / (now - self.fps_t0)
+                    self.fps_count, self.fps_t0 = 0, now
                 self.result, self.result_t = result, now
-            if now - last_jpeg >= 1.0 / VIDEO_MAX_FPS:
-                last_jpeg = now
-                ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, VIDEO_JPEG_QUALITY])
-                if ok:
-                    with self.lock:
-                        self.jpeg, self.jpeg_seq = buf.tobytes(), self.jpeg_seq + 1
+            # every processed frame becomes a small JPEG (a few ms); push_video's
+            # per-browser flow control decides who actually gets it
+            h, w = frame.shape[:2]
+            small = cv2.resize(frame, (VIDEO_WIDTH, int(h * VIDEO_WIDTH / w)), interpolation=cv2.INTER_AREA) \
+                if w > VIDEO_WIDTH else frame              # browser scales overlays back to vision pixels
+            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, VIDEO_JPEG_QUALITY])
+            if ok:
+                with self.lock:
+                    self.jpeg, self.jpeg_seq = buf.tobytes(), self.jpeg_seq + 1
+                if self.loop is not None:
+                    self.loop.call_soon_threadsafe(self.push_video)
 
     # ================================================================ commands from the UI / referee
     def command(self, msg):
@@ -277,6 +296,10 @@ class Brain:
                 self.vision.set_hsv(msg["low"], msg["high"])
             elif cmd == "refit_ring":
                 self.vision.reset_ring()
+            elif cmd == "snapshot_arena":
+                self.vision.request_reference()
+            elif cmd == "clear_arena":
+                self.vision.clear_reference()
             elif cmd == "say":
                 text = str(msg.get("text", ""))[:200]
                 if text:
@@ -285,6 +308,8 @@ class Brain:
             songs_bridge.stop()
         if cmd == "start":
             self._chat("system", f"MATCH START ({msg.get('source', 'ui')})")
+        if cmd == "snapshot_arena":
+            self._chat("system", "Empty-arena snapshot taken - opponent = what changes from it")
         if cmd == "test_song" and msg.get("song") in ("win", "lose"):
             songs_bridge.play(msg["song"], self.publish)
 
@@ -362,10 +387,14 @@ class Brain:
                  "ring_locked": self.vision.ring_locked,
                  "edge": sp["edge"], "out_r": bt.OUT_R,
                  "us": None, "opp": None, "robots": [],
-                 "goal_px": px(bb.goal), "target_px": px(self.target)}
+                 "goal_px": px(bb.goal), "target_px": px(self.target),
+                 "ring_quality": res.get("ring_quality") if res else None,
+                 "ring_pending": bool(res.get("ring_pending")) if res else False,
+                 "arena_ref_age": round(res["reference_age"]) if res and res.get("reference_age") is not None else None}
         if res:
+            opp_box = res["opp"]["box"] if res["opp"] else None
             world["robots"] = [{"box": r["box"], "conf": round(r["conf"], 2), "ours": bool(r.get("ours"))}
-                               for r in res["robots"]]
+                               for r in res["robots"] if r["box"] != opp_box]
             if res["us"]:
                 world["us"] = dict(res["us"], r=round(bb.us["r"], 3) if bb.us else None)
             if res["opp"]:
@@ -392,19 +421,26 @@ class Brain:
     # ================================================================ websocket server
     async def handler(self, ws):
         self.clients.add(ws)
+        self.video_state[ws] = {"seq": 0, "waiting": False, "t": 0.0}
         await ws.send(json.dumps({"type": "hello", "team": TEAM, "topic_root": TOPIC_ROOT,
                                   "referee": TOPIC_REFEREE, "tree": bt.branch_names(self.tree),
                                   "chat": list(self.chat)}))
         try:
             async for raw in ws:
                 try:
-                    self.command(json.loads(raw))
+                    msg = json.loads(raw)
+                    if msg.get("cmd") == "frame_ack":       # browser drew the last frame: it may have another
+                        self.video_state[ws]["waiting"] = False
+                        self.push_video()                    # a newer frame may already be waiting
+                        continue
+                    self.command(msg)
                 except (ValueError, KeyError, TypeError) as e:
                     print(f"[ui] bad command {raw!r}: {e}")
         except Exception as e:
             print(f"[ui] browser disconnected: {e}")
         finally:
             self.clients.discard(ws)
+            self.video_state.pop(ws, None)
 
     async def tick_loop(self):
         period = 1.0 / TICK_HZ
@@ -424,17 +460,36 @@ class Brain:
             with self.lock:
                 chat = [c for c in self.chat if c["id"] > self.chat_sent_id]
                 self.chat_sent_id = self.chat_id
-                jpeg = self.jpeg if self.jpeg_seq != self.sent_seq else None
-                self.sent_seq = self.jpeg_seq
             if self.clients:
                 broadcast(self.clients, json.dumps(snap))
                 for c in chat:
                     broadcast(self.clients, json.dumps(c))
-                if jpeg:
-                    broadcast(self.clients, b"F" + jpeg)
+                self.push_video()                            # safety net for a browser whose ack got lost
             await asyncio.sleep(max(0.0, period - (time.monotonic() - now)))
 
+    def push_video(self):
+        """Send the newest frame to every browser that has drawn its last one.
+
+        Flow control: a browser gets a new frame only after it acked the
+        previous one, so a slow browser skips frames instead of queueing them
+        (that queue is what made the feed lag further and further behind).
+        Runs on the event loop: called from the vision thread through
+        call_soon_threadsafe, on every ack, and once per tick."""
+        with self.lock:
+            jpeg, seq = self.jpeg, self.jpeg_seq
+        if not jpeg:
+            return
+        now = time.monotonic()
+        ready = []
+        for ws, st in list(self.video_state.items()):
+            if st["seq"] != seq and (not st["waiting"] or now - st["t"] > FRAME_ACK_TIMEOUT_S):
+                st.update(seq=seq, waiting=True, t=now)
+                ready.append(ws)
+        if ready:
+            broadcast(ready, b"F" + jpeg)
+
     async def run(self):
+        self.loop = asyncio.get_running_loop()
         async with serve(self.handler, "127.0.0.1", WS_PORT):
             await self.tick_loop()
 

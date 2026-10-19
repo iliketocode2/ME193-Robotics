@@ -41,6 +41,9 @@ TAG_HEADING_OFFSET_DEG = 0.0
 
 # ---- YOLO model (Roboflow-labelled, trained locally by train_sumo.py) --------
 MODEL_PATH = os.path.join(REPO_ROOT, "models", "sumo_yolo.pt")   # gitignored
+# ONNX export of the same model, run with OpenVINO (preferred: no PyTorch, much faster)
+MODEL_ONNX_PATH = os.path.join(REPO_ROOT, "models", "sumo_yolo.onnx")
+YOLO_DEVICES = ("NPU", "GPU", "CPU")    # OpenVINO devices to try, in order
 YOLO_IMG_SIZE = 512
 YOLO_CONF = 0.45
 
@@ -53,8 +56,8 @@ HSV_HIGH = (130, 255, 255)
 # ---- web UI -----------------------------------------------------------------
 HTTP_PORT = 8293
 WS_PORT = HTTP_PORT + 1          # web/app.js assumes page port + 1
-VIDEO_JPEG_QUALITY = 70
-VIDEO_MAX_FPS = 15
+VIDEO_WIDTH = 640                # video sent to the browser is downscaled to this (vision still uses PROCESS_WIDTH)
+VIDEO_JPEG_QUALITY = 65
 
 # ---- control loop -------------------------------------------------------------
 TICK_HZ = 15                     # behavior tree tick + T/cmd publish rate

@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['Opponent']
+
+roboflow:
+  workspace: william-goldman
+  project: lego-car-detection
+  version: 1
+  license: Private
+  url: https://app.roboflow.com/william-goldman/lego-car-detection/1

@@ -20,7 +20,12 @@ import numpy as np
 import config
 import songs_bridge
 import sumo_brain
+import vision
 from vision import Vision
+
+# synthetic frames have grey squares, not LEGO cars: test the change-detection
+# path even if a trained model exists in models/
+vision._load_detector = lambda: (None, "change detection (test)")
 
 W, H = 960, 540
 RING = ((480, 270), (700, 460), 0)          # center, full axes, angle (a camera-tilted ellipse)
@@ -58,11 +63,11 @@ def make_frame(us=None, heading_deg=0.0, opp=None):
     return img
 
 
-def run(brain, frame, sensor=None, ticks=8, dt=1 / 15):
-    res = brain.vision.process(frame)
-    res["size"] = [W, H]
-    snap = None
+def run(brain, frame, sensor=None, ticks=8, dt=1 / 15, before_tick=None):
+    snap = res = None
     for _ in range(ticks):
+        res = brain.vision.process(frame)        # every tick, like the live vision thread (tracks confirm)
+        res["size"] = [W, H]
         now = time.monotonic()
         with brain.lock:
             brain.result, brain.result_t = res, now
@@ -72,6 +77,8 @@ def run(brain, frame, sensor=None, ticks=8, dt=1 / 15):
                 brain.rear_on_blue = sensor == "blue"
                 if sensor == "blue":
                     brain.last_blue_t = now
+        if before_tick:
+            before_tick()                    # e.g. a UI command the browser re-sends every tick
         snap = brain.tick(now, dt)
         time.sleep(dt)                       # real time: out-of-ring timers count real frame time
     return res, snap
@@ -86,22 +93,97 @@ def check(name, cond, detail=""):
 check.failed = 0
 
 
+def frames(v, frame, n):
+    res = None
+    for _ in range(n):
+        res = v.process(frame)
+    return res
+
+
+def floor_only():
+    return np.full((H, W, 3), (150, 160, 165), np.uint8)
+
+
 def main():
-    print("vision")
+    print("vision: ring")
     v = Vision()
-    res = v.process(make_frame(us=(0, 0), heading_deg=0, opp=(0.5, 0)))
+    res = v.process(make_frame(us=(0, 0)))
+    check("a new ring is not believed after one frame", res["ring"] is None and res["ring_pending"])
+    res = frames(v, make_frame(us=(0, 0), heading_deg=0, opp=(0.5, 0)), 4)
     ring = res["ring"]
-    check("ring found", ring is not None)
+    check("ring found after a few frames", ring is not None, f"tape coverage {res['ring_quality']}")
     check("ring center", ring and abs(ring.cx - 480) < 15 and abs(ring.cy - 270) < 15,
           f"{ring and (round(ring.cx), round(ring.cy))}")
+
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < 1.3:
+        res = v.process(floor_only())
+    check("blue tape gone -> no field (after ~1 s)", res["ring"] is None)
+
+    junk = floor_only()                                  # blue things that are NOT a ring
+    cv2.rectangle(junk, (100, 100), (260, 220), (200, 90, 20), -1)
+    cv2.line(junk, (500, 80), (900, 140), (200, 90, 20), 12)
+    cv2.circle(junk, (700, 400), 40, (200, 90, 20), -1)
+    res = frames(Vision(), junk, 8)
+    check("blue rectangle + line + disc -> no field", res["ring"] is None)
+
+    gappy = floor_only()                                 # imperfect ring: ~55% of the tape, in pieces
+    for a0 in (0, 80, 170, 260):
+        cv2.ellipse(gappy, RING[0], (350, 230), 0, a0, a0 + 50, (200, 90, 20), 14)
+    res = frames(Vision(), gappy, 5)
+    r = res["ring"]
+    check("ring with big gaps still found", r is not None and abs(r.cx - 480) < 20 and abs(r.cy - 270) < 20,
+          f"{r and (round(r.cx), round(r.cy), round(r.w), round(r.h))}")
+
+    cluttered = make_frame(us=(0, 0))
+    cv2.rectangle(cluttered, (5, 5), (120, 90), (200, 90, 20), -1)   # a blue box in the corner
+    res = frames(Vision(), cluttered, 5)
+    r = res["ring"]
+    check("ring + blue clutter -> ring still accurate",
+          r is not None and abs(r.cx - 480) < 15 and abs(max(r.w, r.h) - 700) < 40 and abs(min(r.w, r.h) - 460) < 40,
+          f"{r and (round(r.cx), round(r.cy), round(r.w), round(r.h))}")
+
+    print("vision: us + opponent")
+    v = Vision()
+    res = frames(v, make_frame(us=(0, 0), heading_deg=0, opp=(0.5, 0)), 5)
     check("our tag found", res["us"] is not None)
     if res["us"]:
         hx, hy = res["us"]["hx"], res["us"]["hy"]
         check("heading points up", hy < -0.95, f"({hx:.2f}, {hy:.2f})")
-    check("opponent found (tag-only blob mode)", res["opp"] is not None)
+    check("opponent confirmed after a few frames", res["opp"] is not None)
     res90 = v.process(make_frame(us=(0, 0), heading_deg=90))
     if res90["us"]:
         check("heading 90 deg points right", res90["us"]["hx"] > 0.95, f"{res90['us']['hx']:.2f}")
+
+    junk = make_frame(us=(-0.3, 0))
+    cv2.line(junk, (500, 200), (700, 330), (40, 40, 40), 4)            # a cable / thin shadow
+    cv2.circle(junk, (420, 380), 6, (40, 40, 40), -1)                   # a speck
+    res = frames(Vision(), junk, 6)
+    check("thin line + speck are not an opponent", res["opp"] is None, f"{len(res['robots'])} candidates")
+
+    v = Vision()
+    v.process(make_frame(us=(-0.3, 0)))
+    flash = make_frame(us=(-0.3, 0), opp=(0.4, 0))
+    res = v.process(flash)
+    check("one-frame blob is not yet an opponent", res["opp"] is None)
+
+    stain = make_frame(us=(-0.3, 0))
+    cv2.rectangle(stain, (560, 330), (640, 400), (95, 105, 110), -1)    # a dark patch ON the floor
+    res = frames(Vision(), stain, 6)
+    check("without snapshot: floor stain looks like an opponent", res["opp"] is not None)
+    v = Vision()
+    frames(v, stain, 4)
+    v.request_reference()                                               # snapshot of the (stained) empty arena
+    v.process(stain)
+    v.reset_opponent_track()
+    res = frames(v, stain, 6)
+    check("with snapshot: floor stain ignored", res["opp"] is None)
+    real = stain.copy()
+    x, y = ring_px(-0.1, -0.5)
+    cv2.rectangle(real, (int(x - 30), int(y - 30)), (int(x + 30), int(y + 30)), (40, 40, 40), -1)
+    res = frames(v, real, 5)
+    check("with snapshot: real opponent found", res["opp"] is not None and abs(res["opp"]["x"] - x) < 15,
+          f"{res['opp'] and round(res['opp']['x'])} vs {round(x)}")
 
     print("behavior tree")
     brain = sumo_brain.Brain()
@@ -125,8 +207,10 @@ def main():
     check("blue under rear sensor -> both wheels forward", "ESCAPE" in s["action"] and min(s["sent"]) > 0,
           f"{s['action']} {s['sent']}")
 
-    brain.command({"cmd": "manual", "l": 50, "r": -50})
-    _, s = run(brain, make_frame(us=(0, 0), opp=(0.5, 0)), sensor="white", ticks=1)
+    # the browser re-sends held keys every 100 ms, so send right before the tick
+    # (one slow vision frame could otherwise make a single early command stale)
+    _, s = run(brain, make_frame(us=(0, 0), opp=(0.5, 0)), sensor="white", ticks=1,
+               before_tick=lambda: brain.command({"cmd": "manual", "l": 50, "r": -50}))
     check("manual override wins", s["action"].startswith("MANUAL") and s["sent"] == [50, -50], s["action"])
     brain.command({"cmd": "manual", "release": True})
 

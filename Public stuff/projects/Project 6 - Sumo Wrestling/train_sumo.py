@@ -12,8 +12,11 @@ vision.py tells ours apart by the AprilTag, so the model doesn't need to.
 Output: <repo>/models/sumo_yolo.pt (gitignored), which sumo_brain.py loads
 automatically on its next start (otherwise it runs in tag-only mode).
 
-Run:
-    my_env\\Scripts\\python "Public stuff/projects/Project 6 - Sumo Wrestling/train_sumo.py"
+Run with my_env_cpu (CPU-only PyTorch; Windows Smart App Control blocks
+my_env's Intel-GPU PyTorch DLLs). 30 images took ~37 min:
+    my_env_cpu\\Scripts\\python "Public stuff/projects/Project 6 - Sumo Wrestling/train_sumo.py"
+It also writes models/sumo_yolo.onnx, which sumo_brain.py (in my_env) runs
+with OpenVINO on the NPU.
 """
 
 import importlib.util
@@ -25,7 +28,7 @@ import yaml
 from config import HERE, MODEL_PATH, REPO_ROOT, YOLO_IMG_SIZE
 
 # TODO: the folder name of the unzipped Roboflow export, inside this project folder
-DATASET_DIR = "Sumo Robots.v1.yolov8"
+DATASET_DIR = "Lego Car Detection.v1.yolov8"
 BASE_MODEL = "yolo11n.pt"
 EPOCHS = 120
 BATCH = 8
@@ -82,7 +85,11 @@ def main():
     best = os.path.join(RUNS_DIR, "sumo", "weights", "best.pt")
     os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
     shutil.copy(best, MODEL_PATH)
-    print(f"saved {MODEL_PATH} -- restart sumo_brain.py to use it")
+    print(f"saved {MODEL_PATH}")
+    # ONNX copy for the brain: vision.py runs it with OpenVINO on the NPU/GPU,
+    # no PyTorch needed (my_env's PyTorch is blocked by Smart App Control)
+    onnx = YOLO(MODEL_PATH).export(format="onnx", imgsz=YOLO_IMG_SIZE, dynamic=False, simplify=True)
+    print(f"saved {onnx} -- restart sumo_brain.py to use it")
 
 
 if __name__ == "__main__":   # required on Windows -- the dataloader re-imports this file

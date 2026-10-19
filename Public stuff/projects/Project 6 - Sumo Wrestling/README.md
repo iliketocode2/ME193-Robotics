@@ -17,6 +17,7 @@ The system runs in three places, so there is no single command. Start them in th
    my_env\Scripts\python "Public stuff/projects/Project 6 - Sumo Wrestling/sumo_brain.py"
    ```
    The dashboard opens at http://localhost:8293. Check that the status pills are green before the match.
+4. **Before each match, with the ring EMPTY** (no robots, no hands), click **Snapshot empty arena**. After that, only what changes from the snapshot can become the opponent. Take a new one if the phone moves or the lighting changes. Then put both robots in. The video header should read `field NN% tape`. If it says "no field", tune **Calibrate → HSV** until the tape is found.
 
 **To stop:** press Ctrl-C in the board terminal and on the laptop. The robot also stops on its own within 0.6 s whenever the laptop stops sending commands.
 
@@ -92,11 +93,14 @@ All laptop commands run from the repo root, using `my_env` (Python 3.14 with ope
    - Turn **Dry run** on first. Move the robots around by hand and watch "Next action" and the tree.
    - Click a spot to check that the robot would turn the right way. If turns are mirrored, set `CAMERA_MIRRORED` in `config.py`. If the real wheels turn wrong, set `FLIP_DRIVE` / `SWAP_SIDES` in `relay.py`.
    - Open **Calibrate** and tune the HSV sliders until the blue ellipse hugs the tape.
-6. **Vision model (optional but better).** Until it exists, the brain runs in **tag-only mode**: the opponent is the biggest non-floor blob near the ring.
+6. **Vision model (optional but better).** Without it, the brain uses **change detection**: the opponent is whatever differs from the empty-arena snapshot (or the floor color) and is robot-sized.
    - Run `capture_frames.py`.
-   - Upload the frames from `runs/sumo_frames/` to Roboflow and label one class, `robot`, on every robot including ours.
-   - Export as **YOLOv8** and unzip the export into this folder. Set `DATASET_DIR` in `train_sumo.py` and run it.
-   - The weights go to `<repo>/models/sumo_yolo.pt`, which is gitignored and picked up on the next start.
+   - Upload the frames from `runs/sumo_frames/` to Roboflow (app.roboflow.com, workspace `william-goldman`) and label the opponent cars. Our current model is the `lego-car-detection` project, class `Opponent`. Labeling our own robot too is optional; vision ignores whichever box holds our tag.
+   - Export as **YOLOv8** with "Resize to 512×512 (Stretch)". Unzip the export into its own folder here (ours is `Lego Car Detection.v1.yolov8/`) and set `DATASET_DIR` in `train_sumo.py`.
+   - **Train with `my_env_cpu`, not `my_env`:**
+     `my_env_cpu\Scripts\python "Public stuff/projects/Project 6 - Sumo Wrestling/train_sumo.py"`
+     Windows **Smart App Control** blocks the Intel-GPU PyTorch DLLs in `my_env` (`WinError 4551`). `my_env_cpu` is a gitignored venv with CPU-only PyTorch, ultralytics, legoeducation, websockets and paho-mqtt. 30 images took about 37 min.
+   - Training writes `<repo>/models/sumo_yolo.pt` **and** `sumo_yolo.onnx` (both gitignored). The brain, still run with plain `my_env`, loads the `.onnx` with **OpenVINO on the Intel NPU** (about 16 ms of model time per frame, no PyTorch involved). It falls back to the GPU, then the CPU, then change detection. The video header shows which one is in use.
 
 ## MQTT schema (qos 0, never retained)
 

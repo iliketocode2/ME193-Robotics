@@ -1,7 +1,8 @@
 // Sumo Control dashboard. Talks to sumo_brain.py over a websocket on page port + 1:
 //   in:  JSON {type: "hello" | "state" | "chat"}, binary "F"+JPEG video frames
 //   out: JSON {cmd: ...} -- estop, start, pause, reset, strategy, manual, target,
-//        clear_target, dry_run, hsv, refit_ring, say, test_song
+//        clear_target, dry_run, hsv, refit_ring, snapshot_arena, clear_arena, say,
+//        test_song, frame_ack (sent after each video frame is decoded = flow control)
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("video");
@@ -10,6 +11,7 @@ const ctx = canvas.getContext("2d");
 let ws = null;
 let state = null;
 let frameBitmap = null;
+let dirty = true;                          // redraw only when a frame or state actually changed
 let treeNames = [];
 let topicRoot = "";
 let refereeTopic = "ME193/Rogers";
@@ -24,10 +26,15 @@ function connect() {
     if (typeof ev.data !== "string") {
       const bytes = new Uint8Array(ev.data);
       if (bytes[0] === 70) {               // "F"
-        const bmp = await createImageBitmap(new Blob([bytes.subarray(1)], { type: "image/jpeg" }));
-        if (frameBitmap) frameBitmap.close();
-        frameBitmap = bmp;
-        $("videoEmpty").classList.add("hidden");
+        try {
+          const bmp = await createImageBitmap(new Blob([bytes.subarray(1)], { type: "image/jpeg" }));
+          if (frameBitmap) frameBitmap.close();
+          frameBitmap = bmp;
+          dirty = true;
+          $("videoEmpty").classList.add("hidden");
+        } finally {
+          send({ cmd: "frame_ack" });      // ready for the next frame
+        }
       }
       return;
     }
@@ -61,6 +68,7 @@ const STRAT_NAMES = [[0.2, "Defensive"], [0.45, "Careful"], [0.6, "Balanced"], [
 
 function onState(s) {
   state = s;
+  dirty = true;
   const L = s.links;
   setPill("mqtt", L.mqtt);
   setPill("robot", L.robot, L.relay_host ? `Robot · ${L.relay_host}` : "Robot");
@@ -68,7 +76,9 @@ function onState(s) {
   setPill("color", L.color);
   setPill("camera", L.camera, L.camera ? `Camera · ${L.fps} fps` : "Camera");
   setPill("fan", s.fan_rpm > 0, s.fan_rpm == null ? "Fan · ?" : `Fan · ${s.fan_rpm} rpm`);
-  $("camMeta").textContent = `${L.cam_status} · ${L.mode}${L.vision_ms != null ? ` · ${L.vision_ms} ms` : ""}`;
+  const q = s.world.ring_quality;
+  const field = s.world.ring ? `field ${Math.round((q || 0) * 100)}% tape` : (s.world.ring_pending ? "field: confirming…" : "no field");
+  $("camMeta").textContent = `${L.cam_status} · ${field} · ${L.mode}${L.vision_ms != null ? ` · ${L.vision_ms} ms` : ""}`;
 
   const m = $("match");
   m.textContent = s.match === "idle" ? "WAITING" : s.match.toUpperCase();
@@ -111,6 +121,9 @@ function onState(s) {
   const p = s.strategy_params;
   $("stratParams").textContent = `charge ${p.charge.toFixed(0)}% · edge r ${p.edge.toFixed(2)} · align ${p.align.toFixed(0)}°`;
   $("dry").checked = s.dry_run;
+  const age = s.world.arena_ref_age;
+  $("arenaStatus").textContent = age == null ? "no snapshot - using floor color (less reliable)" : `snapshot ✓ ${age}s ago`;
+  $("arenaStatus").classList.toggle("ok", age != null);
   syncHsv(s.hsv);
 }
 
@@ -127,12 +140,18 @@ function setBar(side, v) {
 function draw() {
   requestAnimationFrame(draw);
   if (!frameBitmap) return;
-  const W = frameBitmap.width, H = frameBitmap.height;
+  const pulsing = state && state.world.target_px;
+  if (!dirty && !pulsing) return;
+  dirty = false;
+  // canvas uses VISION pixel coordinates (state.frame); the video JPEG is smaller and gets scaled up
+  const [W, H] = state && state.frame ? state.frame : [frameBitmap.width, frameBitmap.height];
   if (canvas.width !== W || canvas.height !== H) {
     canvas.width = W; canvas.height = H;
-    $("videoWrap").style.aspectRatio = `${W} / ${H}`;
+    const wrap = $("videoWrap");
+    wrap.style.aspectRatio = `${W} / ${H}`;
+    wrap.style.width = `min(100%, calc(52vh * ${W / H}))`;
   }
-  ctx.drawImage(frameBitmap, 0, 0);
+  ctx.drawImage(frameBitmap, 0, 0, W, H);
   if (!state) return;
   const w = state.world;
   const k = W / 960;                       // line widths scale with frame size
@@ -156,11 +175,21 @@ function draw() {
     ell(w.out_r, "rgba(244,63,94,0.5)", 1.5, [4, 8]);
     ctx.fillStyle = "rgba(255,255,255,0.6)";
     ctx.beginPath(); ctx.arc(R.cx, R.cy, 4 * k, 0, Math.PI * 2); ctx.fill();
+  } else {
+    const msg = w.ring_pending ? "Field found - confirming…" : "NO FIELD - need a blue tape arc in view";
+    ctx.save();
+    ctx.font = `800 ${22 * k}px Inter, sans-serif`;
+    const tw = ctx.measureText(msg).width;
+    ctx.fillStyle = "rgba(7,9,15,0.7)";
+    ctx.beginPath(); ctx.roundRect(W / 2 - tw / 2 - 16 * k, 18 * k, tw + 32 * k, 40 * k, 10 * k); ctx.fill();
+    ctx.fillStyle = w.ring_pending ? "#fbbf24" : "#f43f5e";
+    ctx.fillText(msg, W / 2 - tw / 2, 46 * k);
+    ctx.restore();
   }
 
   for (const r of w.robots) {
     if (r.ours) continue;
-    box(r.box, "rgba(148,163,214,0.6)", `robot ${Math.round(r.conf * 100)}%`, 1.5);
+    box(r.box, "rgba(148,163,214,0.6)", `candidate ${Math.round(r.conf * 100)}%`, 1.5);
   }
   if (w.opp) box(w.opp.box, "#f43f5e", `OPPONENT${w.opp.r != null ? `  r=${w.opp.r.toFixed(2)}` : ""}`, 3);
 
@@ -235,6 +264,8 @@ $("btnStart").onclick = () => send({ cmd: "start", source: "dashboard" });
 $("btnPause").onclick = () => send({ cmd: "pause" });
 $("btnReset").onclick = () => send({ cmd: "reset" });
 $("btnRefit").onclick = () => send({ cmd: "refit_ring" });
+$("btnArena").onclick = () => send({ cmd: "snapshot_arena" });
+$("btnArenaClear").onclick = () => send({ cmd: "clear_arena" });
 $("btnWin").onclick = () => send({ cmd: "test_song", song: "win" });
 $("btnLose").onclick = () => send({ cmd: "test_song", song: "lose" });
 $("strategy").oninput = (e) => send({ cmd: "strategy", value: Number(e.target.value) });
