@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <link rel="stylesheet" href="https://pyscript.net/releases/2026.3.1/core.css">
+    <script type="module" src="https://pyscript.net/releases/2026.3.1/core.js"></script>
+    <title>AnnaCode</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <py-config src="./pyscript.toml"></py-config>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+    <link rel="manifest" href="./psadc-manifest.json">
+</head>
+<body>
+    <!-- Loading splash -->
+    <div id="loading-splash" class="loading-splash">
+        <div class="loading-orb"></div>
+        <span class="loading-label">Starting up…</span>
+    </div>
+
+    <div class="page-wrap" id="page-wrap" style="display:none">
+
+        <!-- ── Connection card ───────────────────────────────────── -->
+        <div class="card connect-card">
+            <div class="connect-header">
+                <span class="connect-title">Devices</span>
+            </div>
+            <div class="device-list" id="device-list">
+                <button class="btn-add-device" id="add-device-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2.5">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                    Connect device
+                </button>
+            </div>
+        </div>
+
+        <!-- ── Network card ──────────────────────────────────────── -->
+        <div class="card network-card">
+
+            <div class="zoom-bar">
+                <div class="zoom-control" title="Zoom the network diagram">
+                    <button class="btn-zoom" id="zoom-out-btn" title="Zoom out">&minus;</button>
+                    <span class="zoom-level" id="zoom-level-label">100%</span>
+                    <button class="btn-zoom" id="zoom-in-btn" title="Zoom in">+</button>
+                </div>
+            </div>
+
+            <div class="network-wrap" id="network-wrap">
+                <svg id="arrow-svg" aria-hidden="true"></svg>
+
+                <!-- Inputs column -->
+                <div class="col col-inputs" id="col-inputs">
+                    <div class="col-items" id="inputs-container"></div>
+                    <button class="btn-add-col" id="add-input-btn" title="Add input">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2.5">
+                            <path d="M12 5v14M5 12h14"/>
+                        </svg>
+                        Input
+                    </button>
+                </div>
+
+                <!-- Layers: each layer contributes a neuron column + an activation column,
+                     appended here dynamically by main.py -->
+                <div class="layers-row" id="layers-container"></div>
+
+                <!-- Add layer -->
+                <div class="col col-add-layer" id="col-add-layer">
+                    <button class="btn-add-layer" id="add-layer-btn" title="Add a hidden layer">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2.5">
+                            <path d="M12 5v14M5 12h14"/>
+                        </svg>
+                        <span>Layer</span>
+                    </button>
+                </div>
+
+                <!-- Outputs column -->
+                <div class="col col-outputs" id="col-outputs">
+                    <div class="col-items" id="outputs-container"></div>
+                    <button class="btn-add-col" id="add-output-btn" title="Add output">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2.5">
+                            <path d="M12 5v14M5 12h14"/>
+                        </svg>
+                        Output
+                    </button>
+                </div>
+            </div>
+
+            <div class="run-bar">
+                <button class="btn-run-circle btn-run-play" id="play-btn" title="Run">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="6,3 20,12 6,21"/>
+                    </svg>
+                </button>
+                <button class="btn-run-circle btn-run-stop" id="stop-btn" title="Stop" disabled>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="5" y="5" width="14" height="14" rx="2"/>
+                    </svg>
+                </button>
+                <label class="debug-toggle hidden" id="debug-toggle-wrap" title="Show live values on the arrows">
+                    <input type="checkbox" id="debug-toggle" />
+                    <span class="debug-toggle-track"><span class="debug-toggle-thumb"></span></span>
+                    <span class="debug-toggle-label">Debug</span>
+                </label>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- ── Activation help popover ───────────────────────────────── -->
+    <div id="act-help-popover" class="act-help-popover hidden">
+        <div class="act-help-inner">
+            <div class="act-help-header">
+                <span class="act-help-title">Activation functions</span>
+                <button class="btn-icon" id="close-act-help-btn">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <p class="act-help-intro">
+                An activation function is applied to each neuron's output before it becomes
+                usable downstream. It introduces non-linearity so the network can learn
+                complex patterns. One activation function is shared by every neuron.
+            </p>
+            <div class="act-help-list">
+                <div class="act-help-item">
+                    <span class="act-help-name">None</span>
+                    <span class="act-help-desc">No transformation. Output passes through unchanged (identity).</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">ReLU</span>
+                    <span class="act-help-desc">Sets negative values to zero. Fast and widely used in deep learning.</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">Sigmoid</span>
+                    <span class="act-help-desc">Squashes output to (0, 1). Good for probability outputs.</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">Tanh</span>
+                    <span class="act-help-desc">Squashes output to (−1, 1). Zero-centred, often better than Sigmoid.</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">Softplus</span>
+                    <span class="act-help-desc">Smooth approximation of ReLU. Always positive with no hard zero.</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">Custom</span>
+                    <span class="act-help-desc">Define your own f(x), optionally as separate pieces over different ranges of x.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="py" src="./main.py"></script>
+<svg style="z-index:9997;position:fixed;bottom:0;right:0" viewBox="0 0 315 27" width="315" height="27">
+  <path d="M143.905 0.043004L85.585 0.105C75.385 0.0870005 66.415 1.866 58.655 5.535C50.765 9.265 42.855 12.989 34.975 16.73C27.165 20.443 26.057 22.638 15.778 22.501C5.775 22.368 2.44 26.781 0 26.781L0.545006 26.693C22.005 26.672 43.455 26.676 64.915 26.676C90.655 26.676 116.395 26.665 142.135 26.699C143.115 26.699 143.915 26.259 143.915 25.707C143.855 11.729 143.855 14.026 143.915 0.0490007L143.905 0.043004Z" fill="#292929"></path>
+  <path d="M140.258 0L315 0.340524L314.966 27L140 26.9616L140.258 0Z" fill="#292929"></path>
+</svg>
+<div style="z-index:9998;font-family:sans-serif;background-color:#292929;padding:2px 8px;position:fixed;bottom:0;right:0;left:0"></div>
+<div style="z-index:9999;color:white;font-size: 0.7rem;font-family:sans-serif;padding: 5px;position:fixed;bottom:0;right:0">
+  <a href="https://pyscript.com/@tuftsceeo" id="made-on" target="_blank" style="color:#FFF;text-decoration:none;">Made on pyscript.com</a>&nbsp;│&nbsp;<a href="https://pyscript.com/@tuftsceeo/network-builder/latest" id="view-code" target="_blank" style="color:#FFF;text-decoration:none;">View Code</a><span id="install-pwa-section" hidden>&nbsp;│&nbsp; <a id="install-pwa" style="cursor:pointer; color:#FFF;">Install</a></span>&nbsp;&nbsp
+</div>
+
+<script>
+let installPrompt = null;
+const installSection = document.querySelector("#install-pwa-section")
+const installButton = document.querySelector("#install-pwa");
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  if ("onappinstalled" in window) {
+    installSection.removeAttribute("hidden")
+  }
+  event.preventDefault();
+  installPrompt = event;
+});
+
+installButton.addEventListener("click", async () => {
+  if (!installPrompt) {
+    return;
+  }
+  const result = await installPrompt.prompt();
+  disableInAppInstallPrompt();
+});
+
+function disableInAppInstallPrompt() {
+  installPrompt = null;
+  installButton.setAttribute("hidden", "");
+};
+</script>
+
+<script>
+  const heap_app_id = "758475466";
+  // Only add analytics if we got an id
+  if (heap_app_id) {
+    // Analytics code
+    window.heap=window.heap||[],heap.load=function(e,t){window.heap.appid=e,window.heap.config=t=t||{};var r=document.createElement("script");r.type="text/javascript",r.async=!0,r.src="https://cdn.heapanalytics.com/js/heap-"+e+".js";var a=document.getElementsByTagName("script")[0];a.parentNode.insertBefore(r,a);for(var n=function(e){return function(){heap.push([e].concat(Array.prototype.slice.call(arguments,0)))}},p=["addEventProperties","addUserProperties","clearEventProperties","identify","resetIdentity","removeEventProperty","setEventProperties","track","unsetEventProperty"],o=0;o<p.length;o++)heap[p[o]]=n(p[o])};
+    heap.load(heap_app_id);
+
+    // Add event listener to the made-on link
+    document.querySelector("#made-on").addEventListener("click", () => {
+      heap.track("PSADC - Make on Pyscript");
+    });
+    // Add event listener to the view-code link
+    document.querySelector("#view-code").addEventListener("click", () => {
+      heap.track("PSADC - View Code");
+    });
+    // Add event listener to the install-pwa link
+    document.querySelector("#install-pwa").addEventListener("click", () => {
+      heap.track("PSADC - Install PWA");
+    });
+  }
+</script></body>
+</html>

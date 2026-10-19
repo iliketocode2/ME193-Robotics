@@ -1,0 +1,26 @@
+name = "network-trainer"
+packages = [ "legoeducation==1.0.6","numpy"]
+
+[files]
+"./trainer/Device.py" = "./Device.py"
+"./trainer/main.py" = "./main.py"
+"./trainer/plots/fit_plot.py" = "./fit_plot.py"
+"./trainer/plots/live_plot.py" = "./live_plot.py"
+"./trainer/plots/plot_utils.py" = "./plot_utils.py"
+"./trainer/plots/loss_plot.py" = "./loss_plot.py"
+"./trainer/plots/scatter_plot.py" = "./scatter_plot.py"
+"./trainer/network/activation_editor.py" = "./activation_editor.py"
+"./trainer/network/activations.py" = "./activations.py"
+"./trainer/network/network_actions.py" = "./network_actions.py"
+"./trainer/network/network_model.py" = "./network_model.py"
+"./trainer/misc_ui/arrows.py" = "./arrows.py"
+"./trainer/misc_ui/dataset_ui.py" = "./dataset_ui.py"
+"./trainer/misc_ui/templates.py" = "./templates.py"
+"./trainer/misc_ui/ui_chrome.py" = "./ui_chrome.py"
+"./trainer/glue/bindings.py" = "./bindings.py"
+"./trainer/glue/state.py" = "./state.py"
+"./trainer/glue/sync.py" = "./sync.py"
+
+[js_modules.main]
+"./trainer/JS/ble.js" = "ble"
+"./trainer/JS/plotly.js" = "Plotly"

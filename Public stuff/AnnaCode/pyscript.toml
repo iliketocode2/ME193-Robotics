@@ -1,0 +1,21 @@
+name = "AnnaCode"
+packages = [ "legoeducation==1.0.6","numpy"]
+
+[files]
+"./glue/bindings.py" = "./bindings.py"
+"./glue/state.py" = "./state.py"
+"./glue/sync.py" = "./sync.py"
+"./network/activation_editor.py" = "./activation_editor.py"
+"./network/activations.py" = "./activations.py"
+"./network/network_actions.py" = "./network_actions.py"
+"./network/network_model.py" = "./network_model.py"
+"./Device.py" = "./Device.py"
+"./plot.py" = "./plot.py"
+"./main.py" = "./main.py"
+"./misc_ui/arrows.py" = "./arrows.py"
+"./misc_ui/templates.py" = "./templates.py"
+"./misc_ui/zoom.py" = "./zoom.py"
+
+[js_modules.main]
+"./JS/ble.js" = "ble"
+"./JS/plotly.js" = "Plotly"

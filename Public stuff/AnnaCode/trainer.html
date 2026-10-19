@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <link rel="stylesheet" href="https://pyscript.net/releases/2026.3.1/core.css">
+    <script type="module" src="https://pyscript.net/releases/2026.3.1/core.js"></script>
+    <title>AnnaCode Trainer</title>
+    <link rel="stylesheet" href="trainer/styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Fonts match AI-School-of-Magic / Engineering with Bricks house
+         style: Droid Sans for body/buttons, Varela Round for the page
+         title, Inconsolata for anything monospace. -->
+    <link href="https://fonts.googleapis.com/css2?family=Droid+Sans:wght@400;700&family=Varela+Round&family=Inconsolata:wght@400;700&display=swap" rel="stylesheet" />
+    <py-config src="./trainer.toml"></py-config>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+</head>
+<body>
+    <!-- Loading splash -->
+    <div id="loading-splash" class="loading-splash">
+        <div class="loading-orb"></div>
+        <span class="loading-label">Starting up…</span>
+    </div>
+
+    <div class="page-wrap" id="page-wrap" style="display:none">
+
+        <div class="header">
+            <div class="header-text">
+                <h1>AnnaCode Trainer</h1>
+            </div>
+        </div>
+
+        <!-- ── Browser compatibility warning (Web Bluetooth) ───────── -->
+        <div id="ble-warning-banner" class="ble-warning-banner hidden">
+            <span class="ble-warning-text">
+                Your browser doesn't support Web Bluetooth, so it can't connect to LEGO hardware.
+                Everything else here still works — you can use the virtual motor and joystick,
+                or switch to Chrome or Edge for hardware.
+            </span>
+            <button class="btn-icon" id="close-ble-warning-btn" title="Dismiss">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- ── Devices card: left-aligned, sits right above the network
+             diagram so it stays visible even with both lesson sections
+             above collapsed. ── -->
+        <div class="card connect-card">
+            <div class="connect-header">
+                <span class="connect-title">Devices</span>
+            </div>
+            <div class="device-list" id="device-list">
+                <button class="btn-add-device" id="add-device-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2.5">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                    Connect device
+                </button>
+            </div>
+
+            <!-- ── Virtual controller: stands in for real hardware on
+                 browsers without Web Bluetooth (see ble-warning-banner) ── -->
+            <div class="virtual-controller-panel hidden" id="virtual-controller-panel">
+                <div class="virtual-controller-header">
+                    <span class="virtual-controller-note">No Bluetooth here — use this virtual controller instead.</span>
+                    <button class="btn-generate-data" id="zero-virtual-sliders-btn" title="Reset both sliders to 0">0 inputs</button>
+                </div>
+                <div class="virtual-controller-row">
+                    <div class="virtual-slider-pair">
+                        <div class="virtual-slider-col">
+                            <div class="vslider-wrap">
+                                <input type="range" class="vslider" id="virtual-slider-left" min="-100" max="100" value="0" step="1" />
+                            </div>
+                            <label class="virtual-slider-label" for="virtual-slider-left">Left</label>
+                            <span class="virtual-slider-value" id="virtual-slider-left-value">0</span>
+                        </div>
+                        <div class="virtual-slider-col">
+                            <div class="vslider-wrap">
+                                <input type="range" class="vslider" id="virtual-slider-right" min="-100" max="100" value="0" step="1" />
+                            </div>
+                            <label class="virtual-slider-label" for="virtual-slider-right">Right</label>
+                            <span class="virtual-slider-value" id="virtual-slider-right-value">0</span>
+                        </div>
+                    </div>
+                    <div class="virtual-motor">
+                        <div class="virtual-motor-body">
+                            <div class="virtual-motor-blade" id="virtual-motor-blade"></div>
+                        </div>
+                        <span class="virtual-motor-label">Speed <span id="virtual-motor-value">0</span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Network card ──────────────────────────────────────── -->
+        <div class="card network-card">
+
+            <div class="zoom-bar">
+                <button class="btn-link-toggle" id="show-activation-btn" title="Show/hide each layer's activation function">+ Activation function</button>
+                <div class="zoom-control" title="Zoom the network diagram">
+                    <button class="btn-zoom" id="zoom-out-btn" title="Zoom out">&minus;</button>
+                    <span class="zoom-level" id="zoom-level-label">100%</span>
+                    <button class="btn-zoom" id="zoom-in-btn" title="Zoom in">+</button>
+                </div>
+            </div>
+
+            <div class="network-wrap" id="network-wrap">
+                <svg id="arrow-svg" aria-hidden="true"></svg>
+
+                <!-- Inputs column -->
+                <div class="col col-inputs" id="col-inputs">
+                    <div class="col-items" id="inputs-container"></div>
+                    <button class="btn-add-col" id="add-input-btn" title="Add input">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2.5">
+                            <path d="M12 5v14M5 12h14"/>
+                        </svg>
+                        Input
+                    </button>
+                </div>
+
+                <!-- Layers: each layer contributes a neuron column + an activation column,
+                     appended here dynamically by main.py -->
+                <div class="layers-row" id="layers-container"></div>
+
+                <!-- Add layer -->
+                <div class="col col-add-layer" id="col-add-layer">
+                    <button class="btn-add-layer" id="add-layer-btn" title="Add a hidden layer">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2.5">
+                            <path d="M12 5v14M5 12h14"/>
+                        </svg>
+                        <span>Layer</span>
+                    </button>
+                </div>
+
+                <!-- Outputs column -->
+                <div class="col col-outputs" id="col-outputs">
+                    <div class="col-items" id="outputs-container"></div>
+                    <button class="btn-add-col" id="add-output-btn" title="Add output">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2.5">
+                            <path d="M12 5v14M5 12h14"/>
+                        </svg>
+                        Output
+                    </button>
+                </div>
+            </div>
+
+            <div class="train-bar">
+                <button class="btn-train" id="randomize-btn" title="Give every neuron random weights and a random bias">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2.2">
+                        <path d="M21 2v6h-6M3 22v-6h6M3.5 9a9 9 0 0 1 15-4l2.5 3M20.5 15a9 9 0 0 1-15 4L3 16"/>
+                    </svg>
+                    Randomize weights
+                </button>
+            </div>
+
+            <div class="run-bar">
+                <button class="btn-run-circle btn-run-play" id="play-btn" title="Run">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="6,3 20,12 6,21"/>
+                    </svg>
+                </button>
+                <button class="btn-run-circle btn-run-stop" id="stop-btn" title="Stop" disabled>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="5" y="5" width="14" height="14" rx="2"/>
+                    </svg>
+                </button>
+                <label class="debug-toggle hidden" id="debug-toggle-wrap" title="Show live values on the arrows">
+                    <input type="checkbox" id="debug-toggle" />
+                    <span class="debug-toggle-track"><span class="debug-toggle-thumb"></span></span>
+                    <span class="debug-toggle-label">Debug</span>
+                </label>
+            </div>
+
+        </div>
+
+        <!-- ── Dataset + training visualization row ─────────────────── -->
+        <div class="training-row">
+
+            <!-- ── Dataset card ─────────────────────────────────────── -->
+            <div class="card dataset-card" id="dataset-card">
+                <div class="connect-header dataset-header-bar">
+                    <span class="connect-title">Training data</span>
+                    <button class="btn-generate-data" id="generate-data-btn" title="Sample the connected input/output hardware every 0.1s and add each reading as a new row">Collect</button>
+                    <button class="btn-generate-data" id="clear-data-btn" title="Clear dataset">Clear</button>
+                </div>
+                <div class="dataset-row dataset-row-header" id="dataset-header"></div>
+                <div class="dataset-body">
+                    <div class="dataset-crop-panel" id="dataset-crop-panel" title="Crop the plotted time window without deleting rows">
+                        <div class="crop-bar" id="crop-bar">
+                            <div class="crop-bar-track">
+                                <div class="crop-bar-seg-red crop-bar-seg-top" id="crop-seg-top"></div>
+                                <div class="crop-bar-seg-red crop-bar-seg-bottom" id="crop-seg-bottom"></div>
+                            </div>
+                            <input type="range" class="crop-slider" id="crop-top-slider" min="0" max="0" value="0" step="1" title="Crop from the start" />
+                            <input type="range" class="crop-slider" id="crop-bottom-slider" min="0" max="0" value="0" step="1" title="Crop from the end" />
+                        </div>
+                    </div>
+                    <div class="dataset-table">
+                        <div class="dataset-rows" id="dataset-rows"></div>
+                    </div>
+                </div>
+                <div class="dataset-add-row" id="dataset-add-row"></div>
+            </div>
+
+            <!-- ── Training visualization card ─────────────────────── -->
+            <div class="card training-card" id="training-card">
+                <div class="training-controls-bar">
+                    <button class="btn-train btn-train-accent" id="step-btn" title="One epoch: one pass over the whole dataset, one averaged gradient update">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2.2">
+                            <path d="M19 12H5M12 19l-7-7 7-7"/>
+                        </svg>
+                        Step
+                    </button>
+                    <button class="btn-train btn-train-accent" id="train50-btn" title="Run 30 epochs, updating the loss chart after each one">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2.2">
+                            <path d="M19 12H5M12 19l-7-7 7-7"/>
+                        </svg>
+                        Train 50 epochs
+                    </button>
+                    <label class="lr-control" title="Step size used by Step / Train 30 epochs">
+                        <span class="lr-label">Learning rate</span>
+                        <input type="number" class="lr-input" id="learning-rate-input" value="0.05" step="0.01" min="0.001" />
+                    </label>
+                </div>
+                <div class="training-plots">
+                    <div class="training-plot-block">
+                        <div class="connect-header training-plot-header">
+                            <span class="connect-title">Fit</span>
+                            <button class="btn-clear-plot" id="clear-fit-btn" title="Clear the live output trace">Clear</button>
+                        </div>
+                        <div class="training-plot-canvas" id="plot-fit"></div>
+                    </div>
+                    <div class="training-plot-block">
+                        <div class="connect-header">
+                            <span class="connect-title">Loss</span>
+                        </div>
+                        <div class="training-plot-canvas" id="plot-loss"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- ── Activation help popover ───────────────────────────────── -->
+    <div id="act-help-popover" class="act-help-popover hidden">
+        <div class="act-help-inner">
+            <div class="act-help-header">
+                <span class="act-help-title">Activation functions</span>
+                <button class="btn-icon" id="close-act-help-btn">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <p class="act-help-intro">
+                An activation function is applied to each neuron's output before it becomes
+                usable downstream. It introduces non-linearity so the network can learn
+                complex patterns. One activation function is shared by every neuron.
+            </p>
+            <div class="act-help-list">
+                <div class="act-help-item">
+                    <span class="act-help-name">None</span>
+                    <span class="act-help-desc">No transformation. Output passes through unchanged (identity).</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">ReLU</span>
+                    <span class="act-help-desc">Sets negative values to zero. Fast and widely used in deep learning.</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">Sigmoid</span>
+                    <span class="act-help-desc">Squashes output to (0, 1). Good for probability outputs.</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">Tanh</span>
+                    <span class="act-help-desc">Squashes output to (−1, 1). Zero-centred, often better than Sigmoid.</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">Softplus</span>
+                    <span class="act-help-desc">Smooth approximation of ReLU. Always positive with no hard zero.</span>
+                </div>
+                <div class="act-help-item">
+                    <span class="act-help-name">Custom</span>
+                    <span class="act-help-desc">Define your own f(x), optionally as separate pieces over different ranges of x.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="py" src="./trainer/main.py"></script>
+</body>
+</html>
