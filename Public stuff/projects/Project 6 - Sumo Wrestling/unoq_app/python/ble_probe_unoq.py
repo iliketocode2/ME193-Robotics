@@ -18,6 +18,8 @@ Checks, in order:
      color/serial are printed -- copy those into sumo_topics.py
   4. --drive: connect the double motor with lelib, run both wheels at 30% for
      1 s, stop, disconnect. Put the robot on its back/blocks first!
+  5. --color: connect the color sensor and print readings for 10 s
+     (both flags together test both:  ble_probe_unoq.py --drive --color)
 """
 
 import asyncio
@@ -91,6 +93,29 @@ def drive_test():
     print("[4] drive test done")
 
 
+def color_test(seconds=10):
+    """Connect the color sensor with lelib and print readings for `seconds`.
+    Hold it over the floor, then over the blue tape, and watch 'color' change."""
+    import time
+    from lelib import colorSensor
+    from sumo_topics import COLOR_CARD_COLOR, COLOR_CARD_SERIAL
+    sensor = colorSensor()
+    try:
+        sensor.connect(COLOR_CARD_SERIAL, card_color=COLOR_CARD_COLOR)
+        print(f"[5] color sensor connected -> printing readings for {seconds} s")
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            print(f"    color={sensor.detect_color():8s} reflection={sensor.reflection()}  rgb={sensor.raw_rgb()}")
+            time.sleep(0.5)
+    finally:
+        if sensor.connected:
+            sensor.disconnect()
+    print("[5] color test done")
+
+
 if __name__ == "__main__":
-    if check_python() and check_scan() and "--drive" in sys.argv:
-        drive_test()
+    if check_python() and check_scan():
+        if "--drive" in sys.argv:
+            drive_test()
+        if "--color" in sys.argv:
+            color_test()

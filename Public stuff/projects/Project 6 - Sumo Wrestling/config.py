@@ -21,7 +21,7 @@ from sumo_topics import *  # noqa: E402,F401,F403  (TEAM, TOPIC_*, BROKER_*, son
 # Phone IP-camera app (same as Project 2: e.g. "SimpleIPCamera" MJPEG stream).
 # TODO: put your phone's URL here. A plain integer (0, 1, ...) uses a local
 # webcam instead; None asks with camlib.pick_camera() at startup.
-PHONE_STREAM_URL = "http://192.168.1.183:8080/stream.mjpg"
+PHONE_STREAM_URL = "http://10.243.67.39:8080/stream.mjpg"
 FRAME_ROTATION = None            # e.g. cv2.ROTATE_90_CLOCKWISE if the phone is mounted sideways
 PROCESS_WIDTH = 960              # frames are resized to this width before vision
 # True if the phone app mirrors the picture (text on the tag reads backwards).

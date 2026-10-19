@@ -1,5 +1,29 @@
 # Project 6 – Sumo Wrestling
 
+## Starting everything (match day)
+
+The system runs in three places, so there is no single command. Start them in this order:
+
+1. **Phone:** open the IP-camera app and start streaming.
+2. **UNO Q, in two parts:**
+   - In **App Lab**, press **Run** on the sumo app. This part only reports the fan's speed (`RELAY_BLE = False`).
+   - In the **board terminal** (App Lab's terminal or SSH), start the relay, which talks to the motor and color sensor:
+     ```
+     cd ~/ArduinoApps/<your app>/python && bash run_on_host.sh
+     ```
+     Our app folder is `ble-probe`. Wait for `[relay] double motor connected` and `[relay] color sensor connected`, then leave this terminal open.
+3. **Laptop:** in PowerShell from the repo root, start the brain:
+   ```
+   my_env\Scripts\python "Public stuff/projects/Project 6 - Sumo Wrestling/sumo_brain.py"
+   ```
+   The dashboard opens at http://localhost:8293. Check that the status pills are green before the match.
+
+**To stop:** press Ctrl-C in the board terminal and on the laptop. The robot also stops on its own within 0.6 s whenever the laptop stops sending commands.
+
+The relay runs on the board's host, not inside App Lab, because App Lab's container can't reach Bluetooth (see "Setup and run order", step 3).
+
+---
+
 Two robots in a ring of blue tape. The first one pushed fully out loses and has to stop and play a sad song.
 
 Our robot is a LEGO Education **double motor**. A LEGO **color sensor** is mounted on its rear, looking down. An **Arduino UNO Q** rides on top. An **overhead phone camera** streams to the laptop, which runs the vision and a **behavior tree**. A web dashboard shows everything and lets us step in.
