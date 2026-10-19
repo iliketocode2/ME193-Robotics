@@ -1,24 +1,30 @@
 """
 vision.py -- one camera frame -> where everything is.
 
-  * Ring:   HSV blue mask -> candidate ellipses (cv2.fitEllipse) that must be
-            VALIDATED: blue tape has to cover a real share of the ellipse's
-            outline, the fitted points have to hug it, and the shape has to be
-            plausibly round. A new ring must show up in several frames in a
-            row before it's believed; with no valid ring for RING_LOST_S it is
-            dropped (no blue arc -> no field). Once the match starts the ring
-            is LOCKED, since robots driving over the tape hide parts of it.
+  * Field:  the space the blue tape ENCLOSES, whatever its shape (field.py
+            stores it as a center + distance-to-tape per direction; no circle
+            or ellipse is assumed).
+            1. Closed loop: blue mask -> small gaps closed -> the largest
+               HOLE inside a blue component is the field, boundary exact.
+            2. Broken loop (tape gap, robot sitting on the tape): the outline
+               around the big blue arcs, accepted only if tape covers at
+               least FIELD_MIN_COVERAGE of that outline and the inside isn't
+               blue. Anything else -> no field.
+            A new field must show up in several frames in a row before it's
+            believed; with no valid field for FIELD_LOST_S it is dropped. Once
+            the match starts the field is LOCKED (robots hide the tape).
   * Us:     AprilTag tag36h11 id OUR_TAG_ID on top of our robot gives our
             position AND heading (the tag's top edge points to our front).
   * Robots: candidates come from the YOLO model if it exists (train_sumo.py),
             otherwise from "change detection": what differs from an
             EMPTY-ARENA SNAPSHOT (UI button), or, without a snapshot, from the
-            ring's median floor color. Either way a candidate must be
+            field's median floor color. Either way a candidate must be
             robot-sized (measured against our 7 cm tag when visible), solid,
             not tape, and not us.
-  * Opponent: one tracked candidate that started INSIDE the ring and has
-            been seen in OPP_CONFIRM_HITS frames, so a one-frame shadow or a
-            hand reaching in never becomes "the opponent".
+  * Opponent: any other team's AprilTag first; otherwise one tracked
+            candidate that started INSIDE the field and has been seen in
+            OPP_CONFIRM_HITS frames, so a one-frame shadow or a hand reaching
+            in never becomes "the opponent".
 
 Coordinates in the returned dict are pixels of the PROCESSED frame
 (resized to PROCESS_WIDTH).
@@ -32,23 +38,23 @@ import time
 import cv2
 import numpy as np
 
-from config import (APRILTAG_DICTIONARY, HSV_HIGH, HSV_LOW, MODEL_ONNX_PATH, MODEL_PATH, OUR_TAG_ID,
-                    TAG_HEADING_OFFSET_DEG, YOLO_CONF, YOLO_DEVICES, YOLO_IMG_SIZE)
-from field import Ring
+from config import (APRILTAG_DICTIONARY, HSV_HIGH, HSV_LOW, MODEL_ONNX_PATH, MODEL_PATH,
+                    OPPONENT_TAG_DICTIONARIES, OUR_TAG_ID, TAG_HEADING_OFFSET_DEG, YOLO_CONF, YOLO_DEVICES,
+                    YOLO_IMG_SIZE)
+from field import Field
 
-# ---- ring ------------------------------------------------------------------
-RING_MIN_AREA_FRAC = 0.0015      # ignore blue specks smaller than this fraction of the frame
-RING_SAMPLES = 180               # points sampled along a candidate ellipse
-RING_MIN_COVERAGE = 0.35         # share of the (visible) outline that must be blue tape
-RING_MIN_INLIERS = 0.70          # share of the fitted blue points that must lie on the ellipse
-RING_INLIER_TOL = 0.15           # |normalized radius - 1| counted as "on the ellipse"
-RING_MIN_VISIBLE = 0.5           # share of the ellipse outline that must be inside the frame
-RING_MAX_INSIDE_BLUE = 0.25      # share of points INSIDE the ring allowed to be blue (it's tape, not a disc)
-RING_MIN_SIZE = 0.25             # smaller axis >= this fraction of the frame's smaller side
-RING_MAX_ASPECT = 2.5            # camera tilt squashes the circle, but not more than this
-RING_CONFIRM_FRAMES = 3          # a new/different ring must be seen this many frames in a row
-RING_LOST_S = 1.0                # unlocked ring with no valid fit for this long -> no field
-RING_SMOOTH = 0.25               # EMA weight of a new fit for the current ring
+# ---- field -----------------------------------------------------------------
+FIELD_GAP_CLOSE = 0.02           # bridge tape gaps up to ~2% of the frame (morphological close)
+FIELD_MIN_AREA_FRAC = 0.05       # the field must cover at least this much of the frame
+ARC_MIN_AREA_FRAC = 0.0015       # blue pieces smaller than this are ignored (broken-loop mode)
+FIELD_MIN_COVERAGE = 0.5         # broken loop: share of the outline that must be blue tape
+FIELD_MIN_VISIBLE = 0.5          # share of the outline that must be inside the frame
+FIELD_MAX_INSIDE_BLUE = 0.25     # share of points INSIDE the field allowed to be blue (tape, not a blob)
+FIELD_MIN_SOLIDITY = 0.6         # area / convex-hull area: dents are fine, a spiky star isn't a field
+FIELD_MAX_ASPECT = 4.0           # longest / shortest center-to-tape distance
+FIELD_CONFIRM_FRAMES = 3         # a new/different field must be seen this many frames in a row
+FIELD_LOST_S = 1.0               # unlocked field with no valid detection for this long -> no field
+FIELD_SMOOTH = 0.25              # EMA weight of a new detection of the current field
 
 # ---- robots ----------------------------------------------------------------
 BLOB_SEARCH_SCALE = 1.4          # look this far past the tape, so a pushed-out opponent is still seen
@@ -57,48 +63,16 @@ CHANGE_THRESH_REF = 24           # color distance vs. the empty-arena snapshot t
 CHANGE_THRESH_FLOOR = 34         # stricter threshold vs. median floor color (no snapshot)
 L_WEIGHT = 0.5                   # brightness counts half: shadows change brightness, not color
 SIZE_MIN_TAGS, SIZE_MAX_TAGS = 1.1, 7.0     # robot's longer side, in tag widths
-SIZE_MIN_RING, SIZE_MAX_RING = 0.06, 0.45   # ...or, with no tag, in ring diameters
+SIZE_MIN_FIELD, SIZE_MAX_FIELD = 0.06, 0.45  # ...or, with no tag, in field diameters
 MIN_SOLIDITY = 0.55              # blob area / convex hull area (cars are chunky, shadows/streaks aren't)
 MIN_FILL = 0.30                  # blob area / bounding box area
 MAX_ASPECT = 3.5
 YOLO_MIN_CHANGE = 0.15           # with a snapshot: a YOLO box must cover at least this much change
 OPP_TRACK_TTL_S = 1.0            # forget the opponent track after this long unseen...
 OPP_TRACK_TTL_FRAMES = 3         # ...or this many frame intervals, whichever is longer (slow laptops)
-OPP_TRACK_MAX_JUMP = 0.30        # max move between frames, as a fraction of the ring's size
+OPP_TRACK_MAX_JUMP = 0.30        # max move between frames, as a fraction of the field's diameter
 OPP_CONFIRM_HITS = 3             # frames a candidate must be seen before it is "the opponent"
-
-
-def _norm_radius(fit, xs, ys):
-    cx, cy, w, h, ang = fit
-    a = math.radians(ang)
-    c, s = math.cos(a), math.sin(a)
-    dx, dy = xs - cx, ys - cy
-    return np.hypot((dx * c + dy * s) / max(w / 2, 1e-6), (-dx * s + dy * c) / max(h / 2, 1e-6))
-
-
-def _ellipse_points(fit, n=RING_SAMPLES):
-    cx, cy, w, h, ang = fit
-    a = math.radians(ang)
-    t = np.linspace(0, 2 * np.pi, n, endpoint=False)
-    u, v = np.cos(t) * w / 2, np.sin(t) * h / 2
-    return cx + u * math.cos(a) - v * math.sin(a), cy + u * math.sin(a) + v * math.cos(a)
-
-
-def _align(fit, ref):
-    """Express `fit` the same way as `ref` (an ellipse can be (w,h,a) or (h,w,a+90))."""
-    fit = fit.copy()
-    d = (fit[4] - ref[4] + 90) % 180 - 90
-    if abs(d) > 45:
-        fit[2], fit[3] = fit[3], fit[2]
-        fit[4] = (fit[4] - 90) % 180
-    return fit
-
-
-def _similar(a, b):
-    b = _align(b, a)
-    mean_axis = (a[2] + a[3]) / 4
-    return (math.hypot(a[0] - b[0], a[1] - b[1]) < 0.15 * mean_axis
-            and 0.8 < b[2] / a[2] < 1.25 and 0.8 < b[3] / a[3] < 1.25)
+OPP_TAG_BOX_TAGS = 2.5           # tagged opponent with no detected robot box: assume a car this many tags wide
 
 
 class _OpenVinoYolo:
@@ -128,7 +102,7 @@ class _OpenVinoYolo:
 
     def start(self, frame):
         """Kick off inference on the accelerator and return immediately, so the
-        CPU can do ring/tag work meanwhile; collect() gets the boxes."""
+        CPU can do field/tag work meanwhile; collect() gets the boxes."""
         self.req.wait()                                     # finish any job whose result nobody collected
         self.shape = frame.shape[:2]
         # STRETCH to the model size: the Roboflow export stretched 960x540 -> 512x512,
@@ -191,17 +165,20 @@ def _load_detector():
 
 class Vision:
     def __init__(self):
-        dictionary = cv2.aruco.getPredefinedDictionary(APRILTAG_DICTIONARY)
-        self.tags = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
+        # ours is APRILTAG_DICTIONARY #OUR_TAG_ID; every family listed is searched for opponent tags
+        families = [APRILTAG_DICTIONARY] + [f for f in OPPONENT_TAG_DICTIONARIES if f != APRILTAG_DICTIONARY]
+        self.tag_detectors = [(f, cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(f),
+                                                         cv2.aruco.DetectorParameters())) for f in families]
         self.model, self.mode = _load_detector()
         print(f"[vision] robot detection: {self.mode}")
         self.hsv_lock = threading.Lock()
         self.hsv_low, self.hsv_high = np.array(HSV_LOW), np.array(HSV_HIGH)
-        self.ring_fit = None             # current (cx, cy, w, h, angle)
-        self.ring_seen_t = 0.0
-        self.ring_pending = None         # (fit, frames in a row) for a ring not yet believed
-        self.ring_quality = None         # tape coverage of the last accepted fit
-        self.ring_locked = False
+        self.field = None                # current Field (any shape)
+        self.field_seen_t = 0.0
+        self.field_pending = None        # (Field, frames in a row) for a field not yet believed
+        self.field_quality = None        # 1.0 for a closed tape loop, else tape coverage of the outline
+        self.field_kind = None           # "closed" | "partial"
+        self.field_locked = False
         self.opp_track = None            # {"x", "y", "t", "hits"}
         self.frame_dt = 0.1              # smoothed time between processed frames
         self.last_frame_t = None
@@ -218,11 +195,11 @@ class Vision:
         with self.hsv_lock:
             return self.hsv_low.tolist(), self.hsv_high.tolist()
 
-    def lock_ring(self, locked):
-        self.ring_locked = locked
+    def lock_field(self, locked):
+        self.field_locked = locked
 
-    def reset_ring(self):
-        self.ring_fit, self.ring_pending = None, None
+    def reset_field(self):
+        self.field, self.field_pending = None, None
 
     def reset_opponent_track(self):
         self.opp_track = None
@@ -234,116 +211,165 @@ class Vision:
     def clear_reference(self):
         self.reference, self.reference_t = None, None
 
-    # ------------------------------------------------------------ ring
+    # ------------------------------------------------------------ field
     def _blue_mask(self, hsv):
         with self.hsv_lock:
             low, high = self.hsv_low, self.hsv_high
         mask = cv2.inRange(hsv, low, high)
         return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
 
-    def _score_ellipse(self, fit, pts, near_tape):
-        """Return tape coverage if `fit` is a believable ring for these points, else None."""
-        H, W = near_tape.shape
-        cx, cy, w, h, _ = fit
-        if not (np.isfinite(fit).all() and min(w, h) >= RING_MIN_SIZE * min(H, W)
-                and max(w, h) / max(min(w, h), 1) <= RING_MAX_ASPECT
-                and max(w, h) <= 3 * max(H, W)):
-            return None
-        r = _norm_radius(fit, pts[:, 0].astype(float), pts[:, 1].astype(float))
-        if np.mean(np.abs(r - 1) < RING_INLIER_TOL) < RING_MIN_INLIERS:
-            return None
-        xs, ys = _ellipse_points(fit)
-        visible = (xs >= 0) & (xs < W) & (ys >= 0) & (ys < H)
-        if visible.mean() < RING_MIN_VISIBLE:
-            return None
-        coverage = float(np.mean(near_tape[ys[visible].astype(int), xs[visible].astype(int)] > 0))
-        if coverage < RING_MIN_COVERAGE:
-            return None
-        # a tape ring is HOLLOW: inside it is floor, not blue (rejects blue boxes, blue robots, ...)
-        inner = []
-        for scale in (0.4, 0.7):
-            ix, iy = _ellipse_points((cx, cy, w * scale, h * scale, fit[4]), 60)
-            ok = (ix >= 0) & (ix < W) & (iy >= 0) & (iy < H)
-            inner.append(near_tape[iy[ok].astype(int), ix[ok].astype(int)] > 0)
-        inner = np.concatenate(inner)
-        if inner.size and inner.mean() > RING_MAX_INSIDE_BLUE:
-            return None
-        return coverage
+    @staticmethod
+    def _plausible(field, contour, H, W):
+        """Shape sanity for a candidate field (any shape, but field-like)."""
+        if field is None or field.area < FIELD_MIN_AREA_FRAC * H * W:
+            return False
+        hull_area = cv2.contourArea(cv2.convexHull(np.asarray(contour, np.float32).reshape(-1, 1, 2)))
+        if hull_area <= 0 or field.area / hull_area < FIELD_MIN_SOLIDITY:
+            return False
+        if field.radii.max() / max(field.radii.min(), 1e-6) > FIELD_MAX_ASPECT:
+            return False
+        return True
 
-    def _fit_ring(self, mask):
+    @staticmethod
+    def _outline_checks(field, near_tape):
+        """Broken-loop mode: share of the outline covered by tape, or None if the
+        outline isn't mostly visible or the inside is blue (a blob, not a border)."""
+        H, W = near_tape.shape
+
+        def samples(k):
+            pts = field.polygon(k)
+            ok = (pts[:, 0] >= 0) & (pts[:, 0] < W) & (pts[:, 1] >= 0) & (pts[:, 1] < H)
+            return pts[ok].astype(int), ok.mean()
+
+        edge, visible = samples(1.0)
+        if visible < FIELD_MIN_VISIBLE:
+            return None
+        inner = np.vstack([samples(k)[0] for k in (0.4, 0.7)])
+        if len(inner) and np.mean(near_tape[inner[:, 1], inner[:, 0]] > 0) > FIELD_MAX_INSIDE_BLUE:
+            return None
+        return float(np.mean(near_tape[edge[:, 1], edge[:, 0]] > 0))
+
+    def _find_field(self, mask):
+        """-> (Field, quality, kind): kind "closed" (tape loop, exact shape) or
+        "partial" (outline of broken tape, quality = tape coverage); or (None, None, None)."""
         H, W = mask.shape
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        contours = [c for c in contours if cv2.contourArea(c) >= RING_MIN_AREA_FRAC * H * W]
-        if not contours:
-            return None, None
-        contours.sort(key=lambda c: cv2.arcLength(c, True), reverse=True)
-        longest = cv2.arcLength(contours[0], True)
-        # candidates: all big arcs together (tape gaps split the ring), plus
-        # each big arc alone (in case other blue things polluted the union)
-        candidates = [np.vstack([c for c in contours if cv2.arcLength(c, True) >= 0.15 * longest])]
-        candidates += [c for c in contours[:4] if cv2.arcLength(c, True) >= 0.1 * (H + W)]
-        k = max(5, int(0.012 * min(H, W)) | 1)
+        k = max(5, int(FIELD_GAP_CLOSE * min(H, W)) | 1)
+        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+
+        # 1. closed loop: the field is a HOLE of a blue component = the space the tape encloses
+        contours, hier = cv2.findContours(closed, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+        best = None
+        if hier is not None:
+            for c, h in zip(contours, hier[0]):
+                if h[3] < 0 or cv2.contourArea(c) < FIELD_MIN_AREA_FRAC * H * W:
+                    continue                                     # not a hole, or too small
+                f = Field.from_contour(c)
+                if self._plausible(f, c, H, W) and (best is None or f.area > best.area):
+                    best = f
+        if best is not None:
+            return best, 1.0, "closed"
+
+        # 2. broken loop: outline (convex hull) around the big blue arcs
+        arcs = [c for c in cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[0]
+                if cv2.contourArea(c) >= ARC_MIN_AREA_FRAC * H * W]
+        if not arcs:
+            return None, None, None
+        arcs.sort(key=lambda c: cv2.arcLength(c, True), reverse=True)
+        longest = cv2.arcLength(arcs[0], True)
+        # all big arcs together (tape gaps split the loop), and each alone (other blue junk)
+        candidates = [np.vstack([c for c in arcs if cv2.arcLength(c, True) >= 0.15 * longest])] + arcs[:3]
         near_tape = cv2.dilate(mask, np.ones((k, k), np.uint8))
         best, best_cov = None, None
         for cand in candidates:
-            pts = cand.reshape(-1, 2)
-            if len(pts) < 20:
+            hull = cv2.convexHull(cand)
+            f = Field.from_contour(hull)
+            if not self._plausible(f, hull, H, W):
                 continue
-            (cx, cy), (w, h), ang = cv2.fitEllipse(pts.astype(np.float32))
-            fit = np.array([cx, cy, w, h, ang], float)
-            # one refinement pass: refit on the points that actually lie on it
-            r = _norm_radius(fit, pts[:, 0].astype(float), pts[:, 1].astype(float))
-            on = pts[np.abs(r - 1) < 0.2]
-            if len(on) >= 20 and len(on) < len(pts):
-                (cx, cy), (w, h), ang = cv2.fitEllipse(on.astype(np.float32))
-                fit, pts = np.array([cx, cy, w, h, ang], float), on
-            cov = self._score_ellipse(fit, pts, near_tape)
-            if cov is not None and (best_cov is None or cov > best_cov):
-                best, best_cov = fit, cov
-        return best, best_cov
+            cov = self._outline_checks(f, near_tape)
+            if cov is not None and cov >= FIELD_MIN_COVERAGE and (best_cov is None or cov > best_cov):
+                best, best_cov = f, cov
+        return (best, best_cov, "partial") if best is not None else (None, None, None)
 
-    def _update_ring(self, fit, quality, now):
-        if self.ring_locked and self.ring_fit is not None:
+    def _update_field(self, found, quality, kind, now):
+        if self.field_locked and self.field is not None:
             return
-        if fit is not None and self.ring_fit is not None and _similar(self.ring_fit, fit):
-            fit = _align(fit, self.ring_fit)                          # same ring: smooth it
-            d_ang = (fit[4] - self.ring_fit[4] + 90) % 180 - 90
-            old_ang = self.ring_fit[4]
-            self.ring_fit = self.ring_fit + RING_SMOOTH * (fit - self.ring_fit)
-            self.ring_fit[4] = (old_ang + RING_SMOOTH * d_ang) % 180
-            self.ring_seen_t, self.ring_pending, self.ring_quality = now, None, quality
+        if found is not None and self.field is not None and self.field.similar(found):
+            self.field = self.field.blend(found, FIELD_SMOOTH)          # same field: smooth it
+            self.field_seen_t, self.field_pending = now, None
+            self.field_quality, self.field_kind = quality, kind
             return
-        if fit is not None:                                           # new or different ring:
-            n = self.ring_pending[1] + 1 if self.ring_pending and _similar(self.ring_pending[0], fit) else 1
-            self.ring_pending = (fit, n)                              # believe it only if it persists
-            if n >= RING_CONFIRM_FRAMES:
-                self.ring_fit, self.ring_seen_t, self.ring_pending, self.ring_quality = fit, now, None, quality
+        if found is not None:                                           # new or different field:
+            n = self.field_pending[1] + 1 if self.field_pending and self.field_pending[0].similar(found) else 1
+            self.field_pending = (found, n)                             # believe it only if it persists
+            if n >= FIELD_CONFIRM_FRAMES:
+                self.field, self.field_seen_t, self.field_pending = found, now, None
+                self.field_quality, self.field_kind = quality, kind
                 return
         else:
-            self.ring_pending = None
-        if self.ring_fit is not None and now - self.ring_seen_t > RING_LOST_S:
-            self.ring_fit, self.ring_quality = None, None             # no blue arc -> no field
+            self.field_pending = None
+        if self.field is not None and now - self.field_seen_t > FIELD_LOST_S:
+            self.field, self.field_quality, self.field_kind = None, None, None   # no tape -> no field
 
     # ------------------------------------------------------------ us
-    def _find_us(self, gray):
-        corners, ids, _ = self.tags.detectMarkers(gray)
-        if ids is None:
-            return None
-        for c, i in zip(corners, ids.flatten()):
-            if int(i) != OUR_TAG_ID:
+    @staticmethod
+    def _tag_pose(pts, tag_id, family, heading_offset=0.0):
+        center = pts.mean(axis=0)
+        top_mid, bot_mid = (pts[0] + pts[1]) / 2, (pts[3] + pts[2]) / 2   # TL, TR, BR, BL of the printed tag
+        hx, hy = (float(v) for v in top_mid - bot_mid)                    # plain floats: this ends up in JSON
+        if heading_offset:
+            a = math.radians(heading_offset)
+            hx, hy = hx * math.cos(a) - hy * math.sin(a), hx * math.sin(a) + hy * math.cos(a)
+        n = math.hypot(hx, hy) or 1.0
+        return {"x": float(center[0]), "y": float(center[1]), "hx": hx / n, "hy": hy / n,
+                "size": float(np.linalg.norm(pts[0] - pts[1])), "corners": pts.round(1).tolist(),
+                "id": tag_id, "family": family}
+
+    def _find_tags(self, gray):
+        """-> (us, [opponent tags]). Ours = OUR tag family + OUR_TAG_ID; any other
+        tag (any id, any family in OPPONENT_TAG_DICTIONARIES) is an opponent's."""
+        us, theirs = None, []
+        for family, detector in self.tag_detectors:
+            corners, ids, _ = detector.detectMarkers(gray)
+            if ids is None:
                 continue
-            pts = c.reshape(4, 2)            # TL, TR, BR, BL of the printed tag
-            center = pts.mean(axis=0)
-            top_mid, bot_mid = (pts[0] + pts[1]) / 2, (pts[3] + pts[2]) / 2
-            hx, hy = (float(v) for v in top_mid - bot_mid)       # plain floats: this ends up in JSON
-            if TAG_HEADING_OFFSET_DEG:
-                a = math.radians(TAG_HEADING_OFFSET_DEG)
-                hx, hy = hx * math.cos(a) - hy * math.sin(a), hx * math.sin(a) + hy * math.cos(a)
-            n = math.hypot(hx, hy) or 1.0
-            size = float(np.linalg.norm(pts[0] - pts[1]))
-            return {"x": float(center[0]), "y": float(center[1]), "hx": hx / n, "hy": hy / n,
-                    "size": size, "corners": pts.round(1).tolist()}
-        return None
+            for c, i in zip(corners, ids.flatten()):
+                pts = c.reshape(4, 2)
+                if family == APRILTAG_DICTIONARY and int(i) == OUR_TAG_ID:
+                    us = self._tag_pose(pts, int(i), family, TAG_HEADING_OFFSET_DEG)
+                else:
+                    theirs.append(self._tag_pose(pts, int(i), family))
+        return us, theirs
+
+    def _opponent_from_tags(self, tags, robots, field, now):
+        """An opponent's AprilTag beats every other cue: pick it (same in/out-of-field
+        and tracking rules as _track_opponent) and confirm it immediately."""
+        ttl = max(OPP_TRACK_TTL_S, OPP_TRACK_TTL_FRAMES * self.frame_dt)
+        track = self.opp_track if self.opp_track and now - self.opp_track["t"] < ttl else None
+        tag = None
+        if track:
+            jump = OPP_TRACK_MAX_JUMP * 2 * field.scale
+            near = [t for t in tags if math.hypot(t["x"] - track["x"], t["y"] - track["y"]) < jump]
+            if near:
+                tag = min(near, key=lambda t: math.hypot(t["x"] - track["x"], t["y"] - track["y"]))
+        if tag is None:
+            inside = [t for t in tags if field.radius_at(t["x"], t["y"]) < 1.0]
+            if inside:      # several tagged robots in the field: the one closest to its center
+                tag = min(inside, key=lambda t: field.radius_at(t["x"], t["y"]))
+        if tag is None:
+            return None
+        # the robot's extent: a detected robot box containing the tag, else a box around the tag
+        box = next((r["box"] for r in robots if r["box"][0] <= tag["x"] <= r["box"][2]
+                    and r["box"][1] <= tag["y"] <= r["box"][3]), None)
+        if box is not None:
+            for r in robots:
+                if r["box"] is box:
+                    r["tag_id"] = tag["id"]
+        else:
+            half = tag["size"] * OPP_TAG_BOX_TAGS / 2
+            box = [tag["x"] - half, tag["y"] - half, tag["x"] + half, tag["y"] + half]
+        self.opp_track = {"x": tag["x"], "y": tag["y"], "t": now, "hits": OPP_CONFIRM_HITS + 2}
+        return {"box": box, "x": tag["x"], "y": tag["y"], "conf": 1.0, "tag_id": tag["id"],
+                "corners": tag["corners"]}
 
     # ------------------------------------------------------------ robots
     @staticmethod
@@ -352,13 +378,12 @@ class Vision:
         small = cv2.resize(frame, (W // 2, H // 2), interpolation=cv2.INTER_AREA)
         return cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2LAB), (5, 5), 0).astype(np.float32)
 
-    def _change_mask(self, lab, blue_s, ring):
+    def _change_mask(self, lab, blue_s, field):
         """Half-res mask of pixels that look like 'something is here'."""
         if self.reference is not None and self.reference.shape == lab.shape:
             base, thresh = self.reference, CHANGE_THRESH_REF
         else:
-            inside = np.zeros(blue_s.shape, np.uint8)
-            cv2.ellipse(inside, ((ring.cx / 2, ring.cy / 2), (ring.w / 2 * 0.95, ring.h / 2 * 0.95), ring.angle), 255, -1)
+            inside = field.mask(blue_s.shape, 0.95, downscale=2)       # the field's real outline
             floor_px = lab[(inside > 0) & (blue_s == 0)]
             if not len(floor_px):
                 return None
@@ -367,21 +392,19 @@ class Vision:
         dist2 = L_WEIGHT * d[..., 0] ** 2 + d[..., 1] ** 2 + d[..., 2] ** 2
         return (dist2 > thresh ** 2).astype(np.uint8) * 255
 
-    def _size_ok(self, bw, bh, ring, us):
+    def _size_ok(self, bw, bh, field, us):
         side = max(bw, bh)
         if us is not None:
             return SIZE_MIN_TAGS * us["size"] <= side <= SIZE_MAX_TAGS * us["size"]
-        d = (ring.w + ring.h) / 2
-        return SIZE_MIN_RING * d <= side <= SIZE_MAX_RING * d
+        d = 2 * field.scale                                    # equal-area diameter of the field
+        return SIZE_MIN_FIELD * d <= side <= SIZE_MAX_FIELD * d
 
-    def _candidates(self, frame, blue, ring, us):
+    def _candidates(self, frame, blue, field, us):
         H, W = blue.shape
         lab = self._small_lab(frame)
         blue_s = cv2.resize(blue, (W // 2, H // 2), interpolation=cv2.INTER_NEAREST)
-        change = self._change_mask(lab, blue_s, ring)
-        search = np.zeros(blue_s.shape, np.uint8)
-        s = BLOB_SEARCH_SCALE
-        cv2.ellipse(search, ((ring.cx / 2, ring.cy / 2), (ring.w / 2 * s, ring.h / 2 * s), ring.angle), 255, -1)
+        change = self._change_mask(lab, blue_s, field)
+        search = field.mask(blue_s.shape, BLOB_SEARCH_SCALE, downscale=2)   # field outline, grown 40%
         no_tape = cv2.dilate(blue_s, np.ones((7, 7), np.uint8)) == 0
         if change is not None:
             change = change & search & (no_tape.astype(np.uint8) * 255)
@@ -389,7 +412,7 @@ class Vision:
         out = []
         if self.model is not None:
             for x1, y1, x2, y2, conf in self.model.collect(YOLO_CONF):   # started in process()
-                if not self._size_ok(x2 - x1, y2 - y1, ring, us):
+                if not self._size_ok(x2 - x1, y2 - y1, field, us):
                     continue
                 if self.reference is not None and change is not None:
                     roi = change[int(y1) // 2:int(y2) // 2 + 1, int(x1) // 2:int(x2) // 2 + 1]
@@ -408,7 +431,7 @@ class Vision:
         for cnt in contours:
             area = cv2.contourArea(cnt)
             x, y, bw, bh = cv2.boundingRect(cnt)
-            if area < 30 or not self._size_ok(2 * bw, 2 * bh, ring, us):
+            if area < 30 or not self._size_ok(2 * bw, 2 * bh, field, us):
                 continue
             hull = cv2.contourArea(cv2.convexHull(cnt)) or 1.0
             solidity, fill = area / hull, area / max(bw * bh, 1)
@@ -419,12 +442,12 @@ class Vision:
                         "conf": round(min(1.0, solidity * fill * 1.6), 2)})
         return out
 
-    def _track_opponent(self, others, ring, now):
+    def _track_opponent(self, others, field, now):
         ttl = max(OPP_TRACK_TTL_S, OPP_TRACK_TTL_FRAMES * self.frame_dt)
         track = self.opp_track if self.opp_track and now - self.opp_track["t"] < ttl else None
         match = None
         if track and others:
-            jump = OPP_TRACK_MAX_JUMP * max(ring.w, ring.h)
+            jump = OPP_TRACK_MAX_JUMP * 2 * field.scale
             dist = lambda r: math.hypot(r["x"] - track["x"], r["y"] - track["y"])  # noqa: E731
             near = [r for r in others if dist(r) < jump]
             if near:
@@ -435,8 +458,8 @@ class Vision:
             if track:
                 track["hits"] = max(0, track["hits"] - 2)    # misses count double: lost tracks yield fast
             if not track or track["hits"] < OPP_CONFIRM_HITS:
-                # new tracks only start INSIDE the ring: bystanders outside are never chosen
-                inside = [r for r in others if ring.radius_at(r["x"], r["y"]) < 1.0]
+                # new tracks only start INSIDE the field: bystanders outside are never chosen
+                inside = [r for r in others if field.radius_at(r["x"], r["y"]) < 1.0]
                 if inside:
                     best = max(inside, key=lambda r: r["conf"])
                     track = {"x": best["x"], "y": best["y"], "t": now, "hits": 1}
@@ -460,13 +483,13 @@ class Vision:
             self.model.start(frame)               # NPU works on this frame while the CPU does the rest
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         blue = self._blue_mask(hsv)
-        fit, quality = self._fit_ring(blue)
-        self._update_ring(fit, quality, now)
-        ring = Ring(*self.ring_fit) if self.ring_fit is not None else None
+        found, quality, kind = self._find_field(blue)
+        self._update_field(found, quality, kind, now)
+        field = self.field
 
-        us = self._find_us(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
-        robots = self._candidates(frame, blue, ring, us) if ring is not None else []
-        if ring is None and self.model is not None:
+        us, their_tags = self._find_tags(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+        robots = self._candidates(frame, blue, field, us) if field is not None else []
+        if field is None and self.model is not None:
             self.model.collect(YOLO_CONF)         # no field: drain the started inference, ignore it
 
         # which robot box is us? the one that contains our tag (or is nearest to it)
@@ -480,13 +503,18 @@ class Vision:
                 mine["ours"] = True
                 us["box"] = mine["box"]
         others = [r for r in robots if not r.get("ours")]
-        opp = self._track_opponent(others, ring, now) if ring is not None else None
-        if opp is None and ring is None:
+        opp = None
+        if field is not None:
+            opp = self._opponent_from_tags(their_tags, others, field, now) if their_tags else None
+            if opp is None:                        # no usable opponent tag: model / change detection
+                opp = self._track_opponent(others, field, now)
+        if opp is None and field is None:
             self.opp_track = None
 
         return {
-            "ring": ring, "us": us, "opp": opp, "robots": robots,
-            "ring_quality": self.ring_quality, "ring_pending": self.ring_pending is not None,
+            "field": field, "us": us, "opp": opp, "robots": robots, "their_tags": their_tags,
+            "field_quality": self.field_quality, "field_kind": self.field_kind,
+            "field_pending": self.field_pending is not None,
             "reference_age": (now - self.reference_t) if self.reference_t else None,
             "ms": (time.perf_counter() - t0) * 1000.0,
         }

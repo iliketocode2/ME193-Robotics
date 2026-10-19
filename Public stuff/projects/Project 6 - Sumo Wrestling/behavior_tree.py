@@ -22,8 +22,9 @@ the action writes the motor command. So higher branches pre-empt lower ones
      |- Guard (camera lost)    no camera                   -> hold (sensor still guards)
      '- Patrol center          otherwise                   -> back to center, scan
 
-Sensor fusion: the CAMERA (phone, autonomous) gives positions in ring
-coordinates (field.py: tape = radius 1). The LEGO COLOR SENSOR (autonomous,
+Sensor fusion: the CAMERA (phone, autonomous) gives positions in camera
+pixels plus each robot's normalized distance r from the field center
+(field.py: r = 1 at the tape in that direction, for ANY field shape). The LEGO COLOR SENSOR (autonomous,
 on the robot's rear, facing down) sees the tape itself. Escape fires on
 either; "we lost" needs the camera AND (the sensor having crossed the tape
 or the camera being very sure), so one noisy sensor can't end our match.
@@ -46,9 +47,9 @@ OUT_HOLD_S = 0.4         # ...for this long
 OUT_SURE_R = 1.35        # camera alone is sure beyond this
 OPP_OUT_R = 1.2
 OPP_OUT_HOLD_S = 0.6
-PUSH_DIST = 0.45         # opponent this close and dead ahead = we're pushing it
+PUSH_DIST = 0.45         # opponent this close (in field radii) and dead ahead = we're pushing it
 PUSH_BEARING = 30
-TARGET_REACHED = 0.10
+TARGET_REACHED = 0.10    # field radii
 TURN_GAIN = 1.2          # motor % per degree of bearing error
 MAX_TURN = 70
 
@@ -65,11 +66,13 @@ def make_blackboard():
         now=0.0, match="idle", estop=False, robot_ok=False, dry_run=False,
         manual=None,                 # (l, r) while keys are held, else None
         camera_ok=False,
-        us=None,                     # {"pos": (u, v), "r": float, "heading": (hx, hy)} in ring coords
-        opp=None,                    # {"pos": (u, v), "r": float}
+        us=None,                     # {"pos": (x, y) px, "r": normalized radius, "heading": (hx, hy) unit}
+        opp=None,                    # {"pos": (x, y) px, "r": normalized radius}
+        center=None,                 # field center (x, y) px
+        scale=1.0,                   # field size: radius of a circle with the field's area, px
         sensor_ok=False, rear_on_blue=False, blue_recent=False, sensor_name="?",
         our_out_s=0.0, opp_out_s=0.0,
-        target=None,                 # (u, v) clicked in ring coords
+        target=None,                 # (x, y) px clicked on the video
         strategy=0.5,
         # outputs
         out=(0, 0), action="", goal=None, event=None, trace=[],
@@ -168,7 +171,7 @@ def pushing(bb):
     if not (bb.us and bb.opp):
         return False
     du = bb.opp["pos"][0] - bb.us["pos"][0], bb.opp["pos"][1] - bb.us["pos"][1]
-    return (math.hypot(*du) < PUSH_DIST and abs(_bearing_to(bb, bb.opp["pos"])) < PUSH_BEARING
+    return (math.hypot(*du) / bb.scale < PUSH_DIST and abs(_bearing_to(bb, bb.opp["pos"])) < PUSH_BEARING
             and bb.opp["r"] > bb.us["r"])
 
 
@@ -216,17 +219,17 @@ def act_win(bb):
 def act_escape(bb):
     if bb.sensor_ok and bb.rear_on_blue:
         if bb.camera_ok and bb.us:
-            out = drive_toward(_bearing_to(bb, (0, 0)), 85, min_forward=60, forward_only=True)
+            out = drive_toward(_bearing_to(bb, bb.center), 85, min_forward=60, forward_only=True)
         else:
             out = (80, 80)
-        return _set(bb, out, "ESCAPE - tape under rear sensor, driving forward", (0, 0))
-    b = _bearing_to(bb, (0, 0))
+        return _set(bb, out, "ESCAPE - tape under rear sensor, driving forward", bb.center)
+    b = _bearing_to(bb, bb.center)
     return _set(bb, drive_toward(b, 75, allow_reverse=True),
-                f"ESCAPE - near edge (r={bb.us['r']:.2f}), heading to center", (0, 0))
+                f"ESCAPE - near edge (r={bb.us['r']:.2f}), heading to center", bb.center)
 
 
 def act_target(bb):
-    d = math.hypot(bb.target[0] - bb.us["pos"][0], bb.target[1] - bb.us["pos"][1])
+    d = math.hypot(bb.target[0] - bb.us["pos"][0], bb.target[1] - bb.us["pos"][1]) / bb.scale
     if d < TARGET_REACHED:
         goal, bb.target = bb.target, None
         return _set(bb, (0, 0), "TARGET reached", goal)
@@ -249,8 +252,8 @@ def act_patrol(bb):
     if bb.us is None:
         return _set(bb, (0, 0), "Can't see our tag - holding")
     if bb.us["r"] > 0.25:
-        return _set(bb, drive_toward(_bearing_to(bb, (0, 0)), 50, allow_reverse=True),
-                    "Return to center", (0, 0))
+        return _set(bb, drive_toward(_bearing_to(bb, bb.center), 50, allow_reverse=True),
+                    "Return to center", bb.center)
     return _set(bb, (25, -25), "Center - scanning for opponent")
 
 

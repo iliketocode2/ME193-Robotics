@@ -76,8 +76,10 @@ function onState(s) {
   setPill("color", L.color);
   setPill("camera", L.camera, L.camera ? `Camera · ${L.fps} fps` : "Camera");
   setPill("fan", s.fan_rpm > 0, s.fan_rpm == null ? "Fan · ?" : `Fan · ${s.fan_rpm} rpm`);
-  const q = s.world.ring_quality;
-  const field = s.world.ring ? `field ${Math.round((q || 0) * 100)}% tape` : (s.world.ring_pending ? "field: confirming…" : "no field");
+  const q = s.world.field_quality;
+  const field = s.world.field
+    ? (s.world.field_kind === "closed" ? "field: closed tape loop" : `field: partial, ${Math.round((q || 0) * 100)}% tape`)
+    : (s.world.field_pending ? "field: confirming…" : "no field");
   $("camMeta").textContent = `${L.cam_status} · ${field} · ${L.mode}${L.vision_ms != null ? ` · ${L.vision_ms} ms` : ""}`;
 
   const m = $("match");
@@ -92,7 +94,7 @@ function onState(s) {
   setBar("R", s.sent[1]);
   const flags = [
     ["dry run", s.dry_run], ["manual", s.manual],
-    [s.world.ring_locked ? "ring locked" : "ring tracking", s.world.ring_locked],
+    [s.world.field_locked ? "field locked" : "field tracking", s.world.field_locked],
   ];
   if (s.dry_run && (s.out[0] || s.out[1])) flags.push([`would send ${s.out[0]}/${s.out[1]}`, true]);
   $("flags").innerHTML = flags.map(([t, on]) => `<span class="${on ? "on" : ""}">${t}</span>`).join("");
@@ -156,33 +158,41 @@ function draw() {
   const w = state.world;
   const k = W / 960;                       // line widths scale with frame size
 
-  if (w.ring) {
-    const R = w.ring, a = (R.angle * Math.PI) / 180;
-    const ell = (scale, color, width, dash) => {
+  if (w.field) {
+    // the field's real outline (any shape); the edge-limit and "out" lines are the
+    // same outline scaled toward the center -- exactly the r = const lines the brain uses
+    const F = w.field;
+    const outline = (scale) => {
+      ctx.beginPath();
+      F.poly.forEach(([x, y], i) => {
+        const px = F.cx + (x - F.cx) * scale, py = F.cy + (y - F.cy) * scale;
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      });
+      ctx.closePath();
+    };
+    const line = (scale, color, width, dash) => {
       ctx.save();
       ctx.setLineDash(dash.map((d) => d * k));
       ctx.strokeStyle = color; ctx.lineWidth = width * k;
-      ctx.beginPath();
-      ctx.ellipse(R.cx, R.cy, (R.w / 2) * scale, (R.h / 2) * scale, a, 0, Math.PI * 2);
-      ctx.stroke(); ctx.restore();
+      outline(scale); ctx.stroke(); ctx.restore();
     };
     ctx.save();
     ctx.fillStyle = "rgba(59,130,246,0.07)";
-    ctx.beginPath(); ctx.ellipse(R.cx, R.cy, R.w / 2, R.h / 2, a, 0, Math.PI * 2); ctx.fill();
+    outline(1); ctx.fill();
     ctx.restore();
-    ell(1, "rgba(59,130,246,0.95)", 3, []);
-    ell(w.edge, "rgba(251,191,36,0.85)", 2, [10, 8]);
-    ell(w.out_r, "rgba(244,63,94,0.5)", 1.5, [4, 8]);
+    line(1, "rgba(59,130,246,0.95)", 3, []);
+    line(w.edge, "rgba(251,191,36,0.85)", 2, [10, 8]);
+    line(w.out_r, "rgba(244,63,94,0.5)", 1.5, [4, 8]);
     ctx.fillStyle = "rgba(255,255,255,0.6)";
-    ctx.beginPath(); ctx.arc(R.cx, R.cy, 4 * k, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(F.cx, F.cy, 4 * k, 0, Math.PI * 2); ctx.fill();
   } else {
-    const msg = w.ring_pending ? "Field found - confirming…" : "NO FIELD - need a blue tape arc in view";
+    const msg = w.field_pending ? "Field found - confirming…" : "NO FIELD - need blue tape enclosing the arena";
     ctx.save();
     ctx.font = `800 ${22 * k}px Inter, sans-serif`;
     const tw = ctx.measureText(msg).width;
     ctx.fillStyle = "rgba(7,9,15,0.7)";
     ctx.beginPath(); ctx.roundRect(W / 2 - tw / 2 - 16 * k, 18 * k, tw + 32 * k, 40 * k, 10 * k); ctx.fill();
-    ctx.fillStyle = w.ring_pending ? "#fbbf24" : "#f43f5e";
+    ctx.fillStyle = w.field_pending ? "#fbbf24" : "#f43f5e";
     ctx.fillText(msg, W / 2 - tw / 2, 46 * k);
     ctx.restore();
   }
@@ -191,7 +201,22 @@ function draw() {
     if (r.ours) continue;
     box(r.box, "rgba(148,163,214,0.6)", `candidate ${Math.round(r.conf * 100)}%`, 1.5);
   }
-  if (w.opp) box(w.opp.box, "#f43f5e", `OPPONENT${w.opp.r != null ? `  r=${w.opp.r.toFixed(2)}` : ""}`, 3);
+  // every non-our AprilTag: red outline if it's the opponent's, grey otherwise (e.g. a robot waiting outside)
+  for (const t of w.tags || []) {
+    const isOpp = w.opp && w.opp.tag_id === t.id;
+    ctx.save();
+    ctx.strokeStyle = isOpp ? "#f43f5e" : "rgba(148,163,214,0.8)"; ctx.lineWidth = 2 * k;
+    ctx.beginPath(); t.corners.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.stroke();
+    if (!isOpp) {
+      ctx.font = `700 ${12 * k}px Inter, sans-serif`; ctx.fillStyle = "rgba(148,163,214,0.95)";
+      ctx.fillText(`tag #${t.id}`, t.corners[0][0], t.corners[0][1] - 6 * k);
+    }
+    ctx.restore();
+  }
+  if (w.opp) {
+    const tagTxt = w.opp.tag_id != null ? ` · tag #${w.opp.tag_id}` : "";
+    box(w.opp.box, "#f43f5e", `OPPONENT${tagTxt}${w.opp.r != null ? `  r=${w.opp.r.toFixed(2)}` : ""}`, 3);
+  }
 
   if (w.us) {
     const u = w.us;

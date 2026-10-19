@@ -40,26 +40,36 @@ def ring_px(u, v):
     return cx + u * w / 2, cy + v * h / 2
 
 
-def make_frame(us=None, heading_deg=0.0, opp=None):
-    """us/opp in ring coords (u, v); heading 0 = facing up the image, + = clockwise."""
+def paste_tag(img, pos, tag_id, heading_deg=0.0):
+    """Draw a tag36h11 card (with white border) centered at ring coords `pos`."""
+    d = cv2.aruco.getPredefinedDictionary(config.APRILTAG_DICTIONARY)
+    tag = cv2.aruco.generateImageMarker(d, tag_id, TAG_PX)
+    pad = TAG_PX // 3
+    card = cv2.cvtColor(cv2.copyMakeBorder(tag, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=255),
+                        cv2.COLOR_GRAY2BGR)
+    n = card.shape[0]
+    x, y = ring_px(*pos)
+    M = cv2.getRotationMatrix2D((n / 2, n / 2), -heading_deg, 1.0)   # cv2: + = counter-clockwise
+    M[:, 2] += (x - n / 2, y - n / 2)
+    mask = cv2.warpAffine(np.full((n, n), 255, np.uint8), M, (W, H))
+    warped = cv2.warpAffine(card, M, (W, H))
+    img[mask > 0] = warped[mask > 0]
+
+
+def make_frame(us=None, heading_deg=0.0, opp=None, opp_tag=None, tags=()):
+    """us/opp in ring coords (u, v); heading 0 = facing up the image, + = clockwise.
+    opp_tag: put this tag id on the opponent's block; tags: extra (pos, id) tag cards."""
     img = np.full((H, W, 3), (150, 160, 165), np.uint8)
     cv2.ellipse(img, RING[0], (RING[1][0] // 2, RING[1][1] // 2), RING[2], 0, 360, (200, 90, 20), 14)
     if opp is not None:
         x, y = ring_px(*opp)
-        cv2.rectangle(img, (int(x - 30), int(y - 30)), (int(x + 30), int(y + 30)), (40, 40, 40), -1)
+        cv2.rectangle(img, (int(x - 45), int(y - 45)), (int(x + 45), int(y + 45)), (40, 40, 40), -1)
+        if opp_tag is not None:
+            paste_tag(img, opp, opp_tag)
+    for pos, tag_id in tags:
+        paste_tag(img, pos, tag_id)
     if us is not None:
-        d = cv2.aruco.getPredefinedDictionary(config.APRILTAG_DICTIONARY)
-        tag = cv2.aruco.generateImageMarker(d, config.OUR_TAG_ID, TAG_PX)
-        pad = TAG_PX // 3
-        card = cv2.copyMakeBorder(tag, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=255)
-        card = cv2.cvtColor(card, cv2.COLOR_GRAY2BGR)
-        n = card.shape[0]
-        x, y = ring_px(*us)
-        M = cv2.getRotationMatrix2D((n / 2, n / 2), -heading_deg, 1.0)   # cv2: + = counter-clockwise
-        M[:, 2] += (x - n / 2, y - n / 2)
-        mask = cv2.warpAffine(np.full((n, n), 255, np.uint8), M, (W, H))
-        warped = cv2.warpAffine(card, M, (W, H))
-        img[mask > 0] = warped[mask > 0]
+        paste_tag(img, us, config.OUR_TAG_ID, heading_deg)
     return img
 
 
@@ -105,43 +115,77 @@ def floor_only():
 
 
 def main():
-    print("vision: ring")
+    print("vision: field (any shape)")
     v = Vision()
     res = v.process(make_frame(us=(0, 0)))
-    check("a new ring is not believed after one frame", res["ring"] is None and res["ring_pending"])
+    check("a new field is not believed after one frame", res["field"] is None and res["field_pending"])
     res = frames(v, make_frame(us=(0, 0), heading_deg=0, opp=(0.5, 0)), 4)
-    ring = res["ring"]
-    check("ring found after a few frames", ring is not None, f"tape coverage {res['ring_quality']}")
-    check("ring center", ring and abs(ring.cx - 480) < 15 and abs(ring.cy - 270) < 15,
-          f"{ring and (round(ring.cx), round(ring.cy))}")
+    fd = res["field"]
+    check("closed tape loop found after a few frames", fd is not None and res["field_kind"] == "closed")
+    check("field center", fd and abs(fd.cx - 480) < 15 and abs(fd.cy - 270) < 15,
+          f"{fd and (round(fd.cx), round(fd.cy))}")
+    if fd:
+        rs = [fd.radius_at(*ring_px(u, v_)) for u, v_ in ((1, 0), (0, 1), (-1, 0), (0, -1))]
+        check("tape is at r ~= 1 in every direction (wide ellipse)", all(0.95 < r < 1.08 for r in rs),
+              str([round(r, 2) for r in rs]))
 
     t0 = time.monotonic()
     while time.monotonic() - t0 < 1.3:
         res = v.process(floor_only())
-    check("blue tape gone -> no field (after ~1 s)", res["ring"] is None)
+    check("blue tape gone -> no field (after ~1 s)", res["field"] is None)
 
-    junk = floor_only()                                  # blue things that are NOT a ring
+    junk = floor_only()                                  # blue things that are NOT a field border
     cv2.rectangle(junk, (100, 100), (260, 220), (200, 90, 20), -1)
     cv2.line(junk, (500, 80), (900, 140), (200, 90, 20), 12)
     cv2.circle(junk, (700, 400), 40, (200, 90, 20), -1)
     res = frames(Vision(), junk, 8)
-    check("blue rectangle + line + disc -> no field", res["ring"] is None)
+    check("filled blue box + line + disc -> no field", res["field"] is None)
 
-    gappy = floor_only()                                 # imperfect ring: ~55% of the tape, in pieces
+    rect = floor_only()                                  # a long RECTANGULAR field
+    cv2.rectangle(rect, (130, 150), (830, 390), (200, 90, 20), 14)
+    res = frames(Vision(), rect, 4)
+    fd = res["field"]
+    ok = fd is not None
+    check("rectangular tape -> field found", ok, res["field_kind"] or "")
+    if ok:
+        on_short, on_long, corner = fd.radius_at(137, 270), fd.radius_at(480, 157), fd.radius_at(140, 160)
+        check("rectangle: r ~= 1 on the near long side AND the far short side", 0.95 < on_short < 1.05 and 0.95 < on_long < 1.05,
+              f"short side {on_short:.2f}, long side {on_long:.2f}")
+        check("rectangle: corner also r ~= 1 (not a circle!)", 0.93 < corner < 1.07, f"{corner:.2f}")
+        mid_y = fd.radius_at(480, 270 - 0.8 * 113)       # 80% of the way to the long side
+        check("rectangle: 80% toward the near side reads r ~= 0.8", 0.75 < mid_y < 0.85, f"{mid_y:.2f}")
+
+    blob = floor_only()                                  # hand-taped, lopsided, dented loop
+    pts = []
+    for a in np.linspace(0, 2 * np.pi, 60, endpoint=False):
+        r = 200 + 35 * np.sin(3 * a) + (60 if np.cos(a) > 0.6 else 0)
+        pts.append((480 + 1.3 * r * np.cos(a), 270 + r * np.sin(a)))
+    pts = np.array(pts, np.int32)
+    cv2.polylines(blob, [pts], True, (200, 90, 20), 14)
+    res = frames(Vision(), blob, 4)
+    fd = res["field"]
+    check("lopsided hand-taped loop -> field found", fd is not None)
+    if fd:
+        rs = [fd.radius_at(*p) for p in pts[::6]]
+        check("lopsided loop: r ~= 1 all along its tape", all(0.95 < r < 1.12 for r in rs),
+              f"min {min(rs):.2f} max {max(rs):.2f}")
+
+    gappy = floor_only()                                 # broken loop: ~55% of the tape, in pieces
     for a0 in (0, 80, 170, 260):
         cv2.ellipse(gappy, RING[0], (350, 230), 0, a0, a0 + 50, (200, 90, 20), 14)
     res = frames(Vision(), gappy, 5)
-    r = res["ring"]
-    check("ring with big gaps still found", r is not None and abs(r.cx - 480) < 20 and abs(r.cy - 270) < 20,
-          f"{r and (round(r.cx), round(r.cy), round(r.w), round(r.h))}")
+    fd = res["field"]
+    check("tape with big gaps -> partial field still found",
+          fd is not None and res["field_kind"] == "partial" and abs(fd.cx - 480) < 20 and abs(fd.cy - 270) < 20,
+          f"{fd and (round(fd.cx), round(fd.cy))} {res['field_kind']}")
 
     cluttered = make_frame(us=(0, 0))
     cv2.rectangle(cluttered, (5, 5), (120, 90), (200, 90, 20), -1)   # a blue box in the corner
     res = frames(Vision(), cluttered, 5)
-    r = res["ring"]
-    check("ring + blue clutter -> ring still accurate",
-          r is not None and abs(r.cx - 480) < 15 and abs(max(r.w, r.h) - 700) < 40 and abs(min(r.w, r.h) - 460) < 40,
-          f"{r and (round(r.cx), round(r.cy), round(r.w), round(r.h))}")
+    fd = res["field"]
+    check("field + blue clutter -> field still accurate",
+          fd is not None and abs(fd.cx - 480) < 15 and 0.95 < fd.radius_at(*ring_px(1, 0)) < 1.08,
+          f"{fd and (round(fd.cx), round(fd.cy))}")
 
     print("vision: us + opponent")
     v = Vision()
@@ -185,13 +229,32 @@ def main():
     check("with snapshot: real opponent found", res["opp"] is not None and abs(res["opp"]["x"] - x) < 15,
           f"{res['opp'] and round(res['opp']['x'])} vs {round(x)}")
 
+    print("vision: opponents' AprilTags")
+    v = Vision()
+    frames(v, make_frame(us=(-0.4, 0)), 4)                              # ring confirmed, no opponent yet
+    res = v.process(make_frame(us=(-0.4, 0), opp=(0.4, 0.1), opp_tag=3))
+    check("tagged opponent confirmed on the FIRST frame", res["opp"] is not None and res["opp"].get("tag_id") == 3,
+          f"{res['opp'] and res['opp'].get('tag_id')}")
+    ox, oy = ring_px(0.4, 0.1)
+    check("opponent position = their tag center", res["opp"] and abs(res["opp"]["x"] - ox) < 6 and abs(res["opp"]["y"] - oy) < 6)
+    check("our own tag (#6) is never the opponent", res["us"] is not None and res["opp"]["tag_id"] != config.OUR_TAG_ID)
+
+    v = Vision()
+    res = frames(v, make_frame(us=(-0.4, 0), tags=[((1.15, 0.2), 9)]), 6)  # tagged robot waiting OUTSIDE the ring
+    check("tagged robot outside the ring is ignored", res["opp"] is None and len(res["their_tags"]) == 1)
+
+    v = Vision()
+    res = frames(v, make_frame(us=(-0.4, 0), opp=(0.3, -0.3), tags=[((0.2, 0.45), 4)]), 6)
+    check("a tag beats an untagged blob", res["opp"] is not None and res["opp"].get("tag_id") == 4,
+          f"{res['opp'] and res['opp'].get('tag_id')}")
+
     print("behavior tree")
     brain = sumo_brain.Brain()
     _, s = run(brain, make_frame(us=(0, 0), opp=(0.5, 0)))
     check("idle waits for start", s["action"] == "Waiting for start" and s["sent"] == [0, 0], s["action"])
 
     brain.command({"cmd": "start"})
-    brain.vision.lock_ring(False)            # synthetic frames: let it keep fitting
+    brain.vision.lock_field(False)            # synthetic frames: let it keep fitting
     _, s = run(brain, make_frame(us=(0, 0), heading_deg=0, opp=(0.5, 0)), sensor="white")
     check("opponent to the right -> turn right (L>R)", "ATTACK" in s["action"] and s["sent"][0] > s["sent"][1],
           f"{s['action']} {s['sent']}")
@@ -228,7 +291,7 @@ def main():
 
     brain.command({"cmd": "reset"})
     brain.command({"cmd": "start"})
-    brain.vision.lock_ring(False)
+    brain.vision.lock_field(False)
     for u in (0.6, 0.8, 0.95, 1.1):          # opponent gets pushed out, frame by frame
         run(brain, make_frame(us=(0, 0), opp=(u, 0)), sensor="white", ticks=2)
     _, s = run(brain, make_frame(us=(0, 0), opp=(1.25, 0)), sensor="white", ticks=15)
@@ -236,9 +299,23 @@ def main():
 
     brain.command({"cmd": "reset"})
     brain.command({"cmd": "start"})
-    brain.vision.lock_ring(False)
+    brain.vision.lock_field(False)
     _, s = run(brain, make_frame(us=(0, 0), opp=(1.3, 0.3)), sensor="white", ticks=20)
     check("robot standing OUTSIDE the ring is not a fake win", s["match"] == "live", s["match"])
+
+    # long thin RECTANGULAR field: 100 px from the center is near the tape one way,
+    # nowhere near it the other way -- a circle model would treat both the same
+    def rect_frame(us_xy, heading_deg):
+        img = floor_only()
+        cv2.rectangle(img, (130, 150), (830, 390), (200, 90, 20), 14)    # inside: 693 x 233 px
+        paste_tag(img, ((us_xy[0] - 480) / 350, (us_xy[1] - 270) / 230), config.OUR_TAG_ID, heading_deg)
+        return img
+    _, s = run(brain, rect_frame((480, 370), 0), sensor="white", ticks=8)        # 100 px toward a LONG side
+    check("rectangle: 100 px toward the near long side -> ESCAPE toward center", "ESCAPE" in s["action"]
+          and min(s["sent"]) > 0, f"r={s['world']['us'] and s['world']['us']['r']} {s['action']} {s['sent']}")
+    _, s = run(brain, rect_frame((580, 270), 0), sensor="white", ticks=8)        # 100 px toward a SHORT side
+    check("rectangle: 100 px toward the far short side -> no escape", "ESCAPE" not in s["action"],
+          f"r={s['world']['us'] and s['world']['us']['r']} {s['action']}")
 
     print(f"\n{'ALL PASSED' if not check.failed else f'{check.failed} FAILED'}")
     return check.failed

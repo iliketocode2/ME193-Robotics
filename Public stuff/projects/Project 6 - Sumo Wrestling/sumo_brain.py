@@ -266,15 +266,15 @@ class Brain:
                     self.our_out_s = self.opp_out_s = 0.0
                     self.opp_inside_t = -1e9
                     self.vision.reset_opponent_track()
-                    self.vision.lock_ring(True)
+                    self.vision.lock_field(True)
                     play_reset = True
             elif cmd == "pause":
                 if self.match == "live":
                     self.match = "idle"
-                    self.vision.lock_ring(False)
+                    self.vision.lock_field(False)
             elif cmd == "reset":
                 self.match, self.target = "idle", None
-                self.vision.lock_ring(False)
+                self.vision.lock_field(False)
                 play_reset = True
             elif cmd == "strategy":
                 self.strategy = max(0.0, min(1.0, float(msg.get("value", 0.5))))
@@ -285,9 +285,8 @@ class Brain:
                     self.manual = (int(msg.get("l", 0)), int(msg.get("r", 0)))
                     self.manual_t = time.monotonic()
             elif cmd == "target":
-                ring = self.result["ring"] if self.result else None
-                if ring is not None:
-                    self.target, self.target_t = ring.to_ring(float(msg["x"]), float(msg["y"])), time.monotonic()
+                if self.result and self.result["field"] is not None:      # targets are camera pixels
+                    self.target, self.target_t = (float(msg["x"]), float(msg["y"])), time.monotonic()
             elif cmd == "clear_target":
                 self.target = None
             elif cmd == "dry_run":
@@ -295,7 +294,7 @@ class Brain:
             elif cmd == "hsv":
                 self.vision.set_hsv(msg["low"], msg["high"])
             elif cmd == "refit_ring":
-                self.vision.reset_ring()
+                self.vision.reset_field()
             elif cmd == "snapshot_arena":
                 self.vision.request_reference()
             elif cmd == "clear_arena":
@@ -317,11 +316,11 @@ class Brain:
     def _fill_blackboard(self, now, dt):
         bb = self.bb
         res = self.result if now - self.result_t < CAMERA_STALE_S else None
-        ring = res["ring"] if res else None
+        field = res["field"] if res else None
         bb.now, bb.match, bb.estop, bb.dry_run, bb.strategy = now, self.match, self.estop, self.dry_run, self.strategy
         bb.robot_ok = now - self.status_t < ROBOT_STALE_S and bool(self.status.get("motor"))
         bb.manual = self.manual if self.manual and now - self.manual_t < MANUAL_FRESH_S else None
-        bb.camera_ok = ring is not None
+        bb.camera_ok = field is not None
         bb.sensor_ok = now - self.sensor_t < SENSOR_STALE_S and self.sensor.get("color") is not None
         bb.rear_on_blue = self.rear_on_blue
         bb.blue_recent = now - self.last_blue_t < BLUE_RECENT_S
@@ -329,14 +328,17 @@ class Brain:
         if self.target and now - self.target_t > TARGET_TTL_S:
             self.target = None
         bb.target = self.target
+        # positions/headings in camera pixels (exact bearings on any field shape);
+        # r = normalized distance from the field center (1 = at the tape, that direction)
         bb.us = bb.opp = None
-        if ring is not None and res["us"]:
+        bb.center = field.center if field is not None else None
+        bb.scale = field.scale if field is not None else 1.0
+        if field is not None and res["us"]:
             u = res["us"]
-            pos = ring.to_ring(u["x"], u["y"])
-            bb.us = {"pos": pos, "r": math.hypot(*pos), "heading": ring.dir_to_ring(u["hx"], u["hy"])}
-        if ring is not None and res["opp"]:
-            pos = ring.to_ring(res["opp"]["x"], res["opp"]["y"])
-            bb.opp = {"pos": pos, "r": math.hypot(*pos)}
+            bb.us = {"pos": (u["x"], u["y"]), "r": field.radius_at(u["x"], u["y"]), "heading": (u["hx"], u["hy"])}
+        if field is not None and res["opp"]:
+            o = res["opp"]
+            bb.opp = {"pos": (o["x"], o["y"]), "r": field.radius_at(o["x"], o["y"])}
         # "Out for X seconds" timers advance only on NEW camera frames, by real
         # frame time -- a reused frame must not count twice. The opponent only
         # counts as pushed out if it was actually inside the ring recently, so
@@ -353,11 +355,11 @@ class Brain:
         elif not res:
             self.our_out_s = self.opp_out_s = 0.0
         bb.our_out_s, bb.opp_out_s = self.our_out_s, self.opp_out_s
-        return res, ring
+        return res, field
 
     def tick(self, now, dt):
         with self.lock:
-            res, ring = self._fill_blackboard(now, dt)
+            res, field = self._fill_blackboard(now, dt)
             statuses = bt.tick(self.tree, self.bb)
             bb = self.bb
             if bb.target is None:
@@ -368,7 +370,7 @@ class Brain:
             out = (0, 0) if self.dry_run else bb.out
             self.seq += 1
             cmd = {"seq": self.seq, "l": out[0], "r": out[1], "mode": bb.action[:40]}
-            snap = self._snapshot(res, ring, statuses, out, now)
+            snap = self._snapshot(res, field, statuses, out, now)
         self.publish(TOPIC_CMD, json.dumps(cmd))
         if event:
             songs_bridge.play("lose" if event == "lose" else "win", self.publish)
@@ -376,20 +378,21 @@ class Brain:
             self._chat("system", "WE'RE OUT - sad song" if event == "lose" else "OPPONENT OUT - we win!")
         return snap
 
-    def _snapshot(self, res, ring, statuses, out, now):
+    def _snapshot(self, res, field, statuses, out, now):
         bb = self.bb
         sp = bt.strategy_params(self.strategy)
 
         def px(p):
-            return list(ring.to_pixel(*p)) if (ring is not None and p is not None) else None
+            return [float(p[0]), float(p[1])] if p is not None else None
 
-        world = {"ring": ring.as_dict() if ring is not None else None,
-                 "ring_locked": self.vision.ring_locked,
+        world = {"field": field.as_dict() if field is not None else None,
+                 "field_locked": self.vision.field_locked,
                  "edge": sp["edge"], "out_r": bt.OUT_R,
                  "us": None, "opp": None, "robots": [],
                  "goal_px": px(bb.goal), "target_px": px(self.target),
-                 "ring_quality": res.get("ring_quality") if res else None,
-                 "ring_pending": bool(res.get("ring_pending")) if res else False,
+                 "field_quality": res.get("field_quality") if res else None,
+                 "field_kind": res.get("field_kind") if res else None,
+                 "field_pending": bool(res.get("field_pending")) if res else False,
                  "arena_ref_age": round(res["reference_age"]) if res and res.get("reference_age") is not None else None}
         if res:
             opp_box = res["opp"]["box"] if res["opp"] else None
@@ -399,7 +402,9 @@ class Brain:
                 world["us"] = dict(res["us"], r=round(bb.us["r"], 3) if bb.us else None)
             if res["opp"]:
                 world["opp"] = {"box": res["opp"]["box"], "x": res["opp"]["x"], "y": res["opp"]["y"],
-                                "r": round(bb.opp["r"], 3) if bb.opp else None}
+                                "r": round(bb.opp["r"], 3) if bb.opp else None,
+                                "tag_id": res["opp"].get("tag_id")}
+            world["tags"] = [{"id": t["id"], "corners": t["corners"]} for t in res.get("their_tags", [])]
         sensor_age = now - self.sensor_t if self.sensor_t else None
         return {
             "type": "state", "match": self.match, "action": bb.action, "bt": statuses,

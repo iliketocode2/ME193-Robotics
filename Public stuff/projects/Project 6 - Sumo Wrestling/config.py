@@ -24,7 +24,7 @@ STREAM2 = "http://192.168.1.183:8080/stream.mjpg"
 # Phone IP-camera app (same as Project 2: e.g. "SimpleIPCamera" MJPEG stream).
 # TODO: put your phone's URL here. A plain integer (0, 1, ...) uses a local
 # webcam instead; None asks with camlib.pick_camera() at startup.
-PHONE_STREAM_URL = STREAM2
+PHONE_STREAM_URL = STREAM1
 FRAME_ROTATION = None            # e.g. cv2.ROTATE_90_CLOCKWISE if the phone is mounted sideways
 PROCESS_WIDTH = 960              # frames are resized to this width before vision
 # True if the phone app mirrors the picture (text on the tag reads backwards).
@@ -38,6 +38,11 @@ TAG_PRINT_CM = 7.0               # printed black-square size (white border is ex
 # The tag's "up" (top edge in the printed image) points to the robot's FRONT
 # when mounted as the README shows. If you glued it rotated, fix it here.
 TAG_HEADING_OFFSET_DEG = 0.0
+# Opponents' tags: ANY tag in these families other than ours (#OUR_TAG_ID) marks
+# the opponent. The course uses tag36h11; if a classmate prints another family,
+# add it, e.g. cv2.aruco.DICT_APRILTAG_25h9 or cv2.aruco.DICT_4X4_50
+# (each extra family costs a few ms per frame).
+OPPONENT_TAG_DICTIONARIES = [cv2.aruco.DICT_APRILTAG_36h11]
 
 # ---- YOLO model (Roboflow-labelled, trained locally by train_sumo.py) --------
 MODEL_PATH = os.path.join(REPO_ROOT, "models", "sumo_yolo.pt")   # gitignored

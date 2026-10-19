@@ -17,7 +17,7 @@ The system runs in three places, so there is no single command. Start them in th
    my_env\Scripts\python "Public stuff/projects/Project 6 - Sumo Wrestling/sumo_brain.py"
    ```
    The dashboard opens at http://localhost:8293. Check that the status pills are green before the match.
-4. **Before each match, with the ring EMPTY** (no robots, no hands), click **Snapshot empty arena**. After that, only what changes from the snapshot can become the opponent. Take a new one if the phone moves or the lighting changes. Then put both robots in. The video header should read `field NN% tape`. If it says "no field", tune **Calibrate → HSV** until the tape is found.
+4. **Before each match, with the ring EMPTY** (no robots, no hands), click **Snapshot empty arena**. After that, only what changes from the snapshot can become the opponent. Take a new one if the phone moves or the lighting changes. Then put both robots in. The video header should read `field: closed tape loop` (or `field: partial, NN% tape` if the tape has gaps). If it says "no field", tune **Calibrate → HSV** until the tape is found.
 
 **To stop:** press Ctrl-C in the board terminal and on the laptop. The robot also stops on its own within 0.6 s whenever the laptop stops sending commands.
 
@@ -25,13 +25,13 @@ The relay runs on the board's host, not inside App Lab, because App Lab's contai
 
 ---
 
-Two robots in a ring of blue tape. The first one pushed fully out loses and has to stop and play a sad song.
+Two robots in a ring of blue tape (not necessarily a perfect circle). The first one pushed fully out loses and has to stop and play a sad song.
 
 Our robot is a LEGO Education **double motor**. A LEGO **color sensor** is mounted on its rear, looking down. An **Arduino UNO Q** rides on top. An **overhead phone camera** streams to the laptop, which runs the vision and a **behavior tree**. A web dashboard shows everything and lets us step in.
 
 ```
  phone (IP camera app) ──MJPEG──▶ laptop: sumo_brain.py ──────────────▶ web dashboard
-                                   │ vision.py: YOLO robots + AprilTag #6 (us) + blue ring
+                                   │ vision.py: blue-tape field + AprilTag #6 (us) + opponent (tag / YOLO)
                                    │ behavior_tree.py (15 Hz)              ▲ E-stop, start/pause,
                                    │                                       │ WASD, click target,
                                    ▼                                       │ strategy
@@ -48,16 +48,30 @@ Our robot is a LEGO Education **double motor**. A LEGO **color sensor** is mount
 |---|---|
 | `sumo_brain.py` | **Run this.** Camera → vision → behavior tree → MQTT commands, plus the dashboard server (http://localhost:8293). |
 | `behavior_tree.py` | The decision policy: a priority behavior tree (see below). |
-| `vision.py`, `field.py` | Ring ellipse fit (HSV), AprilTag pose (position + heading), YOLO / tag-only opponent detection, and ring-normalized coordinates. |
-| `config.py` | Laptop settings: phone URL, tag id, HSV defaults, ports, timing. |
+| `vision.py`, `field.py` | Finds the field as the space the blue tape **encloses**, in any shape (no circle assumed); stored as center + distance-to-tape in each of 180 directions. AprilTag pose for us (#6: position + heading). The opponent is found from **any other AprilTag** first (instant and reliable), then the YOLO model, then change detection. |
+| `config.py` | Laptop settings: phone URL, our tag id, opponent tag families (`OPPONENT_TAG_DICTIONARIES`), HSV defaults, ports, timing. |
 | `unoq_app/` | UNO Q App Lab app: `python/main.py`, `python/relay.py` (MQTT↔BLE), `python/sumo_topics.py` (**shared MQTT schema + card IDs**), `sketch/sketch.ino` (fan RPM from the tach wire). |
 | `unoq_app/python/ble_probe_unoq.py` | Step 1: checks whether the UNO Q can reach the LEGO devices over Bluetooth. |
 | `ble_relay_laptop.py` | Fallback: runs the same relay on the laptop if the UNO Q can't do BLE. |
 | `songs_bridge.py` | Win/lose songs: Project 3's mp3s on the laptop, plus the same note lists beeped on the double motor. |
 | `make_tag.py` → `tags/` | Our AprilTag (tag36h11 **#6**). The `_print.png` version prints at exactly 7 cm. |
 | `capture_frames.py`, `train_sumo.py` | Collect frames → label in Roboflow → train the local YOLO model. |
-| `test_sumo_offline.py` | No-hardware test of vision and every behavior-tree branch, using synthetic frames. |
+| `test_sumo_offline.py` | No-hardware test of vision (circular, rectangular, lopsided and broken-tape fields; opponent tags) and every behavior-tree branch, using synthetic frames. |
 | `web/` | Dashboard (plain HTML/CSS/JS, no build step). |
+
+## The field (any shape)
+
+The tape isn't assumed to be a circle. `vision.py` finds the space the blue tape encloses, and `field.py` stores it as a center plus the **distance to the tape in each direction** (a radial profile). That handles ovals, rectangles, wobbly hand-taped loops and dents.
+
+- Every robot gets a **normalized radius** `r`: 0 at the center, **1 at the tape in that direction**, more than 1 outside. All behavior-tree thresholds ("too close to the edge", "pushed out") are values of `r`, so they work for any field size, shape or camera height.
+- Positions, headings and clicked targets stay in **camera pixels**, so turn angles are exact on any shape. Distances such as "close enough to push" are divided by the field's size.
+- **Closed vs. partial:** if the tape forms a closed loop, its exact outline is used (`field: closed tape loop`). If the tape has gaps (taped badly, or covered by a robot), the outline is estimated from the pieces that are visible (`field: partial, NN% tape`).
+- A new field must be seen for a few frames before it's believed, and it's dropped about 1 s after the tape disappears. At match start the field **locks** so robots covering the tape can't change it. **Calibrate → Re-detect field** unlocks it.
+- The dashboard draws the real outline, plus the edge limit and "out" line as the same outline scaled toward the center (the exact `r` lines the brain uses).
+
+## Opponent tags
+
+If the opponent has an AprilTag on top, it's the most reliable cue: it is confirmed on the first frame. **Any** tag inside the field other than our #6 is treated as the opponent. Tags outside the field (a robot waiting its turn) are ignored and drawn in grey. The course uses tag36h11. If a classmate printed another family, add it to `OPPONENT_TAG_DICTIONARIES` in `config.py` (each extra family costs a few ms per frame).
 
 ## Fan wiring (Arctic P12 PRO, 4-pin PC fan, no motor driver)
 
@@ -92,8 +106,8 @@ All laptop commands run from the repo root, using `my_env` (Python 3.14 with ope
    `my_env\Scripts\python "Public stuff/projects/Project 6 - Sumo Wrestling/sumo_brain.py"`
    - Turn **Dry run** on first. Move the robots around by hand and watch "Next action" and the tree.
    - Click a spot to check that the robot would turn the right way. If turns are mirrored, set `CAMERA_MIRRORED` in `config.py`. If the real wheels turn wrong, set `FLIP_DRIVE` / `SWAP_SIDES` in `relay.py`.
-   - Open **Calibrate** and tune the HSV sliders until the blue ellipse hugs the tape.
-6. **Vision model (optional but better).** Without it, the brain uses **change detection**: the opponent is whatever differs from the empty-arena snapshot (or the floor color) and is robot-sized.
+   - Open **Calibrate** and tune the HSV sliders until the blue field outline hugs the inner edge of the tape. The header should say "field: closed tape loop"; "partial" means the tape has gaps the camera can't bridge.
+6. **Vision model (optional but better).** If the opponent has no AprilTag and there's no model, the brain uses **change detection**: the opponent is whatever differs from the empty-arena snapshot (or the floor color) and is robot-sized.
    - Run `capture_frames.py`.
    - Upload the frames from `runs/sumo_frames/` to Roboflow (app.roboflow.com, workspace `william-goldman`) and label the opponent cars. Our current model is the `lego-car-detection` project, class `Opponent`. Labeling our own robot too is optional; vision ignores whichever box holds our tag.
    - Export as **YOLOv8** with "Resize to 512×512 (Stretch)". Unzip the export into its own folder here (ours is `Lego Car Detection.v1.yolov8/`) and set `DATASET_DIR` in `train_sumo.py`.
@@ -125,49 +139,18 @@ Here `T = ME193/<TEAM>/sumo`. The source of truth is `unoq_app/python/sumo_topic
 - **Brain errors:** if the brain's tick crashes, it publishes an explicit stop and keeps the UI alive.
 - **Relay robustness:** a mid-match reconnect never blocks driving: drive commands are non-blocking, the color sensor only reconnects while the robot is idle, junk MQTT payloads on our public topics are ignored, and stopping the App Lab app (SIGTERM) runs `movement_stop()` + disconnect.
 
-## Draft answers for the Notion page
+## How this meets the assignment
 
-**The policy.** It is a **behavior tree**, one of the four algorithms from class. The root is a priority *selector* ticked 15 times a second, and each child is a *sequence* of a condition and an action. The first child whose condition holds drives the motors that tick. In priority order:
-1. E-stop
-2. Manual drive
-3. Robot link down
-4. Wait for start
-5. Pushed out → stop and play the sad song
-6. Opponent out → play the win song
-7. Escape edge
-8. Go to the clicked target
-9. Attack (align, then charge)
-10. Guard when the camera is lost
-11. Patrol the center
+The write-up (policy, sensors, teleoperation, strengths and weaknesses) is on our Notion page. This is the checklist against the requirements:
 
-Because higher branches pre-empt lower ones, staying in the ring always beats attacking. The dashboard highlights which branch is running.
-
-**Autonomous sensors.**
-- **Overhead phone camera.** It finds the ring (blue HSV mask + ellipse fit), our robot's position and heading (AprilTag #6), and the opponent (YOLO model trained from Roboflow labels). Everything is converted to "ring coordinates", where the tape is radius 1.
-- **LEGO color sensor** on the rear, facing the floor. It sees the tape directly.
-
-These are fused in two ways. "Escape edge" fires on *either* the camera (too far out) or the sensor (blue under the rear). "We lost" needs the camera to say we're out *and* the sensor to have crossed the tape (or the camera to be very sure), so one bad reading can't end the match. With no camera, the sensor still guards the back edge.
-
-**Teleoperation / shared control** from the dashboard:
-- E-stop
-- Manual start/pause/reset, in case the referee's `start` is missed
-- WASD manual driving, which overrides the policy while held
-- Click-to-target: tell the robot where to go, for example to flank
-- A strategy slider from defensive to aggressive, which changes charge speed, how close to the edge we're allowed to go, and the alignment tolerance
-- Dry-run mode
-- Live HSV calibration
-- A chat box on our MQTT channel
-
-**Strengths and weaknesses.**
-- *Strengths:*
-  - The camera gives the robot a full-field view, so it always knows where the center and the opponent are.
-  - It keeps pushing even near the edge when the opponent is between it and the tape.
-  - The rear sensor catches being shoved backward, the most common way to lose, even with no camera.
-  - Watchdogs make every failure stop the robot.
-  - The fan adds some downforce for traction, and its RPM is reported live so we know it's spinning.
-- *Weaknesses:*
-  - There is only one color sensor, on the back, so the front and sides are blind to the tape without the camera.
-  - The loop (camera → laptop → MQTT → UNO Q → BLE) adds roughly 150–300 ms of latency. Fast opponents get a head start.
-  - The phone has to stay still. The ring fit locks at match start, so if the phone is bumped after that, the ring has to be re-fit.
-  - Tag-only mode can mistake shadows or clutter for the opponent until the YOLO model is trained.
-  - The robot is a light double-motor chassis (limit 1 kg), so a heavier opponent may out-push it head-on.
+| Requirement | How we meet it |
+|---|---|
+| Built with LEGO hardware | LEGO Education double motor (tank drive) + LEGO color sensor. |
+| UNO Q as some kind of sensor, over MQTT | The UNO Q reads the fan's tach wire and publishes `fan_rpm` on `T/unoq`. It also runs `relay.py`, which publishes the color sensor's readings on `T/sensor` and robot health on `T/status`. |
+| ≤ 1 kg, fits in a 30 cm cube | TODO: weigh and measure the final build (with the fan and UNO Q on). |
+| One of the four decision-making policies | A **behavior tree** (`behavior_tree.py`), ticked at 15 Hz. |
+| At least two sensors in the decision inputs | Overhead phone camera (field, us, opponent) + rear color sensor (tape). Both feed the tree's conditions. |
+| At least one autonomous sensor | Both the camera and the color sensor are read with no human involved. |
+| At least one sensor via teleoperation | The dashboard: E-stop, start/pause, WASD, click-to-target on the camera view, strategy slider. |
+| Shared control based on sensor fusion | A clicked target or the strategy slider tells the robot *what* to do. The camera + color-sensor fusion still decides *when it's safe*: "Escape edge" outranks "Go to target" and "Attack" in the tree, and the slider moves the edge limit the fused check uses. |
+| Pushed out → stop and play a sad song | "Pushed out → LOSE" needs the camera **and** the color sensor to agree, then stops and plays the sad song (laptop mp3 + motor beeps). |
