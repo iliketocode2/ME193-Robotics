@@ -5,13 +5,15 @@
 The system runs in three places, so there is no single command. Start them in this order:
 
 1. **Phone:** open the IP-camera app and start streaming.
-2. **UNO Q, in two parts:**
-   - In **App Lab**, press **Run** on the sumo app. This part only reports the fan's speed (`RELAY_BLE = False`).
-   - In the **board terminal** (App Lab's terminal or SSH), start the relay, which talks to the motor and color sensor:
+2. **UNO Q:** plug it into the battery pack and turn on the double motor and color sensor. That's all, once the relay autostart is installed (below). The App Lab default app starts the fan-speed reporter, and the `sumo-relay` service connects to the LEGO devices by itself within about 30 s of boot. The dashboard's **Robot**, **Motor** and **Color** pills turn green when it's connected.
+   - **One-time setup** (board on USB, in the board terminal):
      ```
-     cd ~/ArduinoApps/<your app>/python && bash run_on_host.sh
+     cd ~/ArduinoApps/<your app>/python && bash install_autostart.sh
      ```
-     Our app folder is `ble-probe`. Wait for `[relay] double motor connected` and `[relay] color sensor connected`, then leave this terminal open.
+     Our app folder is `ble-probe`. It asks for the `arduino` user's password once (for `sudo`) and installs a systemd service. The service starts the relay at every boot, waits for Wi-Fi and Bluetooth, keeps retrying until the LEGO devices are on, and restarts the relay if it ever crashes.
+   - **Check on it:** `journalctl -u sumo-relay -f` shows the relay's live log. `sudo systemctl stop sumo-relay` / `start sumo-relay` stop and start it.
+   - **Running it by hand instead** (`bash run_on_host.sh`): first `sudo systemctl stop sumo-relay`. Two relays would fight over the LEGO devices.
+   - **Remove the autostart:** `bash install_autostart.sh --remove`.
 3. **Laptop:** in PowerShell from the repo root, start the brain:
    ```
    my_env\Scripts\python "Public stuff/projects/Project 6 - Sumo Wrestling/sumo_brain.py"
@@ -19,9 +21,9 @@ The system runs in three places, so there is no single command. Start them in th
    The dashboard opens at http://localhost:8293. Check that the status pills are green before the match.
 4. **Before each match, with the ring EMPTY** (no robots, no hands), click **Snapshot empty arena**. After that, only what changes from the snapshot can become the opponent. Take a new one if the phone moves or the lighting changes. Then put both robots in. The video header should read `field: closed tape loop` (or `field: partial, NN% tape` if the tape has gaps). If it says "no field", tune **Calibrate → HSV** until the tape is found.
 
-**To stop:** press Ctrl-C in the board terminal and on the laptop. The robot also stops on its own within 0.6 s whenever the laptop stops sending commands.
+**To stop:** press Ctrl-C on the laptop. The robot stops on its own within 0.6 s whenever the laptop stops sending commands. Unplugging the battery stops the board.
 
-The relay runs on the board's host, not inside App Lab, because App Lab's container can't reach Bluetooth (see "Setup and run order", step 3).
+The relay runs on the board's own Linux (as the `sumo-relay` service), not inside App Lab, because App Lab's container can't reach Bluetooth (see "Setup and run order", step 3).
 
 ---
 

@@ -258,8 +258,13 @@ class RobotRelay:
 
 
 if __name__ == "__main__":
-    # Standalone mode (UNO Q host over SSH, or laptop)
+    # Standalone mode (UNO Q host via run_on_host.sh / the sumo-relay service, or laptop)
+    import signal
+
     relay = RobotRelay()
+    # systemd stops the service with SIGTERM: end the loop normally so run()'s
+    # finally block stops the motors and disconnects (default SIGTERM would skip it)
+    signal.signal(signal.SIGTERM, lambda signum, frame: relay.stop_event.set())
     try:
         relay.run()
     except KeyboardInterrupt:
