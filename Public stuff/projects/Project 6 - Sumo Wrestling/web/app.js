@@ -1,8 +1,8 @@
 // Sumo Control dashboard. Talks to sumo_brain.py over a websocket on page port + 1:
 //   in:  JSON {type: "hello" | "state" | "chat"}, binary "F"+JPEG video frames
 //   out: JSON {cmd: ...} -- estop, start, pause, reset, strategy, manual, target,
-//        clear_target, dry_run, hsv, refit_ring, snapshot_arena, clear_arena, say,
-//        test_song, frame_ack (sent after each video frame is decoded = flow control)
+//        clear_target, snapshot_arena, say, frame_ack (flow control), and from the
+//        Advanced drawer: calibrate_drive, dry_run, refit_ring, clear_arena, test_song, hsv
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("video");
@@ -13,6 +13,7 @@ let state = null;
 let frameBitmap = null;
 let dirty = true;                          // redraw only when a frame or state actually changed
 let treeNames = [];
+const MANUAL_SPEED = 70;                   // % for WASD driving
 let topicRoot = "";
 let refereeTopic = "ME193/Rogers";
 
@@ -20,8 +21,7 @@ let refereeTopic = "ME193/Rogers";
 function connect() {
   ws = new WebSocket(`ws://${location.hostname}:${Number(location.port) + 1}`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => setPill("ws", true);
-  ws.onclose = () => { setPill("ws", false); setTimeout(connect, 1000); };
+  ws.onclose = () => { setPill("mqtt", false, "Brain offline"); setTimeout(connect, 1000); };
   ws.onmessage = async (ev) => {
     if (typeof ev.data !== "string") {
       const bytes = new Uint8Array(ev.data);
@@ -51,7 +51,6 @@ function onHello(msg) {
   refereeTopic = msg.referee;
   $("team").textContent = `${msg.team} · ${msg.topic_root}`;
   treeNames = msg.tree;
-  $("tree").innerHTML = treeNames.map((n, i) => `<span class="node" data-i="${i}">${n}</span>`).join("");
   $("chat").innerHTML = "";
   msg.chat.forEach(addChat);
 }
@@ -70,62 +69,49 @@ function onState(s) {
   state = s;
   dirty = true;
   const L = s.links;
-  setPill("mqtt", L.mqtt);
-  setPill("robot", L.robot, L.relay_host ? `Robot · ${L.relay_host}` : "Robot");
-  setPill("motor", L.motor);
-  setPill("color", L.color);
-  setPill("camera", L.camera, L.camera ? `Camera · ${L.fps} fps` : "Camera");
+  setPill("mqtt", L.mqtt, "MQTT");
+  const missing = [!L.motor && "motor", !L.color && "color sensor"].filter(Boolean);
+  setPill("robot", L.robot && !missing.length,
+          !L.robot ? "Robot · offline" : missing.length ? `Robot · no ${missing.join(", ")}` : "Robot");
+  setPill("camera", L.camera, L.camera ? `Camera · ${L.fps} fps` : "Camera · no field");
   setPill("fan", s.fan_rpm > 0, s.fan_rpm == null ? "Fan · ?" : `Fan · ${s.fan_rpm} rpm`);
-  const q = s.world.field_quality;
-  const field = s.world.field
-    ? (s.world.field_kind === "closed" ? "field: closed tape loop" : `field: partial, ${Math.round((q || 0) * 100)}% tape`)
-    : (s.world.field_pending ? "field: confirming…" : "no field");
-  $("camMeta").textContent = `${L.cam_status} · ${field} · ${L.mode}${L.vision_ms != null ? ` · ${L.vision_ms} ms` : ""}`;
+  const w = s.world;
+  const field = w.field ? (w.field_kind === "closed" ? "field ✓" : `field: partial ${Math.round((w.field_quality || 0) * 100)}%`)
+                        : (w.field_pending ? "field: confirming…" : "no field");
+  $("camMeta").textContent = `${field} · ${L.mode.replace(/^YOLO /, "")}${L.vision_ms != null ? ` · ${L.vision_ms} ms` : ""}`;
 
   const m = $("match");
   m.textContent = s.match === "idle" ? "WAITING" : s.match.toUpperCase();
   m.className = `match ${s.match}`;
 
   $("action").textContent = s.action || "—";
+  const active = treeNames[s.bt.indexOf("active")];
+  $("branch").textContent = [active && `branch: ${active}`, s.dry_run && "DRY RUN"].filter(Boolean).join(" · ");
   const card = $("actionCard");
-  card.classList.toggle("danger", /E-STOP|PUSHED OUT|ESCAPE/.test(s.action));
+  card.classList.toggle("danger", /E-STOP|PUSHED OUT|ESCAPE|FAILED/.test(s.action));
   card.classList.toggle("win", s.match === "won");
   setBar("L", s.sent[0]);
   setBar("R", s.sent[1]);
-  const flags = [
-    ["dry run", s.dry_run], ["manual", s.manual],
-    [s.world.field_locked ? "field locked" : "field tracking", s.world.field_locked],
-  ];
-  if (s.dry_run && (s.out[0] || s.out[1])) flags.push([`would send ${s.out[0]}/${s.out[1]}`, true]);
-  $("flags").innerHTML = flags.map(([t, on]) => `<span class="${on ? "on" : ""}">${t}</span>`).join("");
 
-  document.querySelectorAll(".node").forEach((el, i) => { el.className = `node ${s.bt[i] || "idle"}`; });
-
-  // sensor
   const sn = s.sensor;
-  $("sensorAge").textContent = sn.ok ? `${Math.round((sn.age || 0) * 1000)} ms` : "no data";
-  $("swatchName").textContent = sn.name || "?";
-  if (sn.rgb && sn.rgb[0] != null) {
+  $("swatchName").textContent = sn.ok ? (sn.name || "?") : "no data";
+  if (sn.ok && sn.rgb && sn.rgb[0] != null) {
     const mx = Math.max(1, ...sn.rgb);
     const [r, g, b] = sn.rgb.map((v) => Math.round((v / mx) * 255 * Math.min(1, (sn.reflection || 50) / 60 + 0.3)));
     $("swatch").style.background = `rgb(${r},${g},${b})`;
-    $("sRgb").textContent = sn.rgb.join(" / ");
   }
-  $("sRefl").textContent = sn.reflection ?? "—";
-  $("sHsv").textContent = sn.hue != null ? `${sn.hue} / ${sn.sat} / ${sn.val}` : "—";
   $("edgeWarn").classList.toggle("on", !!sn.on_blue);
 
-  // controls reflect server truth
   $("estop").classList.toggle("on", s.estop);
-  $("estop").firstChild.textContent = s.estop ? "E-STOPPED " : "E-STOP ";
+  $("estop").textContent = s.estop ? "E-STOPPED (click to release)" : "E-STOP";
   if (document.activeElement !== $("strategy")) $("strategy").value = s.strategy;
   $("stratLabel").textContent = STRAT_NAMES.find(([t]) => s.strategy < t)[1];
-  const p = s.strategy_params;
-  $("stratParams").textContent = `charge ${p.charge.toFixed(0)}% · edge r ${p.edge.toFixed(2)} · align ${p.align.toFixed(0)}°`;
-  $("dry").checked = s.dry_run;
-  const age = s.world.arena_ref_age;
-  $("arenaStatus").textContent = age == null ? "no snapshot - using floor color (less reliable)" : `snapshot ✓ ${age}s ago`;
+  const age = w.arena_ref_age;
+  $("arenaStatus").textContent = age == null ? "no snapshot yet (take one with the field empty)" : `snapshot ✓ ${age}s ago`;
   $("arenaStatus").classList.toggle("ok", age != null);
+  $("calStatus").textContent = s.calibrating ? "calibrating… keep clear" : `drive: ${s.drive_cal}`;
+  $("btnCalib").disabled = !!s.calibrating;
+  $("dry").checked = s.dry_run;
   syncHsv(s.hsv);
 }
 
@@ -290,14 +276,12 @@ $("btnPause").onclick = () => send({ cmd: "pause" });
 $("btnReset").onclick = () => send({ cmd: "reset" });
 $("btnRefit").onclick = () => send({ cmd: "refit_ring" });
 $("btnArena").onclick = () => send({ cmd: "snapshot_arena" });
+$("btnCalib").onclick = () => send({ cmd: "calibrate_drive" });
 $("btnArenaClear").onclick = () => send({ cmd: "clear_arena" });
 $("btnWin").onclick = () => send({ cmd: "test_song", song: "win" });
 $("btnLose").onclick = () => send({ cmd: "test_song", song: "lose" });
 $("strategy").oninput = (e) => send({ cmd: "strategy", value: Number(e.target.value) });
 $("dry").onchange = (e) => send({ cmd: "dry_run", on: e.target.checked });
-$("manSpeed").oninput = (e) => ($("manSpeedVal").textContent = e.target.value);
-$("showHi").onchange = (e) => $("chat").classList.toggle("hide-hi", !e.target.checked);
-$("chat").classList.add("hide-hi");
 
 // HSV calibration sliders (OpenCV ranges: H 0-179, S/V 0-255)
 const HSV_ROWS = [["H low", "low", 0, 179], ["H high", "high", 0, 179], ["S low", "low", 1, 255],
@@ -338,20 +322,18 @@ document.addEventListener("keydown", (e) => {
   if (!k) return;
   e.preventDefault();
   held.add(k);
-  markKeys();
   if (!manualTimer) { sendManual(); manualTimer = setInterval(sendManual, 100); }
 });
 document.addEventListener("keyup", (e) => {
   const k = KEYMAP[e.key.toLowerCase()];
   if (!k) return;
   held.delete(k);
-  markKeys();
   if (!held.size) stopManual();
 });
-window.addEventListener("blur", () => { held.clear(); markKeys(); stopManual(); });
+window.addEventListener("blur", () => { held.clear(); stopManual(); });
 
 function sendManual() {
-  const sp = Number($("manSpeed").value);
+  const sp = MANUAL_SPEED;
   const fwd = (held.has("w") ? 1 : 0) - (held.has("s") ? 1 : 0);
   const turn = (held.has("d") ? 1 : 0) - (held.has("a") ? 1 : 0);
   let l = fwd * sp + turn * sp * 0.6, r = fwd * sp - turn * sp * 0.6;
@@ -362,7 +344,6 @@ function stopManual() {
   clearInterval(manualTimer); manualTimer = null;
   send({ cmd: "manual", release: true });
 }
-function markKeys() { document.querySelectorAll("kbd[data-key]").forEach((el) => el.classList.toggle("down", held.has(el.dataset.key))); }
 
 // ------------------------------------------------------------------ chat
 function addChat(c) {

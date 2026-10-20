@@ -31,6 +31,15 @@ PROCESS_WIDTH = 960              # frames are resized to this width before visio
 # A mirrored image flips left/right turns, so the brain would steer the wrong way.
 CAMERA_MIRRORED = False
 
+# ---- drive direction -------------------------------------------------------------
+# REVERSE_DRIVE: the robot drove backward when told to go forward, so forward and
+# backward are swapped for every command (behavior tree and WASD). Turning is
+# kept as is. If the robot ALSO turns away from what it aims at, set
+# REVERSE_TURN = True. (A saved "Calibrate drive direction" result, if any,
+# replaces both.)
+REVERSE_DRIVE = True
+REVERSE_TURN = False
+
 # ---- AprilTag on top of OUR robot --------------------------------------------
 APRILTAG_DICTIONARY = cv2.aruco.DICT_APRILTAG_36h11
 OUR_TAG_ID = 6                   # "Project 6"; printed by make_tag.py

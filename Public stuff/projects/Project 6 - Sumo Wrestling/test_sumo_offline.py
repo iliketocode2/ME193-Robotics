@@ -94,6 +94,20 @@ def run(brain, frame, sensor=None, ticks=8, dt=1 / 15, before_tick=None):
     return res, snap
 
 
+def blind(brain, seconds, dt=1 / 15):
+    """Camera gives NOTHING for `seconds` (phone swung away): robot link and
+    sensor stay fresh, but no new vision results arrive. Returns snaps over time."""
+    snaps, t0 = [], time.monotonic()
+    while time.monotonic() - t0 < seconds:
+        now = time.monotonic()
+        with brain.lock:
+            brain.status, brain.status_t = {"motor": True, "color": True}, now
+            brain.sensor, brain.sensor_t = {"color": 7, "name": "white"}, now
+        snaps.append((now - t0, brain.tick(now, dt)))
+        time.sleep(dt)
+    return snaps
+
+
 def check(name, cond, detail=""):
     print(f"  [{'PASS' if cond else 'FAIL'}] {name}  {detail}")
     if not cond:
@@ -262,6 +276,33 @@ def main():
     check("opponent to the left -> turn left (R>L)", s["sent"][1] > s["sent"][0], f"{s['action']} {s['sent']}")
     _, s = run(brain, make_frame(us=(0, 0.1), heading_deg=0, opp=(0, -0.45)), sensor="white")
     check("opponent dead ahead -> charge", "ATTACK" in s["action"] and min(s["sent"]) > 40, f"{s['action']} {s['sent']}")
+    charge = s["sent"]
+
+    # --- vision dropouts: keep executing the last move for a moment ---
+    _, s = run(brain, make_frame(opp=(0, -0.45)), sensor="white", ticks=4)          # our tag blurred out
+    check("our tag lost -> HOLD the charge", s["action"].startswith("HOLD") and s["sent"] == charge,
+          f"{s['action']} {s['sent']}")
+    _, s = run(brain, make_frame(opp=(0, -0.45)), sensor="white", ticks=18)         # ...for too long
+    check("tag lost > 1 s -> stop holding", not s["action"].startswith("HOLD") and s["sent"] == [0, 0], s["action"])
+
+    run(brain, make_frame(us=(0, 0.1), opp=(0, -0.45)), sensor="white")             # charging again
+    snaps = blind(brain, 2.4)                                                       # phone swung away entirely
+    held = [snap for t, snap in snaps if 0.8 < t < 1.4]
+    after = [snap for t, snap in snaps if t > 2.0]
+    check("camera lost -> keeps driving the last command", held and all(sn["sent"] == charge for sn in held),
+          f"{held and held[-1]['action']}")
+    check("camera lost too long -> GUARD (stop)", after and all(sn["sent"] == [0, 0] for sn in after),
+          f"{after and after[-1]['action']}")
+
+    run(brain, make_frame(us=(0, 0.1), opp=(0, -0.45)), sensor="white")             # charging again
+    brain.command({"cmd": "estop", "on": True}); run(brain, make_frame(us=(0, 0.1), opp=(0, -0.45)), ticks=1)
+    brain.command({"cmd": "estop", "on": False})
+    _, s = run(brain, make_frame(opp=(0, -0.45)), sensor="white", ticks=3)
+    check("after an E-stop a dropout does NOT resume the old move", not s["action"].startswith("HOLD"), s["action"])
+
+    _, s = run(brain, make_frame(us=(0, 0.2), heading_deg=0, opp=(0.5, -0.2)), sensor="white")
+    check("opponent off to the side -> ARC (both wheels forward, turning)", "closing in" in s["action"]
+          and min(s["sent"]) >= 0 and s["sent"][0] > s["sent"][1], f"{s['action']} {s['sent']}")
 
     _, s = run(brain, make_frame(us=(0.88, 0), heading_deg=90, opp=(-0.5, 0.3)), sensor="white")
     check("near edge facing out -> escape toward center (backs up)", "ESCAPE" in s["action"] and sum(s["sent"]) < 0,
@@ -310,12 +351,58 @@ def main():
         cv2.rectangle(img, (130, 150), (830, 390), (200, 90, 20), 14)    # inside: 693 x 233 px
         paste_tag(img, ((us_xy[0] - 480) / 350, (us_xy[1] - 270) / 230), config.OUR_TAG_ID, heading_deg)
         return img
+    brain.command({"cmd": "strategy", "value": 0.2})      # edge limit r = 0.74 (Balanced is 0.80)
     _, s = run(brain, rect_frame((480, 370), 0), sensor="white", ticks=8)        # 100 px toward a LONG side
     check("rectangle: 100 px toward the near long side -> ESCAPE toward center", "ESCAPE" in s["action"]
           and min(s["sent"]) > 0, f"r={s['world']['us'] and s['world']['us']['r']} {s['action']} {s['sent']}")
     _, s = run(brain, rect_frame((580, 270), 0), sensor="white", ticks=8)        # 100 px toward a SHORT side
     check("rectangle: 100 px toward the far short side -> no escape", "ESCAPE" not in s["action"],
           f"r={s['world']['us'] and s['world']['us']['r']} {s['action']}")
+
+    print("drive calibration (simulated robots)")
+    import drive_calibration as dcal
+
+    class SimRobot:
+        """Kinematics only: pose in image pixels, angle = physical front, + = clockwise on screen."""
+        def __init__(self, tag_backward=False, motors_reversed=False, sides_swapped=False):
+            self.x, self.y, self.a = 480.0, 270.0, -math.pi / 2          # facing up the image
+            self.tag_backward, self.rev, self.swap = tag_backward, motors_reversed, sides_swapped
+
+        def drive(self, cmd, dt):
+            l, r = cmd
+            if self.swap:
+                l, r = r, l
+            if self.rev:
+                l, r = -l, -r
+            v, w = (l + r) / 2 * 2.0, (l - r) / 2 * 0.03          # px/s per %, rad/s per %
+            self.a += w * dt
+            self.x += v * dt * math.cos(self.a)
+            self.y += v * dt * math.sin(self.a)
+
+        def tag(self):
+            a = self.a + (math.pi if self.tag_backward else 0.0)
+            return {"x": self.x, "y": self.y, "hx": math.cos(a), "hy": math.sin(a)}
+
+    for name, kw in (("normal", {}), ("tag backwards", {"tag_backward": True}),
+                     ("motors reversed", {"motors_reversed": True}), ("sides swapped", {"sides_swapped": True})):
+        bot, cal, t, dt = SimRobot(**kw), dcal.Calibrator(0.0), 0.0, 1 / 15
+        start = (bot.x, bot.y)
+        while cal.result is None and cal.error is None and t < 6:
+            cmd, _ = cal.step(t, bot.tag(), 275.0)
+            bot.drive(cmd, dt)
+            t += dt
+        res = cal.result
+        if not res:
+            check(f"calibration '{name}' finishes", False, cal.error)
+            continue
+        # after calibration: brain "forward" must move along the tag arrow, brain "right" must turn clockwise
+        tag0 = bot.tag(); x0, y0 = bot.x, bot.y
+        bot.drive(dcal.to_motor((50, 50), res), 0.5)
+        along = (bot.x - x0) * tag0["hx"] + (bot.y - y0) * tag0["hy"]
+        h0 = bot.tag(); bot.drive(dcal.to_motor((40, -40), res), 0.3); h1 = bot.tag()
+        cw = h0["hx"] * h1["hy"] - h0["hy"] * h1["hx"]
+        check(f"calibration '{name}': forward along tag arrow + right turn is clockwise", along > 0 and cw > 0,
+              f"{res['forward']:+d}/{res['turn']:+d}, ends {math.hypot(bot.x - start[0], bot.y - start[1]):.0f}px from start")
 
     print(f"\n{'ALL PASSED' if not check.failed else f'{check.failed} FAILED'}")
     return check.failed

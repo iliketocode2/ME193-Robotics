@@ -282,7 +282,12 @@ class Vision:
         best, best_cov = None, None
         for cand in candidates:
             hull = cv2.convexHull(cand)
-            f = Field.from_contour(hull)
+            outline = Field.from_contour(hull)          # only for its center
+            if outline is None:
+                continue
+            # measure to the tape's INNER edge (like closed-loop mode), not the hull's outer
+            # edge -- otherwise the field would grow by a tape width whenever the loop breaks
+            f = Field.from_points(cand.reshape(-1, 2), outline.cx, outline.cy)
             if not self._plausible(f, hull, H, W):
                 continue
             cov = self._outline_checks(f, near_tape)
@@ -291,8 +296,9 @@ class Vision:
         return (best, best_cov, "partial") if best is not None else (None, None, None)
 
     def _update_field(self, found, quality, kind, now):
-        if self.field_locked and self.field is not None:
-            return
+        # "Locked" (match live) means: never DROP the field -- robots hide the tape
+        # and a hand-held phone wobbles -- but still follow it, so if the phone
+        # shifts, the field moves with it once the new position is confirmed.
         if found is not None and self.field is not None and self.field.similar(found):
             self.field = self.field.blend(found, FIELD_SMOOTH)          # same field: smooth it
             self.field_seen_t, self.field_pending = now, None
@@ -307,7 +313,7 @@ class Vision:
                 return
         else:
             self.field_pending = None
-        if self.field is not None and now - self.field_seen_t > FIELD_LOST_S:
+        if self.field is not None and not self.field_locked and now - self.field_seen_t > FIELD_LOST_S:
             self.field, self.field_quality, self.field_kind = None, None, None   # no tape -> no field
 
     # ------------------------------------------------------------ us
@@ -403,7 +409,10 @@ class Vision:
         H, W = blue.shape
         lab = self._small_lab(frame)
         blue_s = cv2.resize(blue, (W // 2, H // 2), interpolation=cv2.INTER_NEAREST)
-        change = self._change_mask(lab, blue_s, field)
+        # the change mask is only needed for change detection, or to vet YOLO boxes
+        # against an empty-arena snapshot -- skip it otherwise (saves a few ms)
+        need_change = self.model is None or self.reference is not None
+        change = self._change_mask(lab, blue_s, field) if need_change else None
         search = field.mask(blue_s.shape, BLOB_SEARCH_SCALE, downscale=2)   # field outline, grown 40%
         no_tape = cv2.dilate(blue_s, np.ones((7, 7), np.uint8)) == 0
         if change is not None:

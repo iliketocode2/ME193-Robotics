@@ -19,6 +19,7 @@ The system runs in three places, so there is no single command. Start them in th
    my_env\Scripts\python "Public stuff/projects/Project 6 - Sumo Wrestling/sumo_brain.py"
    ```
    The dashboard opens at http://localhost:8293. Check that the status pills are green before the match.
+   - **One time, and again whenever you rebuild the robot or re-glue the tag:** put the robot in the middle of the field and open **Advanced → Calibrate drive direction**. The robot drives forward a little, turns a little and comes back while the camera watches its tag. It works out whether the tag faces backwards, the motors are reversed or the sides are swapped, and saves the result to `drive_calibration.json`. Every command, including WASD, goes through it, so "forward" and "turn right" always match the real robot.
 4. **Before each match, with the ring EMPTY** (no robots, no hands), click **Snapshot empty arena**. After that, only what changes from the snapshot can become the opponent. Take a new one if the phone moves or the lighting changes. Then put both robots in. The video header should read `field: closed tape loop` (or `field: partial, NN% tape` if the tape has gaps). If it says "no field", tune **Calibrate → HSV** until the tape is found.
 
 **To stop:** press Ctrl-C on the laptop. The robot stops on its own within 0.6 s whenever the laptop stops sending commands. Unplugging the battery stops the board.
@@ -139,6 +140,7 @@ Here `T = ME193/<TEAM>/sumo`. The source of truth is `unoq_app/python/sumo_topic
 - **E-stop:** the dashboard button or the Space key, at the top of the behavior tree.
 - **Stop method:** every stop uses `movement_stop()`. Note that `lelib.doubleMotor.stop()` only stops the **left** motor, because it calls `motor_stop()` with the default `motor=0`.
 - **Brain errors:** if the brain's tick crashes, it publishes an explicit stop and keeps the UI alive.
+- **Vision dropouts (hand-held phone):** the "Hold last command" branch keeps executing the last attack, escape or target move for up to `HOLD_LAST_CMD_S` (1 s, in `behavior_tree.py`). This covers the field, our tag or the opponent briefly vanishing. After that the robot stops ("Guard"). The rear color sensor's escape still outranks a held move, and an E-stop, manual drive or match end clears it, so a held move can never resume after the robot was told to stop. During a match the field is never dropped, but it follows the tape if the phone shifts.
 - **Relay robustness:** a mid-match reconnect never blocks driving: drive commands are non-blocking, the color sensor only reconnects while the robot is idle, junk MQTT payloads on our public topics are ignored, and stopping the App Lab app (SIGTERM) runs `movement_stop()` + disconnect.
 
 ## How this meets the assignment

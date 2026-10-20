@@ -38,6 +38,7 @@ import paho.mqtt.client as mqtt
 from websockets.asyncio.server import broadcast, serve
 
 import behavior_tree as bt
+import drive_calibration as dcal
 import songs_bridge
 from config import (BROKER_HOST, BROKER_PORT, CAMERA_STALE_S, FRAME_ROTATION, HERE,
                     HTTP_PORT, PHONE_STREAM_URL, PROCESS_WIDTH, ROBOT_STALE_S, SENSOR_STALE_S,
@@ -96,6 +97,8 @@ class Brain:
         self.opp_inside_t = -1e9                   # last time the opponent was seen inside the ring
         self.last_out = (0, 0)
         self.seq = 0
+        self.drive_cal = dcal.load()               # forward/turn signs measured by "Calibrate drive"
+        self.calibrator = None                     # running calibration, if any
         self.chat = collections.deque(maxlen=200)
         self.chat_last = {}
         self.chat_id = self.chat_sent_id = 0
@@ -293,6 +296,12 @@ class Brain:
                 self.dry_run = bool(msg.get("on"))
             elif cmd == "hsv":
                 self.vision.set_hsv(msg["low"], msg["high"])
+            elif cmd == "calibrate_drive":
+                if self.match == "live":
+                    self._chat_locked("Pause the match before calibrating the drive")
+                elif self.calibrator is None:
+                    self.calibrator = dcal.Calibrator(time.monotonic())
+                    self._chat_locked("Calibrating drive: short drive forward, turn, and back")
             elif cmd == "refit_ring":
                 self.vision.reset_field()
             elif cmd == "snapshot_arena":
@@ -368,8 +377,13 @@ class Brain:
             if event:
                 self.match = "lost" if event == "lose" else "won"
             out = (0, 0) if self.dry_run else bb.out
+            # brain command (tag frame) -> motor command, using the drive calibration
+            motor = dcal.to_motor(out, self.drive_cal)
+            if self.calibrator is not None:
+                motor = self._calibration_tick(now, res, field)
+                out = motor
             self.seq += 1
-            cmd = {"seq": self.seq, "l": out[0], "r": out[1], "mode": bb.action[:40]}
+            cmd = {"seq": self.seq, "l": motor[0], "r": motor[1], "mode": bb.action[:40]}
             snap = self._snapshot(res, field, statuses, out, now)
         self.publish(TOPIC_CMD, json.dumps(cmd))
         if event:
@@ -377,6 +391,34 @@ class Brain:
             self.publish(TOPIC_RESULT, json.dumps({"event": event, "team": TEAM}))
             self._chat("system", "WE'RE OUT - sad song" if event == "lose" else "OPPONENT OUT - we win!")
         return snap
+
+    def _calibration_tick(self, now, res, field):
+        """One tick of a running drive calibration (lock held). -> raw motor command."""
+        bb, cal = self.bb, self.calibrator
+        if bb.estop or not bb.robot_ok:
+            self.calibrator = None
+            self._chat_locked("Drive calibration aborted (E-stop or robot link lost)")
+            return (0, 0)
+        us = res["us"] if res and now - self.result_t < 0.3 else None
+        raw, label = cal.step(now, us, field.scale if field is not None else 300.0)
+        bb.action = label
+        if cal.error:
+            self.calibrator = None
+            self._chat_locked(f"Drive calibration FAILED: {cal.error}")
+            return (0, 0)
+        if cal.result:
+            self.calibrator = None
+            self.drive_cal = cal.result
+            dcal.save(cal.result)
+            self._chat_locked(f"Drive calibrated: {dcal.describe(cal.result)}")
+            return (0, 0)
+        return raw
+
+    def _chat_locked(self, text):
+        """_chat() from code that already holds self.lock."""
+        self.chat_id += 1
+        self.chat.append({"type": "chat", "id": self.chat_id, "topic": "system", "text": text,
+                          "ts": time.time(), "hi": False})
 
     def _snapshot(self, res, field, statuses, out, now):
         bb = self.bb
@@ -412,6 +454,7 @@ class Brain:
             "fan_rpm": self.unoq.get("fan_rpm") if now - self.unoq_t < UNOQ_STALE_S else None,
             "estop": self.estop, "dry_run": self.dry_run,
             "strategy": self.strategy, "strategy_params": sp, "manual": bb.manual is not None,
+            "drive_cal": dcal.describe(self.drive_cal), "calibrating": self.calibrator is not None,
             "links": {"mqtt": self.mqtt_ok, "robot": bb.robot_ok, "motor": bool(self.status.get("motor")),
                       "color": bool(self.status.get("color")), "relay_host": self.status.get("host"),
                       "camera": bb.camera_ok, "cam_status": self.cam_status,

@@ -17,8 +17,11 @@ the action writes the motor command. So higher branches pre-empt lower ones
      |- Opponent out -> WIN    opponent outside the ring   -> stop, win song
      |- Escape edge            rear sensor sees blue tape  -> drive forward
      |                         or camera says near edge    -> head to center
+     |- Hold last command      vision dropped out briefly  -> keep doing the last
+     |                         (phone shifted, tag blurred)   attack/escape/target move
+     |                                                        for up to HOLD_LAST_CMD_S
      |- Go to clicked target   user clicked the video      -> drive there
-     |- Attack                 opponent visible            -> align, charge
+     |- Attack                 opponent visible            -> arc toward it, charge
      |- Guard (camera lost)    no camera                   -> hold (sensor still guards)
      '- Patrol center          otherwise                   -> back to center, scan
 
@@ -52,13 +55,18 @@ PUSH_BEARING = 30
 TARGET_REACHED = 0.10    # field radii
 TURN_GAIN = 1.2          # motor % per degree of bearing error
 MAX_TURN = 70
+MIN_EFFECTIVE = 30       # LEGO motors barely move below ~30%: any motion command is lifted to at least this
+SPIN_BEHIND = 100        # opponent more than this many degrees off our nose -> turn in place first
+ARC_MIN_FORWARD = 32     # while turning toward the opponent, keep driving forward at least this much
+HOLD_LAST_CMD_S = 1.0    # vision dropout: keep executing the last move for up to this long
+HOLDABLE = ("Escape edge", "Go to target", "Attack", "Patrol center")   # branches whose moves can be held
 
 
 def strategy_params(s):
     """s = 0 (defensive) .. 1 (aggressive)."""
-    return {"charge": 60 + 40 * s,            # % speed when charging
-            "edge": 0.65 + 0.20 * s,          # ring radius where we turn back
-            "align": 25 - 10 * s}             # degrees of bearing error tolerated before charging
+    return {"charge": 55 + 30 * s,            # % speed when charging (55..85: engaged, never flat out)
+            "edge": 0.70 + 0.20 * s,          # normalized radius where we turn back
+            "align": 40 - 15 * s}             # bearing error (deg) still counted as "lined up" -> full charge
 
 
 def make_blackboard():
@@ -74,6 +82,7 @@ def make_blackboard():
         our_out_s=0.0, opp_out_s=0.0,
         target=None,                 # (x, y) px clicked on the video
         strategy=0.5,
+        last_cmd=None,               # {"out", "action", "goal", "t", "branch"}: last good move (for Hold)
         # outputs
         out=(0, 0), action="", goal=None, event=None, trace=[],
     )
@@ -139,12 +148,13 @@ def _clamp(v, lim=100):
     return int(max(-lim, min(lim, round(v))))
 
 
-def drive_toward(bearing, speed, allow_reverse=False, min_forward=0.0, forward_only=False):
+def drive_toward(bearing, speed, allow_reverse=False, min_forward=0.0, turn_cap=None):
     """Tank command that turns toward `bearing` (deg, + = right) while
     driving; slows to turn in place for big errors. With allow_reverse, a
-    target behind us is reached by backing up instead of a U-turn. With
-    forward_only, both wheels keep turning forward (the turn is capped) so
-    the robot's rear can't swing backward."""
+    target behind us is reached by backing up instead of a U-turn. turn_cap
+    limits the turn to that fraction of the forward speed, so the inner wheel
+    never reverses: 0.6 = gentle arc (rear can't swing back), 1.0 = tightest
+    arc (inner wheel stops, robot pivots forward around it)."""
     if allow_reverse and abs(bearing) > 110:
         rb = wrap_deg(bearing - 180)
         turn = max(-MAX_TURN, min(MAX_TURN, TURN_GAIN * rb))
@@ -152,13 +162,24 @@ def drive_toward(bearing, speed, allow_reverse=False, min_forward=0.0, forward_o
         return _clamp(-s + turn), _clamp(-s - turn)
     turn = max(-MAX_TURN, min(MAX_TURN, TURN_GAIN * bearing))
     s = max(min_forward, speed * max(0.0, 1 - abs(bearing) / 60))
-    if forward_only:
-        turn = max(-0.6 * s, min(0.6 * s, turn))
+    if turn_cap is not None:
+        turn = max(-turn_cap * s, min(turn_cap * s, turn))
     return _clamp(s + turn), _clamp(s - turn)
 
 
+def _lift(out):
+    """Scale a non-zero command up so its stronger wheel gets at least MIN_EFFECTIVE %
+    (keeps the turn/drive ratio; low powers just stall the LEGO motors)."""
+    l, r = out
+    m = max(abs(l), abs(r))
+    if m == 0 or m >= MIN_EFFECTIVE:
+        return out
+    k = MIN_EFFECTIVE / m
+    return _clamp(l * k), _clamp(r * k)
+
+
 def _set(bb, out, action, goal=None):
-    bb.out, bb.action, bb.goal = out, action, goal
+    bb.out, bb.action, bb.goal = _lift(out), action, goal
     return RUNNING
 
 
@@ -182,6 +203,17 @@ def near_edge(bb):
         return False
     limit = 1.0 if pushing(bb) else strategy_params(bb.strategy)["edge"]
     return bb.us["r"] > limit
+
+
+def holding(bb):
+    """Vision dropped out (no field, no tag, or the opponent we were attacking
+    vanished) shortly after a good move: keep doing that move a little longer."""
+    last = bb.last_cmd
+    if last is None or bb.now - last["t"] > HOLD_LAST_CMD_S:
+        return False
+    lost_view = not bb.camera_ok or bb.us is None
+    lost_opp = last["branch"] == "Attack" and bb.opp is None
+    return lost_view or lost_opp
 
 
 def we_are_out(bb):
@@ -219,7 +251,7 @@ def act_win(bb):
 def act_escape(bb):
     if bb.sensor_ok and bb.rear_on_blue:
         if bb.camera_ok and bb.us:
-            out = drive_toward(_bearing_to(bb, bb.center), 85, min_forward=60, forward_only=True)
+            out = drive_toward(_bearing_to(bb, bb.center), 85, min_forward=60, turn_cap=0.6)
         else:
             out = (80, 80)
         return _set(bb, out, "ESCAPE - tape under rear sensor, driving forward", bb.center)
@@ -240,12 +272,25 @@ def act_target(bb):
 def act_attack(bb):
     p = strategy_params(bb.strategy)
     b = _bearing_to(bb, bb.opp["pos"])
-    if abs(b) > p["align"]:
-        turn = max(-60, min(60, TURN_GAIN * b))
-        return _set(bb, (_clamp(turn), _clamp(-turn)), f"ATTACK - aligning ({b:+.0f} deg)", bb.opp["pos"])
-    out = drive_toward(b, p["charge"], min_forward=p["charge"] * 0.8)
+    if abs(b) > SPIN_BEHIND:                  # opponent behind us: turn in place first
+        turn = 50 if b > 0 else -50
+        return _set(bb, (turn, -turn), f"ATTACK - turning to face it ({b:+.0f} deg)", bb.opp["pos"])
+    if abs(b) > p["align"]:                   # off to the side: ARC toward it (keep moving)
+        s_fwd = max(ARC_MIN_FORWARD, 0.6 * p["charge"] * (1 - abs(b) / 150))
+        out = drive_toward(b, s_fwd, min_forward=s_fwd, turn_cap=1.0)
+        return _set(bb, out, f"ATTACK - closing in ({b:+.0f} deg)", bb.opp["pos"])
+    out = drive_toward(b, p["charge"], min_forward=p["charge"] * 0.85)
     verb = "PUSHING" if pushing(bb) else "charging"
     return _set(bb, out, f"ATTACK - {verb} at {p['charge']:.0f}%", bb.opp["pos"])
+
+
+def act_hold(bb):
+    last = bb.last_cmd
+    age = bb.now - last["t"]
+    why = "no field" if not bb.camera_ok else ("lost our tag" if bb.us is None else "lost opponent")
+    bb.out, bb.goal = last["out"], last["goal"]
+    bb.action = f"HOLD ({why} {age:.1f}s) - {last['action']}"[:90]
+    return RUNNING
 
 
 def act_patrol(bb):
@@ -254,7 +299,7 @@ def act_patrol(bb):
     if bb.us["r"] > 0.25:
         return _set(bb, drive_toward(_bearing_to(bb, bb.center), 50, allow_reverse=True),
                     "Return to center", bb.center)
-    return _set(bb, (25, -25), "Center - scanning for opponent")
+    return _set(bb, (35, -35), "Center - scanning for opponent")
 
 
 def build_tree():
@@ -270,6 +315,7 @@ def build_tree():
         branch("Opponent out -> WIN",
                lambda bb: bb.opp is not None and bb.opp_out_s >= OPP_OUT_HOLD_S, act_win),
         branch("Escape edge", near_edge, act_escape),
+        branch("Hold last command", holding, act_hold),
         branch("Go to target", lambda bb: bb.target is not None and bb.camera_ok and bb.us, act_target),
         branch("Attack", lambda bb: bb.camera_ok and bb.us and bb.opp, act_attack),
         branch("Guard (camera lost)", lambda bb: not bb.camera_ok,
@@ -288,13 +334,20 @@ def tick(tree, bb):
     bb.trace, bb.event, bb.goal = [], None, None
     tree.tick(bb)
     ran = {name: status for name, status in bb.trace}
-    statuses, found = [], False
+    statuses, active = [], None
     for c in tree.children:
-        if found:
+        if active:
             statuses.append("idle")
         elif ran.get(c.name, FAILURE) != FAILURE:
             statuses.append("active")
-            found = True
+            active = c.name
         else:
             statuses.append("failed")
+    # remember the last good move for "Hold last command"; anything that means
+    # "stop" (E-stop, manual, link lost, waiting, match over) forgets it, so a
+    # held move can never resume after the robot was told to stop
+    if active in HOLDABLE and bb.out != (0, 0):
+        bb.last_cmd = {"out": bb.out, "action": bb.action, "goal": bb.goal, "t": bb.now, "branch": active}
+    elif active not in HOLDABLE + ("Hold last command",):
+        bb.last_cmd = None
     return statuses

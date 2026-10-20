@@ -54,12 +54,21 @@ class Field:
         if m["m00"] <= 0:
             return None
         cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
-        # densify so every direction bin gets boundary points
-        dense = []
-        for a, b in zip(pts, np.roll(pts, -1, axis=0)):
-            n = max(1, int(np.hypot(*(b - a)) // 2))
-            dense.append(a + (b - a) * np.linspace(0, 1, n, endpoint=False)[:, None])
-        pts = np.vstack(dense)
+        # densify (a point every ~2 px along each edge) so every direction bin gets
+        # boundary points -- vectorized: a Python loop here cost ~35 ms per frame
+        seg = np.roll(pts, -1, axis=0) - pts
+        n = np.maximum(1, (np.hypot(seg[:, 0], seg[:, 1]) // 2).astype(int))
+        idx = np.repeat(np.arange(len(pts)), n)
+        t = (np.arange(n.sum()) - np.repeat(np.cumsum(n) - n, n)) / np.repeat(n, n)
+        return cls.from_points(pts[idx] + seg[idx] * t[:, None], cx, cy)
+
+    @classmethod
+    def from_points(cls, pts, cx, cy):
+        """Field around a known center from scattered tape points (e.g. both edges
+        of broken tape arcs): radius per direction = the NEAREST tape point that
+        way = the tape's inner edge; directions with no tape (gaps) are filled in
+        from their neighbours."""
+        pts = np.asarray(pts, float).reshape(-1, 2)
         d = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy)
         ang = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
         bins = ((ang + np.pi) / (2 * np.pi) * N_BINS).astype(int) % N_BINS
