@@ -1,0 +1,6 @@
+name: Activity Wearable
+description: "Shoe-mounted MPU-6050: classifies standing still / walking / running / biking with two non-neural models"
+icon: 👟
+ports: []
+bricks:
+  - arduino:web_ui

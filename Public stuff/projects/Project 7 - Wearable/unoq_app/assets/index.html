@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Activity Wearable</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Activity Wearable</h1>
+      <div class="pills">
+        <span id="pill-link" class="pill bad">Board: connecting…</span>
+        <span id="pill-imu" class="pill bad">IMU: —</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="predictions">
+        <article class="card prediction" id="m1">
+          <h2>Model 1 · Peak acceleration <span class="sub" id="m1-axis"></span></h2>
+          <div class="state" data-label="">—</div>
+          <div class="conf"><div class="bar"></div></div>
+          <p class="detail">Not trained yet</p>
+          <div class="number-line" id="peak-line"></div>
+        </article>
+        <article class="card prediction" id="m2">
+          <h2>Model 2 · All IMU outputs <span class="sub">k-NN</span></h2>
+          <div class="state" data-label="">—</div>
+          <div class="conf"><div class="bar"></div></div>
+          <p class="detail">Not trained yet</p>
+        </article>
+      </section>
+
+      <section class="card">
+        <h2>Accelerometer <span class="sub">g · last 5 s</span></h2>
+        <canvas id="chart-acc" height="160"></canvas>
+        <h2>Gyroscope <span class="sub">°/s · last 5 s</span></h2>
+        <canvas id="chart-gyro" height="160"></canvas>
+        <div class="legend"><span class="x">x</span><span class="y">y</span><span class="z">z</span></div>
+      </section>
+
+      <section class="card">
+        <h2>Training data</h2>
+        <p class="hint">Press an activity, do it for 20–60 s, then press Stop. The first and last 2 s are
+          dropped. Record each activity a few times, then press Train.</p>
+        <div class="labels" id="labels"></div>
+        <div class="actions">
+          <button id="stop" disabled>Stop</button>
+          <button id="train" class="primary">Train both models</button>
+          <span id="rec-status"></span>
+        </div>
+        <p id="notice"></p>
+        <div id="report"></div>
+      </section>
+    </main>
+
+    <script src="libs/socket.io.min.js"></script>
+    <script src="libs/arduino.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
