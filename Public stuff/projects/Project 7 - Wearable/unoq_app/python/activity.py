@@ -138,6 +138,42 @@ class KnnModel:
         return cls(d["k"], np.array(d["mean"]), np.array(d["scale"]), np.array(d["X"]), np.array(d["y"]))
 
 
+MAP_NAMES = [f"peak {a}" for a in AXES] + FEATURE_NAMES
+
+
+def map_vector(win):
+    """Everything the feature-map page can plot for one window: Model 1's peaks, then Model 2's features."""
+    return np.concatenate([peak_features(win), full_features(win)])
+
+
+def pick_map_y(F, y, x_index, confusion=None):
+    """The feature (not the x one) that best separates the pair of activities
+    Model 1 mixes up most -- or all the activities, if there's no confusion
+    matrix yet. Returns (index into MAP_NAMES, the pair or None)."""
+    F, y = np.asarray(F, dtype=float), np.asarray(y)
+    groups = list(np.unique(y))
+    pair = None
+    if confusion:
+        m = np.array(confusion["matrix"], dtype=float)
+        np.fill_diagonal(m, 0)
+        m = m + m.T
+        if m.max() > 0:
+            i, j = np.unravel_index(np.argmax(m), m.shape)
+            pair = [confusion["labels"][i], confusion["labels"][j]]
+            groups = pair
+    best, best_score = None, -1.0
+    for f in range(len(AXES), F.shape[1]):          # only Model 2's features
+        if f == x_index:
+            continue
+        vals = [F[y == lab, f] for lab in groups if np.any(y == lab)]
+        if len(vals) < 2:
+            continue
+        score = np.var([v.mean() for v in vals]) / (np.mean([v.var() for v in vals]) + 1e-9)
+        if score > best_score:
+            best, best_score = f, score
+    return best, pair
+
+
 def _confusion(model_predict, feats, y):
     present = [lab for lab in LABELS if lab in set(y)]
     m = np.zeros((len(present), len(present)), dtype=int)

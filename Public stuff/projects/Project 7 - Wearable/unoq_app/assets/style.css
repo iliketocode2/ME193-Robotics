@@ -204,3 +204,51 @@ button:disabled { opacity: 0.4; cursor: default; }
 #report th, #report td { border: 1px solid var(--line); padding: 3px 8px; text-align: center; }
 #report td.hit { font-weight: 700; }
 #report h3 { font-size: 13px; margin: 0 0 6px; }
+
+/* page tabs (Dashboard / Feature map) */
+.tabs { display: flex; gap: 4px; margin-right: auto; margin-left: 16px; }
+.tabs a {
+  padding: 5px 12px;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+.tabs a.active { background: var(--card); color: var(--text); border: 1px solid var(--line); }
+
+/* feature map page */
+.map-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 12px 0; }
+.map-controls label { color: var(--muted); font-size: 13px; }
+.map-controls select {
+  font: inherit;
+  font-size: 13px;
+  margin-left: 4px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+}
+.map-wrap { position: relative; }
+#map { height: min(62vh, 560px); margin-bottom: 4px; }
+#strip { height: 84px; }
+.strip-label { color: var(--muted); font-size: 12px; margin: 10px 0 2px; }
+.tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  white-space: nowrap;
+}
+.map-legend { flex-wrap: wrap; margin: 8px 0; }
+.map-legend span::before { background: var(--c); width: 10px; height: 10px; }
+.map-legend .lg-circle::before { border-radius: 50%; }
+.map-legend .lg-diamond::before { transform: rotate(45deg) scale(0.85); }
+.map-legend .lg-triangle::before { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.map-legend .lg-you::before { background: var(--text); border-radius: 50%; width: 12px; height: 12px; }
+main > * { min-width: 0; }      /* canvases mustn't prop grid columns wider than a phone screen */

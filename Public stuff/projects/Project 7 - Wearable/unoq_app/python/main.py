@@ -47,6 +47,7 @@ last_sample_time = 0.0
 recording = None                    # {"label", "samples", "start"} while recording
 models = {"peak": None, "knn": None, "report": None}
 recent = {"m1": deque(maxlen=SMOOTH), "m2": deque(maxlen=SMOOTH)}
+feature_map = None                  # training windows for the map page (map.html)
 
 
 def log(msg):
@@ -126,6 +127,24 @@ def load_models():
         log(f"couldn't load {MODEL_PATH.name}: {e}")
 
 
+def build_feature_map(recs):
+    """Every training window as a point the map page can plot, plus which axes to start on."""
+    global feature_map
+    rows, labels = [], []
+    for label, samples in recs:
+        for w in act.windows(samples):
+            rows.append(act.map_vector(w))
+            labels.append(label)
+    if not rows:
+        feature_map = None
+        return
+    peak, report = models["peak"], models["report"]
+    x = peak.axis if peak is not None else 2
+    y, pair = act.pick_map_y(rows, labels, x, report.get("model1") if report else None)
+    feature_map = {"names": act.MAP_NAMES, "points": np.round(rows, 3).tolist(), "labels": labels,
+                   "x": int(x), "y": int(y), "pair": pair}
+
+
 def save_recording(rec):
     trim = int(TRIM_S * act.SAMPLE_HZ)
     samples = rec["samples"][trim:len(rec["samples"]) - trim]
@@ -181,6 +200,8 @@ def on_train(sid, data):
         d.clear()
     log(f"trained on {len(recs)} recordings, peak axis {report['peak_axis']}")
     notice("Trained both models.")
+    build_feature_map(recs)
+    on_get_map(None, None)
     send_status()
 
 
@@ -194,6 +215,10 @@ def on_delete(sid, data):
         removed += 1
     notice(f"Deleted {removed} {label} recording(s). Retrain to update the models.")
     send_status()
+
+
+def on_get_map(sid, data):
+    ui.send_message("map", feature_map or {})
 
 
 def notice(text):
@@ -226,6 +251,7 @@ ui.on_message("record", on_record)
 ui.on_message("stop", on_stop)
 ui.on_message("train", on_train)
 ui.on_message("delete", on_delete)
+ui.on_message("get_map", on_get_map)
 ui.on_connect(lambda sid: send_status())
 
 
@@ -238,13 +264,14 @@ def smoothed(key, label):
 
 def predict(window):
     peaks = act.peak_features(window)
-    out = {"peaks": [round(float(p), 3) for p in peaks], "m1": None, "m2": None}
+    feats = act.full_features(window)
+    out = {"peaks": [round(float(p), 3) for p in peaks], "m1": None, "m2": None,
+           "vec": np.round(np.concatenate([peaks, feats]), 3).tolist()}   # for the map page
     if models["peak"] is not None:
         label, conf = models["peak"].predict(peaks)
         out["m1"] = {"label": smoothed("m1", label), "raw": label, "conf": round(conf, 2),
                      "value": round(float(peaks[models["peak"].axis]), 3)}
     if models["knn"] is not None:
-        feats = act.full_features(window)
         label, conf = models["knn"].predict(feats)
         out["m2"] = {"label": smoothed("m2", label), "raw": label, "conf": round(conf, 2),
                      "cadence": round(float(feats[-2]), 2)}
@@ -274,4 +301,8 @@ def loop():
 
 
 load_models()
+try:
+    build_feature_map(load_recordings())
+except Exception as e:
+    log(f"couldn't build the feature map: {e}")
 App.run(user_loop=loop)

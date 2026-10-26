@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Feature Map</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Activity Wearable</h1>
+      <nav class="tabs">
+        <a href="index.html">Dashboard</a>
+        <a href="map.html" class="active">Feature map</a>
+      </nav>
+      <div class="pills">
+        <span id="pill-link" class="pill bad">Board: connecting…</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Where is this window, compared to every training window?</h2>
+        <p class="hint" id="explain">Waiting for training data…</p>
+        <div class="map-controls">
+          <label>x <select id="sel-x"></select></label>
+          <label>y <select id="sel-y"></select></label>
+          <button id="reset">Reset axes</button>
+        </div>
+        <div class="map-wrap">
+          <canvas id="map"></canvas>
+          <div id="tip" class="tip" hidden></div>
+        </div>
+        <p class="strip-label"><b>What Model 1 sees:</b> the same points squashed onto the x-axis alone</p>
+        <canvas id="strip"></canvas>
+        <div class="legend map-legend" id="legend"></div>
+        <p class="detail" id="now">—</p>
+      </section>
+    </main>
+
+    <script src="libs/socket.io.min.js"></script>
+    <script src="libs/arduino.js"></script>
+    <script src="map.js"></script>
+  </body>
+</html>

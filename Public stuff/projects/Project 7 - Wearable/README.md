@@ -39,6 +39,12 @@ battery pack.
 3. **Collect training data.** Tap an activity, do it for 20–60 s, then tap **Stop**. The first and last 2 s are dropped automatically. Record each activity two or three times. Use **delete** on an activity to throw out its recordings and redo them.
 4. Tap **Train both models**. The page shows each model's accuracy and confusion matrix on held-out data (the last 25 % of every recording, which isn't used for fitting). The models are then refit on everything and saved to `models.json`, so they survive a restart.
 5. Move around. Both predictions update every 0.5 s. Model 1's number line shows where each activity's typical peak sits and where your current peak is.
+6. Open the **Feature map** tab (`map.html`). Every training window is a faint dot and you are the big moving dot.
+   - The x-axis is Model 1's only input.
+   - The y-axis is the Model 2 feature that best separates the two activities Model 1 confuses most.
+   - The strip underneath shows the same points on the x-axis alone, which is all Model 1 can see.
+   - Clusters that overlap left to right but separate top to bottom are where Model 2 beats Model 1.
+   - The dropdowns let you plot any pair of features.
 
 Recordings are saved as CSV in `data/` inside the app folder on the board. Deploying
 never deletes them.
