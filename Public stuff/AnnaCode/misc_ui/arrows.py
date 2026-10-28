@@ -65,13 +65,106 @@ def debug_label(svg_el, x: float, y: float, value: float):
     svg_el.appendChild(rect)
     svg_el.appendChild(txt)
 
+LEVEL_TOL = 30   # one-to-one arrows whose ends are this close in height are drawn dead level
+
+def _level(y1: float, y2: float):
+    """Both ends of a one-to-one arrow at the same height when they nearly line up (the ends are tall boxes,
+    so the midpoint still lands inside both)."""
+    if abs(y2 - y1) <= LEVEL_TOL:
+        ym = (y1 + y2) / 2
+        return ym, ym
+    return y1, y2
+
+# Names on the arrows (x, n1, ...) are real text boxes laid over the diagram so they can be edited.
+# Drawing the arrows only collects where each one goes; _sync_name_boxes() creates/moves the boxes,
+# leaving a box alone while it is being typed in.
+_name_specs: list[dict] = []
+
+def _current_name(kind: str, item_id: int) -> str:
+    if kind == "in":
+        inp = next((i for i in state.inputs if i["id"] == item_id), None)
+        return inp["name"] if inp else ""
+    for layer in state.layers:
+        for k, n in enumerate(layer["neurons"]):
+            if n["id"] == item_id:
+                return n.get("name") or f"n{k + 1}"
+    return ""
+
+def _refresh_name_boxes(kind: str, item_id: int):
+    """Every box for the same input/neuron shows its current name (the one being typed in is left alone)."""
+    for el in list(state.get_id("network-wrap").querySelectorAll(".arrow-name")):
+        if el.dataset.item == f"{kind}-{item_id}" and document.activeElement != el:
+            el.value = _current_name(kind, item_id)
+
+def _on_name_input(evt, kind: str, item_id: int):
+    new = evt.target.value.strip()
+    if kind == "in":
+        inp = next((i for i in state.inputs if i["id"] == item_id), None)
+        if inp and new:
+            inp["name"] = new
+    else:
+        for layer in state.layers:
+            n = next((n for n in layer["neurons"] if n["id"] == item_id), None)
+            if n:
+                if new:
+                    n["name"] = new
+                else:
+                    n.pop("name", None)
+    import sync
+    sync.sync_var_labels()
+    _refresh_name_boxes(kind, item_id)
+
+def _sync_name_boxes():
+    wrap = state.get_id("network-wrap")
+    if not wrap:
+        return
+    keep = set()
+    for s in _name_specs:
+        eid = f"arrow-name-{s['key']}"
+        keep.add(eid)
+        el = state.get_id(eid)
+        if not el:
+            el = document.createElement("input")
+            el.type = "text"
+            el.id = eid
+            el.className = "arrow-name"
+            el.maxLength = 8
+            el.spellcheck = False
+            el.setAttribute("autocomplete", "off")
+            el.title = "Click to rename"
+            el.dataset.item = f"{s['kind']}-{s['id']}"
+            el.addEventListener("input", create_proxy(lambda evt, k=s["kind"], i=s["id"]: _on_name_input(evt, k, i)))
+            el.addEventListener("focus", create_proxy(lambda evt: evt.target.select()))   # click, then just type the new name
+            el.addEventListener("blur", create_proxy(lambda evt, k=s["kind"], i=s["id"]: setattr(evt.target, "value", _current_name(k, i))))
+            wrap.appendChild(el)
+        if document.activeElement != el:
+            el.value = s["text"]
+        w = max(34, 11 * len(el.value) + 16)
+        el.style.width = f"{w}px"
+        el.style.left = f"{s['x'] - w / 2}px"
+        el.style.top = f"{s['y'] - 12}px"
+    for el in list(wrap.querySelectorAll(".arrow-name")):
+        if el.id not in keep:
+            el.remove()
+
 def straight_arrow(svg_el, x1, y1, x2, y2, stroke_w: float = 2.0, debug_value=None,
-                    label_t: float = 0.5, label_side: float = 1.0):
+                    label_t: float = 0.5, label_side: float = 1.0, name: tuple | None = None,
+                    name_key: str = ""):
     d = f"M{x1:.2f},{y1:.2f} L{x2:.2f},{y2:.2f}"
     svg_el.appendChild(svg_path(d, stroke_w))
     arrowhead(svg_el, x2, y2, x2 - x1, y2 - y1, stroke_w)
 
-    if state.debug_mode and debug_value is not None:
+    if name:
+        # near the start of the arrow, on the opposite side from the debug number
+        text, kind, item_id = name
+        dx, dy = x2 - x1, y2 - y1
+        length = math.sqrt(dx * dx + dy * dy) or 1.0
+        offset = -17 * label_side
+        _name_specs.append({"key": f"{kind}-{name_key}", "kind": kind, "id": item_id, "text": text,
+                            "x": x1 + dx * 0.22 + (-dy / length) * offset,
+                            "y": y1 + dy * 0.22 + (dx / length) * offset})
+
+    if state.debug_mode and state.mode != "fitting" and debug_value is not None:   # Fitting has no live values
         mx, my = x1 + (x2 - x1) * label_t, y1 + (y2 - y1) * label_t
         dx, dy = x2 - x1, y2 - y1
         length = math.sqrt(dx * dx + dy * dy) or 1.0
@@ -79,7 +172,7 @@ def straight_arrow(svg_el, x1, y1, x2, y2, stroke_w: float = 2.0, debug_value=No
         offset = 13 * label_side
         debug_label(svg_el, mx + px * offset, my + py * offset, debug_value)
 
-def fan_arrows(svg_el, src_pts, tgt_pts, src_heights, tgt_heights, value_fn):
+def fan_arrows(svg_el, src_pts, tgt_pts, src_heights, tgt_heights, value_fn, name_fn=None):
     """Bipartite fan of straight arrows from every src point to every tgt point,
     spread vertically at both ends so lines don't all overlap."""
     n_src, n_tgt = len(src_pts), len(tgt_pts)
@@ -111,9 +204,13 @@ def fan_arrows(svg_el, src_pts, tgt_pts, src_heights, tgt_heights, value_fn):
             label_t  = min(max(label_t, 0.15), 0.85)
             label_side = 1.0 if (src_idx + tgt_idx) % 2 == 0 else -1.0
 
+            if n_src == 1 and n_tgt == 1:
+                tail_y, head_y = _level(tail_y, head_y)
+
             straight_arrow(svg_el, sx, tail_y, tx, head_y, stroke_w=1.8,
                            debug_value=value_fn(sid) if value_fn else None,
-                           label_t=label_t, label_side=label_side)
+                           label_t=label_t, label_side=label_side,
+                           name=name_fn(sid) if name_fn else None, name_key=f"{sid}-{tid}")
 
 def _anchor_points(id_prefix: str, item_list: list, id_key: str = "id"):
     """Returns (left_pts, right_pts, heights) for a list of items whose DOM
@@ -134,6 +231,13 @@ def _anchor_points(id_prefix: str, item_list: list, id_key: str = "id"):
     return left_pts, right_pts, heights
 
 def redraw_arrows():
+    del _name_specs[:]
+    try:
+        _draw_arrows()
+    finally:
+        _sync_name_boxes()
+
+def _draw_arrows():
     svg_el  = state.get_id("arrow-svg")
     wrap_el = state.get_id("network-wrap")
     if (not svg_el or not wrap_el or not state.inputs or not state.layers
@@ -159,8 +263,9 @@ def redraw_arrows():
     layer0_l_pts, layer0_r_pts, layer0_heights = _anchor_points("cell-neuron-", state.layers[0]["neurons"])
     if not layer0_l_pts:
         return
+    in_names = {i["id"]: (i["name"], "in", i["id"]) for i in state.inputs}
     fan_arrows(svg_el, in_r_pts, layer0_l_pts, in_heights, layer0_heights,
-               value_fn=lambda iid: state.input_values.get(iid))
+               value_fn=lambda iid: state.input_values.get(iid), name_fn=in_names.get)
 
     prev_r_pts, prev_heights = layer0_r_pts, layer0_heights
 
@@ -169,6 +274,21 @@ def redraw_arrows():
         neuron_l_pts, neuron_r_pts, neuron_heights = _anchor_points("cell-neuron-", layer["neurons"])
         if not neuron_l_pts:
             return
+        n_names = {n["id"]: (n.get("name") or f"n{k + 1}", "n", n["id"]) for k, n in enumerate(layer["neurons"])}
+        last_in_fitting = state.mode == "fitting" and idx == len(state.layers) - 1   # Fitting keeps the output linear
+        if not state.show_activation_blocks or last_in_fitting:
+            # Activation blocks are hidden: neurons connect straight on
+            if idx + 1 < len(state.layers):
+                next_l_pts, _, next_heights = _anchor_points("cell-neuron-", state.layers[idx + 1]["neurons"])
+                fan_arrows(svg_el, neuron_r_pts, next_l_pts, neuron_heights, next_heights,
+                           value_fn=lambda nid: state.neuron_post_values.get(nid), name_fn=n_names.get)
+            else:
+                # last layer -> outputs, paired positionally (1st neuron <-> 1st output)
+                for (nx, ny, nid), (ox, oy, oid) in zip(neuron_r_pts, out_l_pts):
+                    ny, oy = _level(ny, oy)
+                    straight_arrow(svg_el, nx, ny, ox, oy, stroke_w=2.0,
+                                   debug_value=state.output_values.get(oid))
+            continue
         act_el = state.get_id(f"act-box-{lid}")
         if not act_el:
             continue
@@ -186,7 +306,7 @@ def redraw_arrows():
             next_l_pts, _, next_heights = _anchor_points("cell-neuron-", state.layers[idx + 1]["neurons"])
             src_pts_from_box = [(act_rx, ny, nid) for (nx, ny, nid) in neuron_r_pts]
             fan_arrows(svg_el, src_pts_from_box, next_l_pts, neuron_heights, next_heights,
-                       value_fn=lambda nid: state.neuron_post_values.get(nid))
+                       value_fn=lambda nid: state.neuron_post_values.get(nid), name_fn=n_names.get)
         else:
             # last layer -> outputs (1:1 diverge, matching positional pairing)
             for (ox, oy, oid) in out_l_pts:

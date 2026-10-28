@@ -3,6 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <script>
+        // Web Bluetooth (needed for the hardware) only exists in Chrome/Chromium browsers
+        if (!navigator.bluetooth) {
+            alert("AnnaCode only works with hardware in Google Chrome.\n\nPlease reopen this page in Chrome to connect to your hub.");
+        }
+    </script>
     <link rel="stylesheet" href="https://pyscript.net/releases/2026.3.1/core.css">
     <script type="module" src="https://pyscript.net/releases/2026.3.1/core.js"></script>
     <title>AnnaCode Trainer</title>
@@ -175,7 +181,7 @@
                     </svg>
                 </button>
                 <label class="debug-toggle hidden" id="debug-toggle-wrap" title="Show live values on the arrows">
-                    <input type="checkbox" id="debug-toggle" />
+                    <input type="checkbox" id="debug-toggle" checked />
                     <span class="debug-toggle-track"><span class="debug-toggle-thumb"></span></span>
                     <span class="debug-toggle-label">Debug</span>
                 </label>
@@ -193,6 +199,7 @@
                     <button class="btn-generate-data" id="generate-data-btn" title="Sample the connected input/output hardware every 0.1s and add each reading as a new row">Collect</button>
                     <button class="btn-generate-data" id="clear-data-btn" title="Clear dataset">Clear</button>
                 </div>
+                <p class="dataset-tip">Give it examples: for line following, collect a few rows going straight on the tape edge, turning left on the tape and turning right on the table top.</p>
                 <div class="dataset-row dataset-row-header" id="dataset-header"></div>
                 <div class="dataset-body">
                     <div class="dataset-crop-panel" id="dataset-crop-panel" title="Crop the plotted time window without deleting rows">

@@ -40,10 +40,55 @@ def get_source_labels(layer_idx: int) -> list[str]:
     """Display labels for each weight term in this layer's equations."""
     if layer_idx == 0:
         return [inp["name"] for inp in state.inputs]
-    return [f"n{idx + 1}" for idx in range(len(state.layers[layer_idx - 1]["neurons"]))]
+    return [n.get("name") or f"n{k + 1}" for k, n in enumerate(state.layers[layer_idx - 1]["neurons"])]
 
-def forward():
-    # 1. Collect input values.
+def evaluate_layers(input_vals: list[float]) -> list[list[tuple[float, float]]]:
+    """Pure forward pass (no state/device side effects): for every layer, a
+    (pre_activation, post_activation) pair per neuron."""
+    source_values = list(input_vals)
+    result = []
+    for layer in state.layers:
+        layer_vals = []
+        for n in layer["neurons"]:
+            weighted = sum(
+                n["weights"][i] * source_values[i]
+                for i in range(min(len(n["weights"]), len(source_values)))
+            )
+            pre_act = weighted + n["bias"]
+            layer_vals.append((pre_act, activations.apply_activation(
+                pre_act, layer["act_fn"], layer["custom_activation"])))
+        result.append(layer_vals)
+        source_values = [post for _, post in layer_vals]
+    return result
+
+def evaluate(input_vals: list[float]) -> list[float]:
+    """The last layer's activated neuron outputs for the given input values."""
+    layers = evaluate_layers(input_vals)
+    return [post for _, post in layers[-1]] if layers else []
+
+_last_result = {}   # last int result per output id, to log sudden jumps
+
+def unchosen_io() -> list[str]:
+    """The inputs/outputs that still need a device and a value picked (reads the dropdowns, like read_inputs)."""
+    missing = []
+    for kind, items in (("in", state.inputs), ("out", state.outputs)):
+        for k, it in enumerate(items):
+            dev_el = state.get_id(f"dev-{kind}-{it['id']}")
+            chan_el = state.get_id(f"chan-{kind}-{it['id']}")
+            if not (dev_el and dev_el.value and chan_el and chan_el.value):
+                missing.append(f"input ({it['name']})" if kind == "in" else f"output {k + 1}")
+    return missing
+
+def alert_unchosen(action: str) -> bool:
+    """Alert if any input or output has no device/value yet. True means go ahead."""
+    missing = unchosen_io()
+    if missing:
+        from pyscript import window
+        window.alert(f"Before you {action}, choose a device and a value for:\n\n" + "\n".join("  \u2022 " + m for m in missing))
+    return not missing
+
+def read_inputs():
+    # Collect input values.
     # Pragmatic exception: reads the device/channel <select> elements directly
     # rather than going through a rendering module, and calls into Device I/O
     # below -- keeping the DOM read + device call co-located here avoids
@@ -56,12 +101,13 @@ def forward():
         channel  = chan_el.value if chan_el else ""
         dev = Device.device_by_name(dev_name)
         try:
-            val = float(dev.state[channel]) if dev and channel else 0.0
+            val = float(dev.read(channel)) if dev and channel else 0.0
         except (KeyError, TypeError, ValueError):
             val = 0.0
         state.input_values[iid] = val
 
-    # 2. Forward-propagate through every layer in order
+def propagate():
+    """Forward-propagate state.input_values through every layer (no device output)."""
     source_values = [state.input_values.get(inp["id"], 0.0) for inp in state.inputs]
     for layer in state.layers:
         act_fn = layer["act_fn"]
@@ -81,6 +127,19 @@ def forward():
             next_source_values.append(post_act)
         source_values = next_source_values
 
+def preview_forward():
+    """Live values on the arrows without driving any output (Training mode, while the robot is pushed by hand)."""
+    read_inputs()
+    propagate()
+    last = state.layers[-1]["neurons"] if state.layers else []
+    for idx, out in enumerate(state.outputs):
+        n = last[idx] if idx < len(last) else None
+        state.output_values[out["id"]] = state.neuron_post_values.get(n["id"], 0.0) if n else 0.0
+
+def forward():
+    read_inputs()
+    propagate()
+
     # 3. Route each output from the last layer's neuron at the same position
     last_layer_neurons = state.layers[-1]["neurons"] if state.layers else []
     for idx, out in enumerate(state.outputs):
@@ -89,6 +148,11 @@ def forward():
         state.output_values[oid] = val
 
         result = int(val)
+        prev = _last_result.get(oid)
+        if prev is not None and abs(result - prev) >= 40:
+            print(f"Output {oid} jumped {prev} -> {result}; inputs={dict(state.input_values)} "
+                  f"pre={[round(state.neuron_pre_values.get(n['id'], 0), 2) for n in last_layer_neurons]}")
+        _last_result[oid] = result
         dev_el  = state.get_id(f"dev-out-{oid}")
         chan_el = state.get_id(f"chan-out-{oid}")
         dev_name = dev_el.value if dev_el else ""

@@ -75,6 +75,90 @@ async def _wasm_worker_loop(worker):
 
 bd.my_worker.start_thread()
 
+def flush_pending_commands():
+    """Drop any not-yet-sent BLE requests.
+
+    The run loop enqueues a 'send' request every tick (main.py's 50ms
+    loop_network) but _wasm_worker_loop sends them strictly one at a
+    time, awaiting each BLE write. If BLE round-trips run slower than
+    the tick rate, motor-speed updates pile up in request_queue faster
+    than they drain. Stop's motor_stop() request would otherwise land
+    at the tail of that backlog, so the robot keeps executing stale
+    speed commands for a while after Stop is pressed. Call this right
+    before issuing the stop command so it isn't stuck behind them.
+    """
+    q = bd.my_worker.request_queue
+    while not q.empty():
+        try:
+            q.get_nowait()
+        except Exception:
+            break
+
+def drop_stale_commands(max_pending: int = 10):
+    """Flush the BLE queue only when it has backed up.
+
+    The run loop re-sends every output each tick, so anything still queued
+    behind a slow BLE write is already out of date; without this the queue
+    (and memory) grows for as long as the network runs.
+    """
+    if bd.my_worker.request_queue.qsize() > max_pending:
+        flush_pending_commands()
+
+# ── Firmware-tolerant notification parsing ───────────────────────────────────
+# Newer hub firmware (RPC 2.x) appends a 1-byte colorSensorMode to the color
+# sensor item (13 bytes instead of the 12 that legoeducation 1.0.6 expects).
+# The stock parser then reads that extra byte as the start of another item
+# (0x01 = IMU), runs out of buffer and drops the whole notification. Accept
+# either size, choosing whichever one makes the message split up exactly.
+from legoeducation import rpc_message as rm
+
+_NOTIFICATION_CLASSES = {
+    rm.INFO_DEVICE_NOTIFICATION:  rm.InfoDeviceNotification,
+    rm.IMU_DEVICE_NOTIFICATION:   rm.ImuDeviceNotification,
+    rm.CARD_NOTIFICATION:         rm.CardNotification,
+    rm.BUTTON_STATE_NOTIFICATION: rm.ButtonStateNotification,
+    rm.MOTOR_NOTIFICATION:        rm.MotorNotification,
+    rm.COLOR_SENSOR_NOTIFICATION: rm.ColorSensorNotification,
+    rm.CONTROLLER_NOTIFICATION:   rm.ControllerNotification,
+    rm.IMU_GESTURE_NOTIFICATION:  rm.ImuGestureNotification,
+}
+
+def _split_notification_items(data: bytes, strict: bool):
+    """Split device data into (class, body) pairs; None if it can't be split.
+
+    With strict=False an unknown item type ends the list early (like the stock
+    parser) instead of failing the whole split.
+    """
+    if not data:
+        return []
+    cls = _NOTIFICATION_CLASSES.get(data[0])
+    if cls is None:
+        return None if strict else []
+    size = rm.SizeUtil.getMsgSize(cls)
+    sizes = (size + 1, size) if cls is rm.ColorSensorNotification else (size,)
+    for n in sizes:
+        if 1 + n > len(data):
+            continue
+        rest = _split_notification_items(data[1 + n:], strict)
+        if rest is not None:
+            return [(cls, data[1:1 + n])] + rest
+    return None
+
+def _tolerant_device_notification_parser(notification_obj):
+    data = bytes(notification_obj.deviceData[:notification_obj.deviceDataByteLength])
+    items = _split_notification_items(data, strict=True)
+    if items is None:
+        items = _split_notification_items(data, strict=False)
+    if items is None:
+        print(f"Unparseable device notification: {data.hex(' ')}")
+        return []
+    return [cls.Deserialize(body) for cls, body in items]
+
+# The library binds the parser by name in several modules; replace each one.
+rm.device_notification_parser = _tolerant_device_notification_parser
+bd._raw_device_notification_parser = _tolerant_device_notification_parser
+le._raw_device_notification_parser = _tolerant_device_notification_parser
+
 _DEVICE_MAP = {
     "Double Motor": le.DoubleMotor,
     "Single Motor": le.SingleMotor,
@@ -180,11 +264,25 @@ def show_reading(plot_id: str, val):
     else:
         el.textContent = str(int(val)) if isinstance(val, (int, float)) else str(val)
 
+def _battery_html(pct) -> str:
+    """Tiny battery icon plus percent; an empty icon with an ellipsis until the hub reports."""
+    if pct is None:
+        return '<span class="battery-body"></span><span class="battery-pct">?</span>'
+    pct = max(0, min(100, int(pct)))
+    color = "var(--red)" if pct < 20 else ("#e0a100" if pct < 50 else "var(--green)")
+    return (f'<span class="battery-body"><span class="battery-fill" '
+            f'style="width:{pct}%;background:{color}"></span></span>'
+            f'<span class="battery-pct">{pct}%</span>')
+
 class Element:
     def __init__(self):
         self.myble = ble.BLEDevice.new()
         self.hub = None
         self.name = None
+        self._logged_items = False
+        self.last_cmd = None   # last speed we sent, for diagnostics
+        self._info_default = None
+        self.battery = None   # percent, from the hub's info notification
         self.plots = []
         self.plot_vars = []
         self.in_list = []
@@ -284,6 +382,7 @@ class Element:
 
         try:
             self.hub = hub_cls()
+            self._info_default = self.hub.info_device   # placeholder until the hub reports
 
             _hub = self.hub
             self._notification_proxy = create_proxy(
@@ -375,6 +474,13 @@ class Element:
         self.hub = None
         self.myble = None   
 
+    def read(self, channel):
+        """Current value of a channel. BothSpeed is worked out from the two motors, signed to match the
+        command: sending +82 reads back about +82, so the reading, the recorded data and the Debug arrow all agree."""
+        if channel == "BothSpeed":
+            return (self.state["RightSpeed"] - self.state["LeftSpeed"]) / 2
+        return self.state[channel]
+
     def build_state(self):
         if "Double Motor" in self.name:
             self.state = {
@@ -410,15 +516,49 @@ class Element:
         elif "Controller" in self.name:
             return ["LightIntensity", "BeepFrequency"] #["LightColor", "LightPattern", "LightIntensity", "BeepPattern", "BeepFrequency"]
 
+    def sync_battery(self):
+        """Pick up the battery level the library last stored from the hub.
+
+        The first notifications are handled before our callback is attached,
+        so a level carried in one of those is only visible on hub.info_device.
+        """
+        info = getattr(self.hub, "info_device", None)
+        if info is None or info is self._info_default:
+            return
+        if info.batteryLevel != self.battery:
+            print(f"{self.name} battery reading: {info.batteryLevel}")
+            self.battery = info.batteryLevel
+            self._show_battery()
+
+    def _show_battery(self):
+        el = document.querySelector(f'[id="chip-{self.name}"] .device-battery')
+        if el:
+            el.innerHTML = _battery_html(self.battery)
+            el.title = f"Battery {self.battery}%"
+
     def notif_callback(self, data):                    
         parsed_items = le.device_notification_parser(data)
+        self.sync_battery()
+        if not self._logged_items:
+            self._logged_items = True
+            print(f"{self.name} notification items: {[type(i).__name__ for i in parsed_items]}")
         for parsed_item in parsed_items:
-    
-            if isinstance(parsed_item, le.MotorNotification):
+
+            if isinstance(parsed_item, le.InfoDeviceNotification):
+                print(f"{self.name} battery reading: {parsed_item.batteryLevel}")
+                if parsed_item.batteryLevel != self.battery:
+                    self.battery = parsed_item.batteryLevel
+                    self._show_battery()
+
+            elif isinstance(parsed_item, le.MotorNotification):
                 if "Double Motor" in self.name:
                     side = "Left" if parsed_item.motorBitMask == le.MOTOR_BITS_LEFT else "Right"
                     self.state[side + "Position"] = parsed_item.position
                     self.state[side + "Angle"] = parsed_item.absolutePosition
+                    old = self.state[side + "Speed"]
+                    if old is not None and abs(parsed_item.speed - old) >= 60:
+                        print(f"{self.name} {side} motor speed jumped {old} -> {parsed_item.speed}; "
+                              f"last commanded={self.last_cmd}, queue={bd.my_worker.request_queue.qsize()}")
                     self.state[side + "Speed"] = parsed_item.speed
                     self.state[side + "Power"] = parsed_item.power
                 else:
@@ -435,8 +575,8 @@ class Element:
                 self.state["AccelerationY"] = parsed_item.accelerometerY
                 self.state["AccelerationZ"] = parsed_item.accelerometerZ
                 self.state["GyroX"] = parsed_item.gyroscopeX
-                self.state["GyroY"] = parsed_item.gyroscopeX
-                self.state["GyroZ"] = parsed_item.gyroscopeX
+                self.state["GyroY"] = parsed_item.gyroscopeY
+                self.state["GyroZ"] = parsed_item.gyroscopeZ
 
             elif isinstance(parsed_item, le.ColorSensorNotification):
                 self.state["Reflection"] = parsed_item.reflection
@@ -458,7 +598,10 @@ class Element:
         for graph, var in zip(self.plots, self.plot_vars):
             val = 0
             if var == "BothSpeed":
-                val = (self.state["LeftSpeed"] - self.state["RightSpeed"])/2
+                try:
+                    val = self.read("BothSpeed")
+                except TypeError:   # the motors have not reported yet
+                    val = 0
             elif var in self.hardware_state:
                 try:
                     val = self.hardware_state[var]
@@ -471,6 +614,7 @@ class Element:
             graph.updatePlot(update)
 
     def set_speed(self, speed):
+        self.last_cmd = speed
         if "Single Motor" in self.name:
             #self.hub.motor_set_speed(speed, blocking=False)
             self.hub.motor_run(speed=speed, blocking=False)
@@ -550,12 +694,14 @@ async def add_device_chip(dev: "Element"):
     dl = document.getElementById("device-list")
 
     name = dev.name
+    dev.sync_battery()
     chip = document.createElement("div")
     chip.className = "device-row"
     chip.id = f"chip-{name}"
     chip.innerHTML = (
         f'<div class="device-indicator"></div>'
         f'<span class="device-name">{name}</span>'
+        f'<span class="device-battery" title="{"Battery %d%%" % dev.battery if dev.battery is not None else "Waiting for battery level"}">{_battery_html(dev.battery)}</span>'
         f'<button class="btn-disconnect" title="Disconnect">'
         f'    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"'
         f'         stroke="currentColor" stroke-width="2.5">'

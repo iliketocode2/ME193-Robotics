@@ -35,6 +35,9 @@ def on_layer_act_select_change(lid: int, evt):
         return
     val = evt.target.value
     layer["act_fn"] = val
+    if val:
+        import help_system
+        help_system.show_hint("activation")
 
     box = state.get_id(f"custom-act-box-{lid}")
     if box:

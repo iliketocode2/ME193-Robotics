@@ -11,15 +11,15 @@ import templates
 import Device
 
 def sync_var_labels():
-    """Refresh the input-name labels shown inside layer 0's equations
-    (deeper layers use auto-generated positional labels, unaffected)."""
-    if not state.layers:
-        return
-    for i, inp in enumerate(state.inputs):
-        for n in state.layers[0]["neurons"]:
-            el = state.get_id(f"var-label-{n['id']}-{i}")
-            if el:
-                el.textContent = inp["name"]
+    """Refresh the names shown inside every layer's equations (the input names for layer 0,
+    the previous layer's neuron names for deeper layers) after one is renamed."""
+    for li, layer in enumerate(state.layers):
+        labels = network_model.get_source_labels(li)
+        for n in layer["neurons"]:
+            for i, label in enumerate(labels):
+                el = state.get_id(f"var-label-{n['id']}-{i}")
+                if el:
+                    el.textContent = label
 
 def rebuild_layer_eq_html(layer_idx: int):
     """Rebuild every neuron's equation row in this layer to match its

@@ -23,7 +23,26 @@ devices: list = []   # list[Device.Element]
 is_running       = False
 all_plots: dict[str, object] = {}
 
-debug_mode = False
+debug_mode = True
+mode = "beginner"      # "beginner" | "advanced" | "fitting" | "training"
+beginner_mode = True    # True (Beginner and Training) uses the simplified layout
+use_activations = False       # Beginner ignores activations; Advanced and Training apply them
+show_activation_blocks = False   # whether the activation columns are on screen (Advanced always; Training via its toggle)
+show_activation = False       # Training mode's "+ Activation layers" toggle
+
+def in_training_family() -> bool:
+    """Fitting and Training share the brown data section and the simplified network layout."""
+    return mode in ("fitting", "training")
+
+# Training mode: recorded samples [{"id", "xs": {input id: v}, "ys": {output id: v}}], loss per epoch
+training_data: list[dict] = []
+data_point_counter = 0
+loss_history: list[float] = []
+undo_stack: list[list[dict]] = []   # batches of removed points, newest last
+train_hint_closed = False   # the student closed the example hint; the next example brings it back
+example_key = None   # which example curve filled the plot (None for recorded data)
+is_recording = False
+is_training = False
 
 # Zoom only affects the network diagram's spacing/box sizes (via the CSS
 # --zoom variable) -- never font sizes or arrow stroke widths, UNTIL zoom

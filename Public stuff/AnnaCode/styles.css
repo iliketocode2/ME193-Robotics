@@ -165,6 +165,31 @@ body {
     text-overflow: ellipsis;
     min-width: 0;
 }
+.device-battery {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-secondary, #666);
+}
+.battery-body {
+    position: relative;
+    width: 18px; height: 9px;
+    border: 1.5px solid #888;
+    border-radius: 2px;
+    padding: 1px;
+    box-sizing: content-box;
+}
+.battery-body::after {
+    content: "";
+    position: absolute;
+    right: -4px; top: 2px;
+    width: 2px; height: 5px;
+    background: #888;
+    border-radius: 0 1px 1px 0;
+}
+.battery-fill { display: block; height: 100%; border-radius: 1px; }
 .btn-disconnect {
     display: flex; align-items: center; justify-content: center;
     width: 20px; height: 20px;
@@ -419,10 +444,10 @@ body {
     background: transparent;
     border: none;
     border-bottom: 2px solid var(--blue-mid);
-    color: var(--text-primary);
+    color: #000;
     font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 700;
     padding: 3px 2px;
     text-align: center;
     transition: border-color 0.15s;
@@ -490,7 +515,7 @@ body {
 
 /* ── Equation oval node ────────────────────────────────────────── */
 .eq-node {
-    width: max(140px, calc(200px * var(--zoom)));
+    width: max(160px, calc(235px * var(--zoom)));
     background: var(--eq-bg);
     border: 2.5px solid var(--eq-border);
     border-radius: calc(60px * var(--zoom));
@@ -507,30 +532,31 @@ body {
     gap: calc(4px * var(--zoom));
     justify-content: center;
     font-family: var(--font-mono);
-    font-size: calc(12px * var(--text-zoom));
+    font-size: calc(15px * var(--text-zoom));
 }
 
 .eq-op {
     color: var(--amber);
     font-weight: 700;
-    font-size: calc(15px * var(--text-zoom));
+    font-size: calc(19px * var(--text-zoom));
     margin: 0 1px;
 }
 .eq-var {
-    color: var(--text-secondary);
-    font-size: calc(11px * var(--text-zoom));
+    color: #000;
+    font-size: calc(17px * var(--text-zoom));
+    font-weight: 700;
     margin-right: 2px;
 }
 
 .eq-num-input {
-    width: max(28px, calc(40px * var(--zoom)));
+    width: max(50px, calc(68px * var(--zoom)));
     background: #fff;
     border: 1.5px solid var(--amber-mid);
     border-radius: 6px;
     color: var(--text-primary);
     font-family: var(--font-mono);
-    font-size: calc(11px * var(--text-zoom)); font-weight: 700;
-    padding: calc(3px * var(--zoom)) calc(4px * var(--zoom)); text-align: center;
+    font-size: calc(14px * var(--text-zoom)); font-weight: 700;
+    padding: calc(4px * var(--zoom)) calc(5px * var(--zoom)); text-align: center;
     transition: border-color 0.15s;
     -moz-appearance: textfield;
     appearance: textfield;
@@ -540,14 +566,14 @@ body {
 .eq-num-input:focus { outline: none; border-color: var(--amber); background: var(--amber-light); }
 
 .eq-bias-input {
-    width: max(28px, calc(40px * var(--zoom)));
+    width: max(50px, calc(68px * var(--zoom)));
     background: #fff;
     border: 1.5px solid var(--blue-mid);
     border-radius: 6px;
     color: var(--blue-bright);
     font-family: var(--font-mono);
-    font-size: calc(11px * var(--text-zoom)); font-weight: 700;
-    padding: calc(3px * var(--zoom)) calc(4px * var(--zoom)); text-align: center;
+    font-size: calc(14px * var(--text-zoom)); font-weight: 700;
+    padding: calc(4px * var(--zoom)) calc(5px * var(--zoom)); text-align: center;
     transition: border-color 0.15s;
     -moz-appearance: textfield;
     appearance: textfield;
@@ -864,3 +890,306 @@ body {
     .col-activation { margin-right: 40px; }
     .col-add-layer { margin-right: 40px; }
 }
+/* ── Beginner / Advanced toggle ───────────────────────────────── */
+.zoom-bar { align-items: center; gap: 24px; }
+.mode-toggle {
+    display: inline-flex;
+    border: 2px solid var(--blue-mid);
+    border-radius: 99px;
+    overflow: hidden;
+}
+.mode-btn {
+    background: transparent;
+    border: none;
+    padding: 6px 16px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--blue-bright);
+    cursor: pointer;
+}
+.mode-btn.active { background: var(--blue-bright); color: #fff; }
+
+/* Beginner: no activation blocks, no add/delete buttons, a big number instead of the graph */
+.beginner .zoom-control,
+.beginner .col-activation,
+.beginner .col-add-layer,
+.beginner .btn-add-col,
+.beginner .item-delete-btn { display: none !important; }
+/* Plots stay laid out (just invisible and out of flow) so Plotly keeps its
+   real width -- display:none made it size them wrong when switching to Advanced */
+.beginner .node-plot { position: absolute; visibility: hidden; width: 170px; pointer-events: none; }
+.beginner .node-header { flex-direction: column; align-items: stretch; gap: 8px; border-bottom: none; padding-bottom: 8px; }
+.beginner .node-reading {
+    margin-top: 4px;
+    font-size: calc(44px * var(--text-zoom));
+    letter-spacing: 0;
+    text-align: center;
+    color: var(--text-primary);
+    min-width: 0;
+    padding: 12px 0 4px;
+}
+
+/* Beginner-only transfer plot under the run button */
+.network-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px; width: 100%; }   /* the Basic plot drops below the network when there is no room beside it */
+.network-main { flex-shrink: 0; }
+.transfer-card { display: none; justify-content: center; align-self: center; flex: 1 1 210px; min-width: 210px; }
+.beginner:not(.training) .transfer-card { display: flex; }
+.transfer-plot { width: 100%; max-width: 430px; height: 250px; }
+/* Greyed out until Run is pressed (play_network adds .running to <body>) */
+.transfer-plot { opacity: 0.3; filter: grayscale(1); transition: opacity 0.2s, filter 0.2s; }
+body.running .transfer-plot { opacity: 1; filter: none; }
+
+/* "Hit Run" overlay: sits above the greyed-out plot, hidden once running. */
+.transfer-card { position: relative; }
+.transfer-hint {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; font-weight: 700;
+    color: var(--text-primary);
+    pointer-events: none;
+}
+body.running .transfer-hint { display: none; }
+
+/* Advanced-only per-neuron plot, below the run button */
+.adv-plot-card { margin-top: 28px; }
+.beginner .adv-plot-card { display: none; }
+.adv-plot-controls {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding-bottom: 8px;
+    font-size: 12px; font-weight: 600; color: var(--text-secondary);
+}
+.adv-plot-controls select {
+    margin-left: 6px; padding: 4px 8px; border-radius: 6px;
+    border: 1px solid var(--border-mid); background: #fff;
+    font-family: var(--font-ui); font-size: 12px; color: var(--text-primary);
+}
+.adv-plot-note { color: var(--text-muted); font-weight: 500; }
+#adv-plot { width: 100%; }
+
+/* ── Just-in-time help ────────────────────────────────────────── */
+.help-btn {
+    position: absolute; top: -8px; left: -8px; z-index: 3;
+    width: 20px; height: 20px; padding: 0;
+    border-radius: 50%;
+    background: #fff;
+    border: 1.5px solid var(--blue-bright);
+    color: var(--blue-bright);
+    font-family: var(--font-ui); font-size: 11px; font-weight: 700; line-height: 1;
+    cursor: pointer;
+}
+.help-btn:hover { background: var(--blue-bright); color: #fff; }
+.help-btn.inline { position: static; flex-shrink: 0; }
+.help-btn.corner { top: 0; left: auto; right: 0; }
+
+.help-popover {
+    position: fixed; z-index: 700;
+    width: 320px; max-width: 92vw;
+    padding: 14px 34px 14px 16px;
+    background: #fff;
+    border: 2px solid var(--blue-mid);
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.18);
+    font-size: 13px; line-height: 1.55; color: var(--text-secondary);
+}
+.help-popover.hidden { display: none; }
+.help-popover p { margin: 0 0 8px; }
+.help-popover a { font-weight: 700; color: var(--blue-bright); }
+
+.hint-banner {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    margin: 0 auto 16px; padding: 8px 14px; max-width: 720px;
+    background: var(--purple-light); border: 2px solid var(--purple-mid);
+    border-radius: 12px;
+    font-size: 13px; color: var(--text-primary);
+}
+.hint-banner.hidden { display: none; }
+.hint-close {
+    position: absolute; top: 4px; right: 8px;
+    background: none; border: none; cursor: pointer;
+    font-size: 18px; line-height: 1; color: var(--text-muted);
+}
+.hint-banner .hint-close { position: static; }
+
+.preset-select {
+    padding: 6px 12px; border-radius: 99px;
+    border: 2px solid var(--blue-mid); background: #fff;
+    font-family: var(--font-ui); font-size: 12px; font-weight: 700; color: var(--blue-bright);
+    cursor: pointer;
+}
+.preset-caption {
+    position: relative; margin: 0 auto 16px; max-width: 720px; padding: 10px 36px 10px 14px;
+    background: var(--purple-light); border: 2px solid var(--purple-mid); border-radius: 12px;
+    font-size: 13px; line-height: 1.5; text-align: center; color: var(--text-primary);
+}
+.preset-caption.hidden { display: none; }
+
+.collapse-note { margin-bottom: 8px; font-size: 13px; color: var(--text-secondary); }
+.collapse-note:empty { display: none; }
+.collapse-note b { font-family: var(--font-mono); color: var(--text-primary); }
+
+.goal-card {
+    display: flex; align-items: baseline; gap: 16px;
+    padding: 14px 28px;
+}
+.goal-card p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--text-primary); }
+.goal-card a { font-weight: 700; color: var(--blue-bright); }
+.page-wrap { padding-bottom: 40px; }   /* room above the fixed footer */
+
+/* ── Training mode ────────────────────────────────────────────── */
+.training-card { display: none; margin-top: 28px; }
+.training .training-card { display: block; }
+.training #add-input-btn,
+.training #add-output-btn { display: inline-flex !important; }
+.training .node-card .item-delete-btn:not(.item-delete-hidden) { display: flex !important; }
+
+.training-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-bottom: 8px; }
+.train-btn {
+    padding: 7px 16px; border-radius: 99px;
+    background: var(--blue-light); border: 2px solid var(--blue-mid); color: var(--blue-bright);
+    font-family: var(--font-ui); font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.train-btn:hover { border-color: var(--blue-bright); }
+.train-btn.train-accent { background: var(--purple-light); border-color: var(--purple-mid); color: var(--purple); }
+.train-btn.recording { background: var(--red); border-color: var(--red); color: #fff; }
+.train-sep { width: 1px; height: 22px; background: var(--border-mid); margin: 0 4px; }
+.train-lr { font-size: 12px; font-weight: 600; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+.train-lr input {
+    width: 64px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border-mid);
+    font-family: var(--font-mono); font-size: 12px;
+}
+.train-count { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+.train-status { min-height: 20px; padding-bottom: 8px; font-size: 13px; color: var(--text-secondary); }
+.training-plots { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+.train-plot-wrap { flex: 2 1 420px; min-width: 300px; }
+.train-loss-wrap { flex: 1 1 280px; }
+.train-plot-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); padding-left: 55px; }
+#train-loss-plot { width: 100%; height: 300px; }
+#train-data-plot { width: 100%; }
+
+.train-group { display: inline-flex; align-items: center; gap: 5px; }
+.train-btn:disabled { opacity: 0.4; cursor: default; }
+.train-status { display: flex; align-items: center; gap: 8px; }
+.train-plot-title { display: flex; align-items: center; gap: 6px; }
+
+/* Training area: a light brown band across the bottom of the card, separate from the running controls above */
+.training .training-card {
+    margin: 28px -28px -28px;
+    padding: 24px 28px 28px;
+    background: #f6eee2;
+    border-top: 1px solid #e6d8c3;
+    border-radius: 0 0 var(--card-radius) var(--card-radius);
+}
+
+/* Training mode: "+ Activation layers" reveals the activation blocks and the layer/neuron controls */
+.act-toggle-btn {
+    display: none;
+    padding: 6px 14px; border-radius: 99px;
+    background: var(--purple-light); border: 2px solid var(--purple-mid); color: var(--purple);
+    font-family: var(--font-ui); font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.training .act-toggle-btn { display: inline-block; }
+.training.show-act .col-activation,
+.training.show-act .col-add-layer { display: flex !important; }
+.training.show-act .btn-add-col { display: inline-flex !important; }
+.training.show-act .item-delete-btn:not(.item-delete-hidden) { display: flex !important; }
+
+.train-or { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.train-select {
+    padding: 6px 12px; border-radius: 99px;
+    border: 2px solid var(--blue-mid); background: var(--blue-light); color: var(--blue-bright);
+    font-family: var(--font-ui); font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.train-select:disabled { opacity: 0.4; cursor: default; }
+.train-btn:disabled { opacity: 0.4; cursor: default; }
+.train-hint {
+    position: relative; margin: 0 0 12px; padding: 10px 36px 10px 14px;
+    background: var(--purple-light); border: 2px solid var(--purple-mid); border-radius: 12px;
+    font-size: 13px; line-height: 1.5; color: var(--text-primary);
+}
+.train-hint.hidden { display: none; }
+
+/* Training mode shows the Debug switch all the time (not just while Running), so values show as the robot is pushed by hand */
+.training .debug-toggle.hidden { display: flex !important; }
+
+/* Training mode: live plots in the input/output boxes (as in Advanced) instead of the big number */
+.training .node-plot { position: static; visibility: visible; width: auto; pointer-events: auto; }
+.training .node-header {
+    flex-direction: row; align-items: center; gap: 6px;
+    border-bottom: 1.5px solid rgba(0,0,0,0.06); padding-bottom: 5px;
+}
+.training .node-reading {
+    margin-top: 0; padding: 0; min-width: 40px; text-align: right;
+    font-size: 9px; letter-spacing: 0.05em; color: var(--text-muted);
+}
+
+/* Advanced plots: greyed out with "Hit Run" over them until Run is pressed (same as Basic) */
+.adv-plot-wrap { position: relative; }
+#adv-plot { opacity: 0.3; filter: grayscale(1); transition: opacity 0.2s, filter 0.2s; }
+body.running #adv-plot { opacity: 1; filter: none; }
+
+/* Basic: the narrower output boxes need a slightly smaller big number */
+.beginner:not(.training) .output-node .node-reading { font-size: calc(36px * var(--text-zoom)); }
+
+/* The input's name (x) is drawn on the arrow into the first neuron, so the name field beside the sensor is hidden */
+.cell-label { display: none; }
+
+/* Basic only: narrower input and output boxes, to leave room for the plot */
+.beginner:not(.training) .input-node,
+.beginner:not(.training) .output-node { width: 150px; }
+@media (max-width: 960px) {
+    .beginner:not(.training) .input-node,
+    .beginner:not(.training) .output-node { width: 140px; }
+}
+
+/* Editable names on the arrows (x, n1, ...) */
+.arrow-name {
+    position: absolute; z-index: 6; box-sizing: border-box;
+    height: 24px; padding: 0 3px;
+    text-align: center;
+    font-family: var(--font-mono); font-size: 15px; font-weight: 700; color: #000;
+    background: rgba(255,255,255,0.9);
+    border: 1px solid transparent; border-radius: 6px;
+}
+.arrow-name:hover { border-color: var(--blue-mid); }
+.arrow-name:focus { outline: none; border-color: var(--blue-bright); background: #fff; }
+
+/* ── Fitting mode: hand-tune a network to an example curve (no devices, no recording) ── */
+.fitting #add-input-btn,
+.fitting #add-output-btn,
+.fitting .item-delete-btn,
+.fitting .act-toggle-btn,
+.fitting .preset-select,
+.fitting #preset-caption,
+.fitting .run-bar,
+.fitting .transfer-card,
+.fitting .train-or,
+.fitting #record-btn,
+.fitting #undo-btn,
+.fitting #remove-zero-btn,
+.fitting #clear-data-btn,
+.fitting #save-data-btn,
+.fitting #load-data-btn,
+.fitting #live-dot-toggle,
+.fitting label[data-tip="live"] { display: none !important; }
+.fitting .layers-row .col-activation:last-child { display: none !important; }
+.fitting .node-device-select,
+.fitting .plot-footer,
+.fitting .node-plot,
+.fitting .node-reading { display: none !important; }
+.fitting .input-node .node-header .train-select { width: 100%; min-width: 0; }
+.fitting .output-node { width: 230px; }
+.fitting .output-node .node-header { display: none !important; }
+#fit-mini-plot { display: none; width: 100%; height: 110px; }
+.fitting #fit-mini-plot { display: block; }
+
+/* Example curves live in Fitting now (in the input box); Training is for recorded data only */
+.training:not(.fitting) #example-select,
+.training:not(.fitting) #save-icon-btn,
+.training:not(.fitting) .train-or { display: none; }
+.fitting .zoom-control { display: flex !important; }
+
+.save-icon-btn { flex: none; display: none; padding: 4px 6px; line-height: 0; }
+.fitting .save-icon-btn { display: inline-flex; align-items: center; }
+.fitting .input-node .node-header { display: flex; align-items: center; gap: 4px; }
+.fitting .input-node .node-header .train-select { flex: 1; }

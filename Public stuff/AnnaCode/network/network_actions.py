@@ -10,6 +10,7 @@ from pyscript import document, window
 from pyscript.ffi import create_proxy
 
 import state
+import Device
 import network_model
 import templates
 import bindings
@@ -176,6 +177,8 @@ def add_layer(evt=None):
     bindings.bind_layer_static_events(layer)
 
     add_neuron(lid)   # every layer starts with exactly one neuron
+    if state.in_training_family():
+        match_last_layer_to_outputs()
 
     sync.update_neuron_usage_state()
     arrows.schedule_redraw(80)
@@ -196,6 +199,8 @@ def add_output(evt=None):
     window.setTimeout(create_proxy(make_plot), 60)
 
     sync.update_delete_visibility(state.outputs, "output")
+    if state.in_training_family():
+        match_last_layer_to_outputs()
     sync.update_neuron_usage_state()
     arrows.schedule_redraw()
 
@@ -219,12 +224,26 @@ def delete_output(oid: int):
     state.output_values.pop(oid, None)
 
     sync.update_delete_visibility(state.outputs, "output")
+    if state.in_training_family():
+        match_last_layer_to_outputs()
     sync.update_neuron_usage_state()
     arrows.schedule_redraw()
+
+def match_last_layer_to_outputs():
+    """Training mode hides the neuron controls, so keep one last-layer neuron per output."""
+    if not state.layers:
+        return
+    layer = state.layers[-1]
+    while len(layer["neurons"]) < len(state.outputs):
+        add_neuron(layer["id"])
+    while len(layer["neurons"]) > max(1, len(state.outputs)):
+        delete_neuron(layer["id"], layer["neurons"][-1]["id"])
 
 # ── Play / Stop ──────────────────────────────────────────────────────────────
 
 def play_network(evt=None):
+    if not network_model.alert_unchosen("press Run"):
+        return
     state.is_running = True
     state.get_id("play-btn").setAttribute("disabled", "")
     state.get_id("stop-btn").removeAttribute("disabled")
@@ -241,6 +260,7 @@ def stop_network(evt=None):
     state.get_id("stop-btn").setAttribute("disabled", "")
     state.get_id("play-btn").removeAttribute("disabled")
     document.body.classList.remove("running")
+    Device.flush_pending_commands()
     for device in state.devices:
         try:
             device.stop()
@@ -251,14 +271,11 @@ def stop_network(evt=None):
     if debug_wrap:
         debug_wrap.classList.add("hidden")
 
-    debug_checkbox = state.get_id("debug-toggle")
-    if debug_checkbox:
-        debug_checkbox.checked = False
-    state.debug_mode = False
     arrows.redraw_arrows()
 
 async def loop_network():
     while state.is_running:
+        Device.drop_stale_commands()
         network_model.forward()
         if state.debug_mode:
             arrows.redraw_arrows()

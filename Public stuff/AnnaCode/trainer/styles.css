@@ -413,6 +413,31 @@ body {
     text-overflow: ellipsis;
     min-width: 0;
 }
+.device-battery {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-secondary, #666);
+}
+.battery-body {
+    position: relative;
+    width: 18px; height: 9px;
+    border: 1.5px solid #888;
+    border-radius: 2px;
+    padding: 1px;
+    box-sizing: content-box;
+}
+.battery-body::after {
+    content: "";
+    position: absolute;
+    right: -4px; top: 2px;
+    width: 2px; height: 5px;
+    background: #888;
+    border-radius: 0 1px 1px 0;
+}
+.battery-fill { display: block; height: 100%; border-radius: 1px; }
 .btn-disconnect {
     display: flex; align-items: center; justify-content: center;
     width: 20px; height: 20px;
@@ -794,10 +819,10 @@ body {
     background: transparent;
     border: none;
     border-bottom: 2px solid var(--blue-mid);
-    color: var(--text-primary);
+    color: #000;
     font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 700;
     padding: 3px 2px;
     text-align: center;
     transition: border-color 0.15s;
@@ -917,8 +942,9 @@ body {
     margin: 0 1px;
 }
 .eq-var {
-    color: var(--text-secondary);
-    font-size: calc(11px * var(--text-zoom));
+    color: #000;
+    font-size: calc(14px * var(--text-zoom));
+    font-weight: 700;
     margin-right: 2px;
 }
 
@@ -1651,3 +1677,4 @@ body {
     .col-activation { margin-right: 40px; }
     .col-add-layer { margin-right: 40px; }
 }
+.dataset-tip { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }

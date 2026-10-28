@@ -22,6 +22,8 @@ def sigmoid_numpy(x):
     return 1.0 / (1.0 + np.exp(-x))
 
 def apply_activation(x: float, fn: str, custom_activation: dict | None = None) -> float:
+    if not state.use_activations:   # Beginner hides the activation blocks, so it ignores them too
+        return x
     if fn == "relu":
         return max(0.0, x)
     elif fn == "sigmoid":
@@ -139,3 +141,23 @@ def apply_custom_activation(x: float, custom_activation: dict) -> float:
         if lo_ok and hi_ok:
             return safe_eval_expr(p["expr"], x)
     return 0.0
+
+
+def apply_activation_derivative(pre_act: float, post_act: float, fn: str,
+                                custom_activation: dict | None = None) -> float:
+    """d(post_act)/d(pre_act), for backprop. 1.0 whenever activations are switched off."""
+    if not state.use_activations:
+        return 1.0
+    if fn == "relu":
+        return 1.0 if pre_act > 0 else 0.0
+    elif fn == "sigmoid":
+        return post_act * (1.0 - post_act)
+    elif fn == "tanh":
+        return 1.0 - post_act ** 2
+    elif fn == "softplus":
+        return sigmoid_numpy(pre_act)
+    elif fn == "custom":
+        h = 1e-4
+        ca = custom_activation or {"expr": "x", "pieces": []}
+        return (apply_custom_activation(pre_act + h, ca) - apply_custom_activation(pre_act - h, ca)) / (2 * h)
+    return 1.0

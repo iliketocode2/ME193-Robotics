@@ -39,6 +39,7 @@ def make_input_html(inp: dict) -> str:
                    value="{name}" maxlength="12" />
         </div>
         <div class="node-card input-node hover-target">
+            <button class="help-btn" data-help="input" title="Help">?</button>
             <button class="item-delete-btn" id="del-input-{iid}" title="Remove input">{delete_x_svg()}</button>
             <div class="node-header">
                 <select class="node-device-select" id="dev-in-{iid}">{dev_opts}</select>
@@ -82,6 +83,7 @@ def make_neuron_html(n: dict, labels: list[str]) -> str:
 <div class="network-item" id="item-neuron-{nid}" data-id="{nid}">
     <div class="cell-node" id="cell-neuron-{nid}">
         <div class="eq-node hover-target" id="eq-node-{nid}">
+            <button class="help-btn" data-help="neuron" title="Help">?</button>
             <button class="item-delete-btn" id="del-neuron-{nid}" title="Remove neuron">{delete_x_svg()}</button>
             <div class="eq-inline" id="eq-inline-{nid}">
                 {make_neuron_eq_inner_html(n, labels)}
@@ -98,6 +100,7 @@ def make_output_html(out: dict) -> str:
 <div class="network-item" id="item-output-{oid}" data-id="{oid}">
     <div class="cell-node" id="cell-output-{oid}">
         <div class="node-card output-node hover-target">
+            <button class="help-btn" data-help="output" title="Help">?</button>
             <button class="item-delete-btn" id="del-output-{oid}" title="Remove output">{delete_x_svg()}</button>
             <div class="node-header">
                 <select class="node-device-select" id="dev-out-{oid}">{dev_opts}</select>

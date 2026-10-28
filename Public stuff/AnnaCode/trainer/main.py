@@ -88,10 +88,6 @@ def stop_network(evt=None):
     if debug_wrap:
         debug_wrap.classList.add("hidden")
 
-    debug_checkbox = get_id("debug-toggle")
-    if debug_checkbox:
-        debug_checkbox.checked = False
-    state.debug_mode = False
     arrows.redraw_arrows()
 
 async def loop_network():

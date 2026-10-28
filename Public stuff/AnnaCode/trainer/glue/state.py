@@ -21,7 +21,7 @@ is_running       = False
 run_tick         = 0   # ticks since play_network() started, used as the x-axis for the live output plot
 all_plots: dict[str, object] = {}
 
-debug_mode = False
+debug_mode = True
 
 # Activation columns start hidden so first-touch students see a plain
 # weighted-sum network; toggled on via the "+ Activation function" link.
