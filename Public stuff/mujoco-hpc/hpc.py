@@ -12,10 +12,12 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+TEXT_SUFFIXES = {".sh", ".py", ".sbatch", ".txt", ".md"}
 DONE_STATES = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "BOOT_FAIL", "DEADLINE"}
 
 
@@ -137,7 +139,17 @@ class Cluster:
     # ---- files --------------------------------------------------------------------------
     def push(self, local_paths, remote_dir):
         self.ssh(f"mkdir -p {remote_dir}", show=False)
-        self.rsync([str(p) for p in local_paths], f"{self.target}:{remote_dir}/")
+        # The cluster is Linux: a script with Windows (CRLF) line endings fails there with
+        # "bad interpreter" / "$'\\r': command not found", so send text files with LF endings.
+        with tempfile.TemporaryDirectory() as tmp:
+            staged = []
+            for p in map(Path, local_paths):
+                if p.suffix in TEXT_SUFFIXES:
+                    q = Path(tmp) / p.name
+                    q.write_bytes(p.read_bytes().replace(b"\r\n", b"\n"))
+                    p = q
+                staged.append(str(p))
+            self.rsync(staged, f"{self.target}:{remote_dir}/")
 
     def pull(self, remote_dir, local_dir):
         Path(local_dir).mkdir(parents=True, exist_ok=True)
