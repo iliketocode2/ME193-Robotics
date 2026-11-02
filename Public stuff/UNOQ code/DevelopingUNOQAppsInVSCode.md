@@ -287,7 +287,8 @@ Then click **Sync Changes** in VS Code.
 | `ssh` or `ssh-copy-id` hangs with no output | Your laptop can't reach the board. Press Ctrl+C. Try the IP instead of the `.local` name, or move both to a home network or phone hotspot. |
 | "Could not resolve hostname" | The `.local` name doesn't work on this network. Use the IP address. |
 | Asked for a password after Step 2 | The key copy didn't work. Repeat "Copy the key to the board" in Step 2. |
-| "Host key verification failed" | A different device now has your board's old IP. Find your board's current IP and update `HOSTS` in `tools/board_secrets.py`. |
+| Deploy says "a different board answered than last time" or you see "Host key verification failed" | A different device now has that IP (or you are using a second board). Run the `ssh-keygen -R <address>` command that deploy.py prints, then deploy again. If the IP is simply wrong, update `HOSTS` in `tools/board_secrets.py`. |
+| Deploy says "reachable, but not logged in" | The board is there but doesn't have your key. Run the `ssh-copy-id` command that deploy.py prints and type the board's password once (Step 2). |
 | Push rejected: "remote contains work that you do not have locally" | The GitHub repo wasn't empty. If it only has a README, run `git push -u --force origin main` on the board. |
 | "Permission denied (publickey)" when pushing from the board | The deploy key is missing or lacks write access. Recheck Step 4 and make sure **Allow write access** is checked. |
 | Thousands of files in `git status` or during a deploy | A `.cache` folder is being included. Make sure `.gitignore` contains `.cache/`, and use the `tools/deploy.py` from the kit. |

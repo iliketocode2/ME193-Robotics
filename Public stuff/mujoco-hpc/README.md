@@ -78,6 +78,11 @@ files) comes back to `runs/<name>/`. The CPU and GPU runs give the same physics;
 rendering (and GPU-based training such as MJX/JAX later). For an interactive window (`mujoco.viewer`) run
 MuJoCo on your laptop instead; the cluster is for long or heavy runs.
 
+## Next: your own robot from Onshape
+
+`09_onshape_robot/` has a second demo: design a box-with-two-wheels robot in Onshape, export it to MuJoCo
+automatically, and drive it. Start with `09_onshape_robot/README.md`.
+
 ## If something goes wrong
 
 Every run writes a log of every command and its output to `logs/`. **Send the newest file in `logs/`**
@@ -118,6 +123,7 @@ Running the scripts in plain Windows stops with these instructions.
 | `04_test_mujoco.py` | The smoke test `setup.py` runs on the cluster (physics, plus a rendering check). |
 | `05_job.sbatch`, `06_gpu_job.sbatch` | Slurm job scripts for the CPU and GPU tests. |
 | `08_demo.py`, `08_demo.sbatch` | The bouncing-ball demo and its job script (for the by-hand route). |
+| `09_onshape_robot/` | Second demo: build a robot in Onshape, export it, drive it. Has its own README. |
 | `02_check_cluster.sh`, `03_setup_env.sh` | Cluster-side survey and installer, run by `setup.py`. |
 | `00_...`, `01_...`, `01b_login.sh`, `08b_fetch_results.sh`, `activate.sh` | The by-hand route, below. |
 | `logs/`, `runs/`, `results/` | Created as you work: logs, and results copied back from the cluster. |

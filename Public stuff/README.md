@@ -24,7 +24,8 @@ subset of the class repo that's meant to be shared.
 - [mujoco-hpc/](mujoco-hpc/) — run MuJoCo physics simulations on the Tufts
   HPC cluster from your own laptop. `python3 setup.py` checks your login and
   installs everything; `python3 runIt.py --gpu 08_demo.py` runs a bouncing-ball
-  simulation on a GPU node and brings the video home.
+  simulation on a GPU node and brings the video home. `09_onshape_robot/`
+  turns a two-wheeled robot designed in Onshape into a MuJoCo model and drives it.
   Edit `config.sh` with your Tufts username first.
 - [QLearn/](QLearn/) — a browser-based Q-learning visualizer (PyScript +
   Web Bluetooth): train a LEGO Education robot on Silly Walk, Line Follower

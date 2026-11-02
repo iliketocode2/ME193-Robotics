@@ -172,7 +172,9 @@ class colorSensor(_CardReader, le.ColorSensor):
     def __init__(self):
         super().__init__()
 
-    def connect(self, card_serial, card_color=None):
+    def connect(self, card_serial=None, card_color=None):
+        """Connect to a Color Sensor. With no arguments, connects to the
+        first advertising Color Sensor found (no Connection Card needed)."""
         for attempt in range(5):
             try:
                 super().connect(card_color=card_color, card_serial=card_serial)
