@@ -1,0 +1,5 @@
+name: Step Counter Stream
+description: "Streams the shoe-mounted MPU-6050 (100 Hz, accel + gyro) to a laptop over UDP for the neural-net step counter"
+icon: 👣
+ports: [5005]
+bricks: []
