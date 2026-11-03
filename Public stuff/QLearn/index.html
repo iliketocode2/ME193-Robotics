@@ -725,6 +725,25 @@
           </div>
         </div>
 
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Exploration <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Epsilon is the probability of taking a random action (explore) instead of the best-known one (exploit). It starts at the Start value and moves linearly to the End value over the course of training. 1 = always random, 0 = always greedy.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Epsilon Start: <span id="val-eps-start">1</span></label>
+                <input type="range" id="slider-eps-start" min="0" max="1" step="0.05" value="1" oninput="document.getElementById('val-eps-start').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Epsilon End: <span id="val-eps-end">0.05</span></label>
+                <input type="range" id="slider-eps-end" min="0" max="1" step="0.05" value="0.05" oninput="document.getElementById('val-eps-end').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="subsection">
           <div class="subsection-header" onclick="toggleSubsection(this)">
             <h3>Rewards Configuration <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Agent learns to maximize cumulative reward over time. Set the reward the agent receives for completing a specific action while in a given state.</span></span></h3>
@@ -737,7 +756,6 @@
         </div>
 
         <div style="margin-top: 10px;">
-          <button class="success" py-click="apply_rewards">Apply Settings</button>
           <button class="danger" py-click="reset_qtable">Reset Q-Table</button>
         </div>
       </div>
@@ -832,6 +850,25 @@
           </div>
         </div>
 
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Exploration <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Epsilon is the probability of taking a random action (explore) instead of the best-known one (exploit). It starts at the Start value and moves linearly to the End value over the course of training. 1 = always random, 0 = always greedy.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Epsilon Start: <span id="val-line-eps-start">1</span></label>
+                <input type="range" id="slider-line-eps-start" min="0" max="1" step="0.05" value="1" oninput="document.getElementById('val-line-eps-start').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Epsilon End: <span id="val-line-eps-end">0.05</span></label>
+                <input type="range" id="slider-line-eps-end" min="0" max="1" step="0.05" value="0.05" oninput="document.getElementById('val-line-eps-end').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="subsection">
           <div class="subsection-header" onclick="toggleSubsection(this)">
             <h3>Rewards Configuration <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Set the reward the agent receives for taking a specific action while in a given state.</span></span></h3>
@@ -843,9 +880,18 @@
                 <thead>
                   <tr>
                     <th></th>
-                    <th class="action-value-header"><b class="action-header-label">Move to LEFT</b></th>
-                    <th class="action-value-header"><b class="action-header-label">Move to RIGHT</b></th>
-                    <th class="action-value-header"><b class="action-header-label">FORWARD</b></th>
+                    <th class="action-value-header">
+                      <b class="action-header-label">Move to LEFT</b>
+                      <button class="execute-action-btn" onclick="requestManualAction('LEFT')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+                    </th>
+                    <th class="action-value-header">
+                      <b class="action-header-label">Move to RIGHT</b>
+                      <button class="execute-action-btn" onclick="requestManualAction('RIGHT')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+                    </th>
+                    <th class="action-value-header">
+                      <b class="action-header-label">FORWARD</b>
+                      <button class="execute-action-btn" onclick="requestManualAction('FORWARD')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -874,7 +920,6 @@
         </div>
 
         <div style="margin-top: 10px;">
-          <button class="success" py-click="apply_line_rewards">Apply Settings</button>
           <button class="danger" py-click="reset_qtable_line">Reset Q-Table</button>
         </div>
       </div>
@@ -887,9 +932,18 @@
           <thead>
             <tr>
               <th></th>
-              <th class="action-value-header"><b class="action-header-label">Move to LEFT</b></th>
-              <th class="action-value-header"><b class="action-header-label">Move to RIGHT</b></th>
-              <th class="action-value-header"><b class="action-header-label">FORWARD</b></th>
+              <th class="action-value-header">
+                <b class="action-header-label">Move to LEFT</b>
+                <button class="execute-action-btn" onclick="requestManualAction('LEFT')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+              </th>
+              <th class="action-value-header">
+                <b class="action-header-label">Move to RIGHT</b>
+                <button class="execute-action-btn" onclick="requestManualAction('RIGHT')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+              </th>
+              <th class="action-value-header">
+                <b class="action-header-label">FORWARD</b>
+                <button class="execute-action-btn" onclick="requestManualAction('FORWARD')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -982,6 +1036,25 @@
           </div>
         </div>
 
+        <div class="subsection collapsed">
+          <div class="subsection-header" onclick="toggleSubsection(this)">
+            <h3>Exploration <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Epsilon is the probability of taking a random action (explore) instead of the best-known one (exploit). It starts at the Start value and moves linearly to the End value over the course of training. 1 = always random, 0 = always greedy.</span></span></h3>
+            <span class="chevron">&#9660;</span>
+          </div>
+          <div class="subsection-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+              <div class="slider-group">
+                <label>Epsilon Start: <span id="val-maze-eps-start">1</span></label>
+                <input type="range" id="slider-maze-eps-start" min="0" max="1" step="0.05" value="1" oninput="document.getElementById('val-maze-eps-start').innerText = this.value">
+              </div>
+              <div class="slider-group">
+                <label>Epsilon End: <span id="val-maze-eps-end">0.05</span></label>
+                <input type="range" id="slider-maze-eps-end" min="0" max="1" step="0.05" value="0.05" oninput="document.getElementById('val-maze-eps-end').innerText = this.value">
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="subsection">
           <div class="subsection-header" onclick="toggleSubsection(this)">
             <h3>Rewards Configuration <span class="tooltip-trigger help-icon">?<span class="tooltip-text">Set the reward for taking a specific action while the color sensor and yaw-drift together put the robot in a given state. States combine color (Black/Red/Blue tape, Green goal, White) with yaw-drift (Left/Right/Center).</span></span></h3>
@@ -993,9 +1066,18 @@
                 <thead>
                   <tr>
                     <th></th>
-                    <th class="action-value-header"><b class="action-header-label">Move to LEFT</b></th>
-                    <th class="action-value-header"><b class="action-header-label">Move to RIGHT</b></th>
-                    <th class="action-value-header"><b class="action-header-label">FORWARD</b></th>
+                    <th class="action-value-header">
+                      <b class="action-header-label">Move to LEFT</b>
+                      <button class="execute-action-btn" onclick="requestManualAction('LEFT')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+                    </th>
+                    <th class="action-value-header">
+                      <b class="action-header-label">Move to RIGHT</b>
+                      <button class="execute-action-btn" onclick="requestManualAction('RIGHT')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+                    </th>
+                    <th class="action-value-header">
+                      <b class="action-header-label">FORWARD</b>
+                      <button class="execute-action-btn" onclick="requestManualAction('FORWARD')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1171,7 +1253,6 @@
         </div>
 
         <div style="margin-top: 10px;">
-          <button class="success" py-click="apply_maze_rewards">Apply Settings</button>
           <button class="danger" py-click="reset_qtable_maze">Reset Q-Table</button>
         </div>
       </div>
@@ -1192,9 +1273,18 @@
           <thead>
             <tr>
               <th></th>
-              <th class="action-value-header"><b class="action-header-label">Move to LEFT</b></th>
-              <th class="action-value-header"><b class="action-header-label">Move to RIGHT</b></th>
-              <th class="action-value-header"><b class="action-header-label">FORWARD</b></th>
+              <th class="action-value-header">
+                <b class="action-header-label">Move to LEFT</b>
+                <button class="execute-action-btn" onclick="requestManualAction('LEFT')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+              </th>
+              <th class="action-value-header">
+                <b class="action-header-label">Move to RIGHT</b>
+                <button class="execute-action-btn" onclick="requestManualAction('RIGHT')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+              </th>
+              <th class="action-value-header">
+                <b class="action-header-label">FORWARD</b>
+                <button class="execute-action-btn" onclick="requestManualAction('FORWARD')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -1361,6 +1451,17 @@
   // for this via document.addEventListener('manual-action', ...) rather
   // than py-click, since these buttons are dynamically injected whenever
   // the Q-table header is rebuilt (see note in rebuildQTableHead).
+  // Any slider/number input moving fires 'settings-changed'; Python
+  // (main.py) re-reads the active page's settings so there is no separate
+  // Apply button. Delegated on document because the Q-table and rewards
+  // inputs are rebuilt dynamically. Dropdowns are ignored on purpose: their
+  // own change handlers rebuild the UI and then re-apply.
+  document.addEventListener('input', function(ev) {
+    if (ev.target && ev.target.tagName === 'INPUT') {
+      document.dispatchEvent(new CustomEvent('settings-changed'));
+    }
+  });
+
   window.requestManualAction = function(actionName) {
     document.dispatchEvent(new CustomEvent('manual-action', { detail: { action: actionName } }));
   };
@@ -1843,25 +1944,26 @@
     const container = document.getElementById('rewards-container');
     container.innerHTML = '';
 
-    const headerCells = actionNames.map(a =>
-      `<th class="action-value-header">
-         <b class="action-header-label">${actionDisplayLabel(a)}</b>
-         <button class="execute-action-btn" onclick="requestManualAction('${a}')" title="Physically execute this action (does not update the Q-table)" disabled>&#9654;</button>
-       </th>`
-    ).join('');
+    // Silly Walk rewards depend only on the state: one visible slider per
+    // state, mirrored into hidden per-action inputs (reward-s{s}-{action})
+    // that apply_rewards() in main.py reads.
+    const headerCells = `<th class="action-value-header"><b class="action-header-label">Reward</b></th>`;
     let bodyRows = '';
     for (let s = 0; s < n; s++) {
-      const defaults = cfg.rewardDefaults[s];
-      const valueCells = actionNames.map(actionName => {
-        const idSuffix = actionName.toLowerCase();
-        const def = defaults[actionName];
-        return `
+      const def = cfg.rewardDefaults[s][actionNames[0]];
+      const hiddenInputs = actionNames.map(actionName =>
+        `<input type="hidden" id="reward-s${s}-${actionName.toLowerCase()}" value="${def}">`
+      ).join('');
+      const syncJS = actionNames.map(actionName =>
+        `document.getElementById('reward-s${s}-${actionName.toLowerCase()}').value = this.value;`
+      ).join(' ');
+      const valueCells = `
           <td>
-            <input type="range" id="reward-s${s}-${idSuffix}" min="-20" max="20" value="${def}" style="width: 100%;"
-                   oninput="document.getElementById('val-reward-s${s}-${idSuffix}').innerText = this.value">
-            <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-s${s}-${idSuffix}">${def}</span></div>
+            ${hiddenInputs}
+            <input type="range" id="reward-s${s}-all" min="-20" max="20" value="${def}" style="width: 100%;"
+                   oninput="document.getElementById('val-reward-s${s}-all').innerText = this.value; ${syncJS}">
+            <div style="font-family: monospace; margin-top: 4px;"><span id="val-reward-s${s}-all">${def}</span></div>
           </td>`;
-      }).join('');
       const axisLabelCell = s === 0
         ? `<td rowspan="${n}" class="axis-label"><span>States (Yaw)</span> <span class="tooltip-trigger tooltip-below help-icon">?<span class="tooltip-text">How can we discretize the orientation of the robot at the start of each step, based on its yaw-orientation?</span></span></td>`
         : '';
@@ -1874,7 +1976,7 @@
           <thead>
             <tr>
               <th colspan="2" rowspan="2"></th>
-              <th colspan="${actionNames.length}" class="axis-style-header"><span class="axis-header-text">Actions</span> <span class="tooltip-trigger tooltip-below tooltip-align-end help-icon">?<span class="tooltip-text">Which way can the robot move?</span></span></th>
+              <th class="axis-style-header"><span class="axis-header-text">Any Action</span> <span class="tooltip-trigger tooltip-below tooltip-align-end help-icon">?<span class="tooltip-text">The reward depends only on the state the robot is in, not on which action it takes.</span></span></th>
             </tr>
             <tr>${headerCells}</tr>
           </thead>

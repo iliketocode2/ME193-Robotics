@@ -4,6 +4,18 @@ You will design a small robot in Onshape (a box with two wheels), turn it into a
 and drive it in a simulation on the cluster. The cluster setup in `../README.md` must already work
 (`python3 setup.py` all PASS).
 
+## What is in this folder
+
+| Path | What it is |
+|---|---|
+| `README.md` | This guide: design the robot in Onshape, export it, drive it. |
+| `drive.py` | Drives the robot with a fixed plan (forward, spin, curve) and films it. |
+| `.env.example` | Template for your Onshape keys. Copy it to `.env` and fill it in (`.env` stays out of git). |
+| `onshape/` | The robot: `config.json` (which Onshape document), and the exported `robot.xml`, `scene.xml`, `assets/`. A hand-written sample robot is there until you export your own. |
+| `sample/` | A copy of that sample robot, to fall back on. |
+| `mjlab_task/` | Teach the robot to drive straight with reinforcement learning (own README). |
+| `docs/` | How the Drive-Straight training works, in plain words. |
+
 ## First, a word about file formats
 
 MuJoCo reads **MJCF**, its own XML format. **URDF** is a different XML format that comes from ROS (the robot
@@ -87,10 +99,14 @@ Do this once on your laptop.
    (If the tool says it cannot find the keys, run these three as `export NAME=value` in your terminal instead.)
 4. Open `onshape/config.json` and paste the browser address of your Onshape document (the tab with your assembly) in place of
    the placeholder. Leave `assembly_name` as `robot` if that is what you called the assembly.
-5. From the `09_onshape_robot` folder run:
+5. Activate the Python virtual environment you installed `onshape-to-robot` into (skip this if you installed it
+   system-wide), then from the `09_onshape_robot` folder run:
    ```
+   source ../.venv/bin/activate
    onshape-to-robot onshape
    ```
+   (On Windows the activate line is `..\.venv\Scripts\activate`.) Your prompt shows `(.venv)` when it is active; if you get
+   `command not found: onshape-to-robot`, the environment is not active.
    `onshape/` now has `robot.xml`, `scene.xml` and `assets/` (replacing the sample `robot.xml` and `scene.xml` that
    were there). You will see `Unknown joint type: continuous`: that is harmless, the wheels are written as ordinary
    hinge joints with no angle limits. A warning `part wheel has no dynamics` means the wheel has no material in

@@ -362,6 +362,15 @@ def hide_yaw_modal(e=None):
         _yaw_monitor_task.cancel()
         _yaw_monitor_task = None
 
+EPS_START = 1.0  # overwritten by apply_rewards() from the "Epsilon Start" slider
+EPS_END = 0.05   # overwritten by apply_rewards() from the "Epsilon End" slider
+
+def epsilon_at(progress, start, end):
+    """Explore probability, moving linearly from start to end as progress
+    goes 0 -> 1 (clamped, so it holds at `end` afterwards)."""
+    progress = min(max(progress, 0.0), 1.0)
+    return start + (end - start) * progress
+
 TURN_DEGREES = 135  # overwritten by apply_rewards() from the "Turn Degrees" slider
 TURN_WAIT = 0.3      # overwritten by apply_rewards() from the "Turn Wait" slider
 TRAIN_ITERS = 10     # overwritten by apply_rewards() from the "Number of Steps" slider
@@ -414,7 +423,12 @@ def reset_yaw_now(e=None):
 # PyScript — this listener is registered once, here, at static load time.
 async def _manual_action_run(action_name):
     log(f"Manually executing: {action_name} (Q-table not updated).")
-    await take_action(a=action_name)
+    if _is_maze_page_active():
+        await take_action_maze(action_name)
+    elif _is_line_page_active():
+        await take_action_line(action_name)
+    else:
+        await take_action(a=action_name)
 
 def _on_manual_action_event(event):
     if _running_task is not None:
@@ -428,6 +442,19 @@ def _on_manual_action_event(event):
         return
     asyncio.ensure_future(_manual_action_run(action_name))
 
+# Settings sliders take effect immediately: index.html fires 'settings-changed'
+# on every input, and we re-read the settings of whichever tab is showing.
+def _on_settings_changed(event):
+    if _is_maze_page_active():
+        apply_maze_rewards()
+    elif _is_line_page_active():
+        apply_line_rewards()
+    else:
+        apply_rewards()
+
+_settings_changed_proxy = create_proxy(_on_settings_changed)
+document.addEventListener('settings-changed', _settings_changed_proxy)
+
 _manual_action_proxy = create_proxy(_on_manual_action_event)
 document.addEventListener('manual-action', _manual_action_proxy)
 
@@ -438,7 +465,7 @@ def update_qtable_ui(qtable):
             window.updateCell(s, a, float(val))
 
 def apply_rewards(e=None):
-    global TURN_DEGREES, TURN_WAIT, TRAIN_ITERS, NUM_EPISODES, ALPHA, GAMMA, BOUNDARIES
+    global TURN_DEGREES, TURN_WAIT, TRAIN_ITERS, NUM_EPISODES, ALPHA, GAMMA, BOUNDARIES, EPS_START, EPS_END
     try:
         TURN_DEGREES = int(document.getElementById('slider-turn-degrees').value)
         TURN_WAIT = float(document.getElementById('slider-turn-wait').value)
@@ -446,6 +473,8 @@ def apply_rewards(e=None):
         NUM_EPISODES = int(document.getElementById('slider-num-episodes').value)
         ALPHA = float(document.getElementById('slider-alpha').value)
         GAMMA = float(document.getElementById('slider-gamma').value)
+        EPS_START = float(document.getElementById('slider-eps-start').value)
+        EPS_END = float(document.getElementById('slider-eps-end').value)
 
         # Read the (NUM_STATES - 1) yaw boundary inputs: thresh-b0, thresh-b1, ...
         new_boundaries = []
@@ -558,7 +587,7 @@ async def _train_loop():
                 s, yaw = get_yaw_state()
 
             for i in range(n):
-                eps = max(1 - step_counter / total_steps, 0.05)
+                eps = epsilon_at(step_counter / total_steps, EPS_START, EPS_END)
                 a = qtable_instance.choose_action(s=s, eps=eps)
                 action_name = direction_mapping[a]
 
@@ -651,6 +680,8 @@ FORWARD_DEGREES_LINE = 45  # overwritten by apply_line_rewards() from the "Forwa
 LINE_BOUNDARIES = [33, 66] # [low, high] reflection thresholds; overwritten by apply_line_rewards()
 TRAIN_STEPS_LINE = 50      # fixed step count, mirroring the original hardware script's `for i in range(50)`
 REST_TIME_LINE = 0.4       # overwritten by apply_line_rewards() from the "Rest Time" slider
+EPS_START_LINE = 1.0       # overwritten by apply_line_rewards() from the "Epsilon Start" slider
+EPS_END_LINE = 0.05        # overwritten by apply_line_rewards() from the "Epsilon End" slider
 
 # ── Current Reflection modal ──
 # Independent of the Start/Stop/Policy run-guard: this only *reads* the
@@ -724,11 +755,13 @@ def update_qtable_ui_line(qtable):
             window.updateLineCell(s, a, float(val))
 
 def apply_line_rewards(e=None):
-    global TURN_DEGREES_LINE, FORWARD_DEGREES_LINE, LINE_BOUNDARIES, REST_TIME_LINE
+    global TURN_DEGREES_LINE, FORWARD_DEGREES_LINE, LINE_BOUNDARIES, REST_TIME_LINE, EPS_START_LINE, EPS_END_LINE
     try:
         TURN_DEGREES_LINE = int(document.getElementById('slider-line-turn-degrees').value)
         FORWARD_DEGREES_LINE = int(document.getElementById('slider-line-forward-degrees').value)
         REST_TIME_LINE = float(document.getElementById('slider-line-rest-time').value)
+        EPS_START_LINE = float(document.getElementById('slider-line-eps-start').value)
+        EPS_END_LINE = float(document.getElementById('slider-line-eps-end').value)
         lo = int(document.getElementById('slider-line-thresh-lo').value)
         hi = int(document.getElementById('slider-line-thresh-hi').value)
         if lo >= hi:
@@ -769,7 +802,7 @@ async def _train_loop_line():
     n = max(TRAIN_STEPS_LINE, 1)
     try:
         for i in range(n):
-            eps = max(1 - i / n, 0.05)
+            eps = epsilon_at(i / n, EPS_START_LINE, EPS_END_LINE)
             a = qtable_line.choose_action(s=s, eps=eps)
             action_name = direction_mapping_line[a]
             log(f"Step {i + 1}/{n}: State={LINE_STATE_NAMES[s]} (reflection={reflection}), "
@@ -931,6 +964,8 @@ async def take_action_maze(a):
 
 MAZE_ALPHA = 0.1  # overwritten by apply_maze_rewards() from its "Alpha" slider
 MAZE_GAMMA = 0.9  # overwritten by apply_maze_rewards() from its "Gamma" slider
+EPS_START_MAZE = 1.0  # overwritten by apply_maze_rewards() from its "Epsilon Start" slider
+EPS_END_MAZE = 0.05   # overwritten by apply_maze_rewards() from its "Epsilon End" slider
 
 def init_qtable_maze():
     return QTable(states=np.arange(11), actions=np.arange(3), gamma=MAZE_GAMMA, alpha=MAZE_ALPHA)
@@ -943,7 +978,7 @@ def update_qtable_ui_maze(qtable):
             window.updateMazeCell(s, a, float(qtable.table[s, a]))
 
 def apply_maze_rewards(e=None):
-    global TURN_DEGREES_MAZE, FORWARD_DEGREES_MAZE, YAW_DEADBAND_MAZE, NUM_EPISODES_MAZE, MAX_STEPS_MAZE, REST_TIME_MAZE, MAZE_ALPHA, MAZE_GAMMA
+    global TURN_DEGREES_MAZE, FORWARD_DEGREES_MAZE, YAW_DEADBAND_MAZE, NUM_EPISODES_MAZE, MAX_STEPS_MAZE, REST_TIME_MAZE, MAZE_ALPHA, MAZE_GAMMA, EPS_START_MAZE, EPS_END_MAZE
     try:
         TURN_DEGREES_MAZE = int(document.getElementById('slider-maze-turn-degrees').value)
         FORWARD_DEGREES_MAZE = int(document.getElementById('slider-maze-forward-degrees').value)
@@ -953,6 +988,8 @@ def apply_maze_rewards(e=None):
         REST_TIME_MAZE = float(document.getElementById('slider-maze-rest-time').value)
         MAZE_ALPHA = float(document.getElementById('slider-maze-alpha').value)
         MAZE_GAMMA = float(document.getElementById('slider-maze-gamma').value)
+        EPS_START_MAZE = float(document.getElementById('slider-maze-eps-start').value)
+        EPS_END_MAZE = float(document.getElementById('slider-maze-eps-end').value)
 
         rewards = np.full((11, 3), -1)
         for s in range(11):
@@ -1035,7 +1072,7 @@ async def _train_loop_maze():
     n_episodes = max(NUM_EPISODES_MAZE, 1)
     try:
         for episode in range(n_episodes):
-            eps = max(1 - episode / max(1, n_episodes - 1), 0.05)
+            eps = epsilon_at(episode / max(1, n_episodes - 1), EPS_START_MAZE, EPS_END_MAZE)
             await _wait_for_maze_ready()
             outcome = await run_episode_maze(eps=eps, max_steps=MAX_STEPS_MAZE)
             log(f"Episode {episode + 1}/{n_episodes} ended: {outcome}")
@@ -1152,7 +1189,7 @@ async def _step_once():
         s, yaw = _step_s, _step_yaw
         names = state_names()
         n = max(TRAIN_ITERS, 1)
-        eps = max(1 - _step_i / n, 0.05)
+        eps = epsilon_at(_step_i / n, EPS_START, EPS_END)
         a = qtable_instance.choose_action(s=s, eps=eps)
         action_name = direction_mapping[a]
 

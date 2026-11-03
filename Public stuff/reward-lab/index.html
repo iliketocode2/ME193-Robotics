@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reward lab: why does the robot get stuck?</title>
+<style>
+:root{
+  --bg:#faf9f5;--surface:#ffffff;--surface2:#f1efe8;--text:#2c2c2a;--muted:#5f5e5a;--border:#d3d1c7;
+  --accent:#1d9e75;--accent-bg:#e1f5ee;--accent-text:#085041;--btn:#0f6e56;
+  --warn:#d85a30;--warn-bg:#faece7;--warn-text:#712b13;--amber-bg:#faeeda;--amber:#ba7517;
+  --wall:#b4b2a9;--wall-s:#888780;
+  color-scheme:light dark;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1f1e1d;--surface:#2a2927;--surface2:#343230;--text:#ece9df;--muted:#b4b2a9;--border:#4a4945;
+    --accent:#5dcaa5;--accent-bg:#0f3a2f;--accent-text:#9fe1cb;--btn:#1d9e75;
+    --warn:#f0997b;--warn-bg:#4a2418;--warn-text:#f5c4b3;--amber-bg:#4a3410;--amber:#ef9f27;
+    --wall:#5f5e5a;--wall-s:#888780;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1f1e1d;--surface:#2a2927;--surface2:#343230;--text:#ece9df;--muted:#b4b2a9;--border:#4a4945;
+  --accent:#5dcaa5;--accent-bg:#0f3a2f;--accent-text:#9fe1cb;--btn:#1d9e75;
+  --warn:#f0997b;--warn-bg:#4a2418;--warn-text:#f5c4b3;--amber-bg:#4a3410;--amber:#ef9f27;
+  --wall:#5f5e5a;--wall-s:#888780;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.55}
+.wrap{max-width:1040px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:26px;font-weight:600;margin:0 0 6px}
+h2{font-size:17px;font-weight:600;margin:0 0 8px}
+.lead{color:var(--muted);margin:0 0 20px;max-width:720px}
+.layout{display:grid;grid-template-columns:minmax(0,460px) minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:820px){.layout{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font:inherit;font-size:14px;padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--btn);border-color:var(--btn);color:#fff}
+.btn[aria-pressed="true"]{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-text)}
+.btn.small{padding:5px 10px;font-size:13px}
+.lbl{font-size:13px;color:var(--muted)}
+svg#board{width:100%;height:auto;display:block;touch-action:none;border-radius:8px;margin:10px 0}
+.num{fill:var(--muted);font-size:11px}
+.tag{fill:var(--text);font-size:13px;font-weight:600}
+.cnt{fill:var(--muted);font-size:11px}
+@media (prefers-reduced-motion: no-preference){#robot{transition:transform .22s ease}}
+.stats{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:14px}
+.msg{font-size:14px;color:var(--muted);margin-top:6px;min-height:22px}
+.outcome{margin-top:8px;padding:8px 10px;border-radius:8px;font-size:14px}
+.outcome.good{background:var(--accent-bg);color:var(--accent-text)}
+.outcome.bad{background:var(--warn-bg);color:var(--warn-text)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-weight:500;color:var(--muted);padding:4px 6px;border-bottom:1px solid var(--border)}
+td{padding:6px;border-bottom:1px solid var(--border);vertical-align:top}
+tr.pick td{background:var(--accent-bg);color:var(--accent-text)}
+td.terms{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.scroll{overflow-x:auto}
+.srow{margin-bottom:12px}
+.srow label{display:flex;justify-content:space-between;font-size:14px}
+.srow output{font-variant-numeric:tabular-nums;color:var(--muted)}
+.srow input[type=range]{width:100%;accent-color:var(--accent)}
+.hint{display:block;font-size:12px;color:var(--muted)}
+pre{margin:0;padding:12px;border-radius:8px;background:var(--surface2);overflow-x:auto;font-size:12.5px;line-height:1.5;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+ol.try{margin:0;padding-left:20px}
+ol.try li{margin-bottom:6px}
+.chk{display:flex;align-items:center;gap:6px;font-size:14px}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>Reward lab: why does the robot get stuck?</h1>
+  <p class="lead">This robot always takes the move with the best immediate reward. It starts with the “straight-line distance to the goal” reward. Before you press anything, predict where it will end up. Then run it, and start changing the reward to see what happens.</p>
+
+  <div class="layout">
+    <section>
+      <div class="card">
+        <div class="row" role="group" aria-label="Edit mode">
+          <span class="lbl">Click the board to:</span>
+          <button class="btn small" data-mode="wall" aria-pressed="true">Toggle walls</button>
+          <button class="btn small" data-mode="start" aria-pressed="false">Move start</button>
+          <button class="btn small" data-mode="goal" aria-pressed="false">Move goal</button>
+          <button class="btn small" id="resetMap">Reset map</button>
+        </div>
+        <svg id="board" viewBox="0 0 420 420" role="img" aria-label="Seven by seven grid world. Click cells to edit walls, start or goal.">
+          <g id="layer"></g>
+          <g id="robot"><circle r="17" fill="var(--warn)" stroke="var(--surface)" stroke-width="2"/><circle cx="-5" cy="-3" r="2.5" fill="#fff"/><circle cx="5" cy="-3" r="2.5" fill="#fff"/></g>
+        </svg>
+        <div class="row">
+          <button class="btn primary" id="stepBtn">Step</button>
+          <button class="btn" id="runBtn">Run</button>
+          <button class="btn" id="resetRun">Reset run</button>
+          <select class="btn small" id="speed" aria-label="Run speed">
+            <option value="700">Slow</option>
+            <option value="300" selected>Normal</option>
+            <option value="80">Fast</option>
+          </select>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <label class="chk"><input type="checkbox" id="showHeat" checked> Show reward heatmap</label>
+          <label class="chk"><input type="checkbox" id="showTrail" checked> Show trail</label>
+        </div>
+        <div id="status" aria-live="polite" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <h2 id="decisionTitle">What the robot is weighing</h2>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Move</th><th>Lands on</th><th>Reward</th><th>Terms</th></tr></thead>
+            <tbody id="choices"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="card">
+        <h2>Presets</h2>
+        <div class="row" id="presets"></div>
+      </div>
+
+      <div class="card">
+        <h2>Build your own reward</h2>
+        <div id="sliders"></div>
+        <div class="srow">
+          <label for="maxSteps">Max steps <output id="maxStepsOut">30</output></label>
+          <input type="range" id="maxSteps" min="10" max="100" step="5" value="30">
+        </div>
+        <label class="chk"><input type="checkbox" id="tie"> Break ties randomly (otherwise: first best move in the order right, left, up, down)</label>
+      </div>
+
+      <div class="card">
+        <h2>Your reward as Python</h2>
+        <pre id="code"></pre>
+      </div>
+    </section>
+  </div>
+
+  <div class="card">
+    <h2>Things to try</h2>
+    <ol class="try">
+      <li>With the default reward, press Step until it stops. Where does it end up, and why does every move look worse than staying put?</li>
+      <li>Turn on the revisit penalty. Does the robot escape the wall? Does it actually reach the goal, or just wander?</li>
+      <li>Switch to shortest-path distance. Why does it now walk away from the goal at first and still succeed?</li>
+      <li>Try the goal-bonus-only preset. Why does the robot just push right? Then turn on random tie-breaking.</li>
+      <li>Draw a new maze, like a long wall or a dead-end pocket, and find a reward that solves it. Then look for the new exploit your reward creates.</li>
+      <li>Add a time penalty on its own. Does anything change for a robot that only looks one move ahead? Why or why not?</li>
+    </ol>
+  </div>
+</main>
+
+<script>
+(function(){
+var N=7,CELL=60;
+var ACTS=[{n:"right",g:"→",d:[1,0]},{n:"left",g:"←",d:[-1,0]},{n:"up",g:"↑",d:[0,1]},{n:"down",g:"↓",d:[0,-1]}];
+var DEF={wM:1,wB:0,step:0,bump:0,novelty:0,revisit:0,goal:0};
+var PRESETS=[
+  {name:"Straight-line distance (default)",p:{}},
+  {name:"Shortest-path distance",p:{wM:0,wB:1}},
+  {name:"Straight-line + curiosity",p:{novelty:2}},
+  {name:"Straight-line + revisit penalty",p:{revisit:2}},
+  {name:"Goal bonus only (sparse)",p:{wM:0,goal:10}},
+  {name:"Goal bonus + time penalty",p:{wM:0,step:1,goal:10}}
+];
+var DEFS=[
+  {k:"wM",label:"Straight-line distance weight",hint:"Penalty per cell of distance to the goal, ignoring walls.",min:0,max:3,step:0.1},
+  {k:"wB",label:"Shortest-path distance weight",hint:"Penalty per step along the real shortest route, walls respected.",min:0,max:3,step:0.1},
+  {k:"step",label:"Time penalty",hint:"Subtracted on every move, so it applies to all four options equally.",min:0,max:3,step:0.1},
+  {k:"bump",label:"Wall-bump penalty",hint:"Extra penalty when the move is blocked and the robot stays put.",min:0,max:10,step:0.5},
+  {k:"novelty",label:"New-cell bonus",hint:"Bonus for landing on a cell it has not visited yet.",min:0,max:10,step:0.5},
+  {k:"revisit",label:"Revisit penalty",hint:"Penalty for each previous visit to the cell it lands on (staying put counts).",min:0,max:10,step:0.5},
+  {k:"goal",label:"Goal bonus",hint:"Bonus for landing on the goal cell.",min:0,max:50,step:1}
+];
+var LABELS={wM:"straight-line",wB:"shortest-path",step:"time",bump:"wall bump",novelty:"new cell",revisit:"revisit",goal:"goal"};
+var P=Object.assign({},DEF),maxSteps=30,tieRandom=false,mode="wall";
+var walls,start,goal,dist,visits,pos,path,steps,total,done,lastMsg,outcome,timer=null;
+
+function fmt(v){return String(Number(v.toFixed(2))).replace("-","\u2212")}
+function fmtc(v){return String(Number(v.toFixed(2)))}
+function key(x,y){return x+","+y}
+function inb(x,y){return x>=0&&y>=0&&x<N&&y<N}
+function isWall(x,y){return walls.has(key(x,y))}
+function same(a,b){return a[0]===b[0]&&a[1]===b[1]}
+
+function defaultMap(){
+  walls=new Set();
+  for(var y=0;y<6;y++)walls.add(key(3,y));
+  start=[0,0];goal=[6,0];
+}
+function computeBfs(){
+  dist=[];
+  for(var x=0;x<N;x++){dist.push([]);for(var y=0;y<N;y++)dist[x].push(Infinity)}
+  var q=[[goal[0],goal[1]]];dist[goal[0]][goal[1]]=0;
+  while(q.length){
+    var c=q.shift();
+    for(var i=0;i<4;i++){
+      var nx=c[0]+ACTS[i].d[0],ny=c[1]+ACTS[i].d[1];
+      if(inb(nx,ny)&&!isWall(nx,ny)&&dist[nx][ny]===Infinity){dist[nx][ny]=dist[c[0]][c[1]]+1;q.push([nx,ny])}
+    }
+  }
+}
+function bfsd(x,y){var d=dist[x][y];return isFinite(d)?d:99}
+function stepFn(p,a){
+  var nx=p[0]+a.d[0],ny=p[1]+a.d[1];
+  if(!inb(nx,ny)||isWall(nx,ny))return{to:[p[0],p[1]],bumped:true};
+  return{to:[nx,ny],bumped:false};
+}
+function terms(nx,ny,bumped){
+  var man=Math.abs(nx-goal[0])+Math.abs(ny-goal[1]);
+  return{
+    wM:-P.wM*man,
+    wB:-P.wB*bfsd(nx,ny),
+    step:-P.step,
+    bump:bumped?-P.bump:0,
+    novelty:visits[nx][ny]===0?P.novelty:0,
+    revisit:-P.revisit*visits[nx][ny],
+    goal:(nx===goal[0]&&ny===goal[1])?P.goal:0
+  };
+}
+function evaluate(p){
+  var out=[];
+  for(var i=0;i<4;i++){
+    var s=stepFn(p,ACTS[i]);
+    var t=terms(s.to[0],s.to[1],s.bumped);
+    var sum=0;for(var k in t)sum+=t[k];
+    out.push({a:ACTS[i],to:s.to,bumped:s.bumped,parts:t,total:sum});
+  }
+  var best=-Infinity;out.forEach(function(c){if(c.total>best)best=c.total});
+  out.forEach(function(c){c.tied=Math.abs(c.total-best)<1e-9});
+  return out;
+}
+function resetRun(){
+  stopRun();
+  visits=[];
+  for(var x=0;x<N;x++){visits.push([]);for(var y=0;y<N;y++)visits[x].push(0)}
+  pos=[start[0],start[1]];
+  visits[pos[0]][pos[1]]=1;
+  path=[[pos[0],pos[1]]];steps=0;total=0;done=false;lastMsg="";outcome=null;
+}
+function doStep(){
+  if(done)return;
+  var ch=evaluate(pos);
+  var cand=ch.filter(function(c){return c.tied});
+  var pick=tieRandom?cand[Math.floor(Math.random()*cand.length)]:cand[0];
+  var prev=[pos[0],pos[1]];
+  pos=[pick.to[0],pick.to[1]];
+  visits[pos[0]][pos[1]]++;
+  path.push([pos[0],pos[1]]);
+  total+=pick.total;steps++;
+  lastMsg="Chose "+pick.a.n+" "+pick.a.g+(pick.bumped?" (blocked, so it stayed put)":"")+". Reward for that move: "+fmt(pick.total)+".";
+  if(same(pos,goal)){
+    done=true;outcome={good:true,text:"Reached the goal in "+steps+" steps."};
+  }else if(!tieRandom&&P.novelty===0&&P.revisit===0&&same(pos,prev)){
+    done=true;outcome={good:false,text:"Stuck at ("+pos[0]+", "+pos[1]+"). With this reward the choice depends only on where the robot is, so it would repeat this forever."};
+  }else if(steps>=maxSteps){
+    done=true;outcome={good:false,text:"Ran out of steps at ("+pos[0]+", "+pos[1]+") without reaching the goal."};
+  }
+}
+function stopRun(){
+  if(timer){clearInterval(timer);timer=null}
+  var b=document.getElementById("runBtn");if(b)b.textContent="Run";
+}
+function toggleRun(){
+  if(timer){stopRun();return}
+  if(done)resetRun();
+  document.getElementById("runBtn").textContent="Pause";
+  timer=setInterval(function(){
+    doStep();render();
+    if(done)stopRun();
+  },parseInt(document.getElementById("speed").value,10));
+  doStep();render();
+  if(done)stopRun();
+}
+
+var layer=document.getElementById("layer"),robot=document.getElementById("robot");
+function heat(){
+  var vals={},mn=Infinity,mx=-Infinity;
+  for(var x=0;x<N;x++)for(var y=0;y<N;y++){
+    if(isWall(x,y))continue;
+    var man=Math.abs(x-goal[0])+Math.abs(y-goal[1]);
+    var v=-P.wM*man-P.wB*bfsd(x,y)+((x===goal[0]&&y===goal[1])?P.goal:0);
+    vals[key(x,y)]=v;if(v<mn)mn=v;if(v>mx)mx=v;
+  }
+  return{vals:vals,mn:mn,mx:mx};
+}
+function drawBoard(){
+  var showHeat=document.getElementById("showHeat").checked;
+  var showTrail=document.getElementById("showTrail").checked;
+  var H=heat(),s="";
+  for(var x=0;x<N;x++)for(var y=0;y<N;y++){
+    var px=x*CELL,py=(N-1-y)*CELL,w=isWall(x,y),st=same([x,y],start),gl=same([x,y],goal);
+    var fill=w?"var(--wall)":st?"var(--accent-bg)":gl?"var(--amber-bg)":"var(--surface)";
+    var stroke=w?"var(--wall-s)":st?"var(--accent)":gl?"var(--amber)":"var(--border)";
+    var sw=(st||gl)?2:1;
+    s+='<rect x="'+(px+1)+'" y="'+(py+1)+'" width="'+(CELL-2)+'" height="'+(CELL-2)+'" rx="6" fill="'+fill+'" stroke="'+stroke+'" stroke-width="'+sw+'"/>';
+    if(!w&&showHeat){
+      var v=H.vals[key(x,y)],t=H.mx>H.mn?(v-H.mn)/(H.mx-H.mn):0;
+      s+='<rect x="'+(px+1)+'" y="'+(py+1)+'" width="'+(CELL-2)+'" height="'+(CELL-2)+'" rx="6" fill="var(--accent)" opacity="'+(0.04+0.4*t).toFixed(3)+'"/>';
+      s+='<text class="num" x="'+(px+7)+'" y="'+(py+16)+'">'+fmt(v)+'</text>';
+    }
+    if(st)s+='<text class="tag" x="'+(px+7)+'" y="'+(py+CELL-8)+'">S</text>';
+    if(gl)s+='<text class="tag" x="'+(px+7)+'" y="'+(py+CELL-8)+'">G</text>';
+    if(visits[x][y]>1)s+='<text class="cnt" text-anchor="end" x="'+(px+CELL-7)+'" y="'+(py+CELL-8)+'">\u00d7'+visits[x][y]+'</text>';
+  }
+  if(showTrail&&path.length>1){
+    var pts=path.map(function(p){return(p[0]*CELL+CELL/2)+","+((N-1-p[1])*CELL+CELL/2)}).join(" ");
+    s+='<polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>';
+  }
+  layer.innerHTML=s;
+  robot.style.transform="translate("+(pos[0]*CELL+CELL/2)+"px,"+((N-1-pos[1])*CELL+CELL/2)+"px)";
+}
+function drawStatus(){
+  var el=document.getElementById("status");
+  var h='<div class="stats"><span>Step <b>'+steps+'</b> of '+maxSteps+'</span><span>Position <b>('+pos[0]+', '+pos[1]+')</b></span><span>Total reward <b>'+fmt(total)+'</b></span></div>';
+  h+='<div class="msg">'+(steps===0?"Press Step or Run. First, predict where the robot will end up.":lastMsg)+'</div>';
+  if(outcome)h+='<div class="outcome '+(outcome.good?"good":"bad")+'">'+outcome.text+'</div>';
+  el.innerHTML=h;
+}
+function drawChoices(){
+  var ch=evaluate(pos),firstTied=-1,tiedCount=0;
+  ch.forEach(function(c,i){if(c.tied){tiedCount++;if(firstTied<0)firstTied=i}});
+  document.getElementById("decisionTitle").textContent=(done?"What it was weighing at the end":"Next decision")+" \u2014 from ("+pos[0]+", "+pos[1]+")";
+  var h="";
+  ch.forEach(function(c,i){
+    var hl=tieRandom?c.tied:(i===firstTied);
+    var bits=[];
+    for(var k in LABELS){if(Math.abs(c.parts[k])>1e-9)bits.push(LABELS[k]+" "+fmt(c.parts[k]))}
+    var t=bits.length?bits.join(" \u00b7 "):"no terms active";
+    h+='<tr'+(hl?' class="pick"':'')+'><td>'+c.a.g+' '+c.a.n+'</td><td>('+c.to[0]+', '+c.to[1]+')'+(c.bumped?' <span class="lbl">blocked</span>':'')+'</td><td>'+fmt(c.total)+'</td><td class="terms">'+t+'</td></tr>';
+  });
+  if(tieRandom&&tiedCount>1)h+='<tr><td colspan="4" class="lbl">'+tiedCount+' moves are tied, so one is picked at random.</td></tr>';
+  document.getElementById("choices").innerHTML=h;
+}
+function drawCode(){
+  var L=["def reward(pos, bumped, visits):","    r = 0"],n=0;
+  if(P.wM){L.push("    r -= "+fmtc(P.wM)+" * (abs(pos[0] - GOAL[0]) + abs(pos[1] - GOAL[1]))");n++}
+  if(P.wB){L.push("    r -= "+fmtc(P.wB)+" * bfs_distance(pos)   # shortest path around walls");n++}
+  if(P.step){L.push("    r -= "+fmtc(P.step)+"   # time penalty");n++}
+  if(P.bump){L.push("    if bumped: r -= "+fmtc(P.bump));n++}
+  if(P.novelty){L.push("    if visits[pos] == 0: r += "+fmtc(P.novelty)+"   # new cell");n++}
+  if(P.revisit){L.push("    r -= "+fmtc(P.revisit)+" * visits[pos]   # revisits");n++}
+  if(P.goal){L.push("    if pos == GOAL: r += "+fmtc(P.goal));n++}
+  if(!n)L.push("    # no terms: every move looks equally good");
+  L.push("    return r","","# each step: try the four moves, keep the one with the highest reward()");
+  document.getElementById("code").textContent=L.join("\n");
+}
+function drawPresets(){
+  var btns=document.querySelectorAll("#presets button");
+  PRESETS.forEach(function(pr,i){
+    var q=Object.assign({},DEF,pr.p),match=true;
+    for(var k in DEF)if(Math.abs(q[k]-P[k])>1e-9)match=false;
+    btns[i].setAttribute("aria-pressed",match?"true":"false");
+  });
+}
+function syncSliders(){
+  DEFS.forEach(function(d){
+    document.getElementById("s_"+d.k).value=P[d.k];
+    document.getElementById("o_"+d.k).textContent=fmtc(P[d.k]);
+  });
+}
+function render(){drawBoard();drawStatus();drawChoices();drawCode();drawPresets()}
+
+(function build(){
+  var host=document.getElementById("sliders"),h="";
+  DEFS.forEach(function(d){
+    h+='<div class="srow"><label for="s_'+d.k+'">'+d.label+' <output id="o_'+d.k+'"></output></label><input type="range" id="s_'+d.k+'" min="'+d.min+'" max="'+d.max+'" step="'+d.step+'"><span class="hint">'+d.hint+'</span></div>';
+  });
+  host.innerHTML=h;
+  DEFS.forEach(function(d){
+    document.getElementById("s_"+d.k).addEventListener("input",function(e){
+      P[d.k]=parseFloat(e.target.value);
+      document.getElementById("o_"+d.k).textContent=fmtc(P[d.k]);
+      resetRun();render();
+    });
+  });
+  var ph=document.getElementById("presets");
+  PRESETS.forEach(function(pr){
+    var b=document.createElement("button");
+    b.className="btn small";b.textContent=pr.name;b.setAttribute("aria-pressed","false");
+    b.addEventListener("click",function(){
+      P=Object.assign({},DEF,pr.p);syncSliders();resetRun();render();
+    });
+    ph.appendChild(b);
+  });
+})();
+
+document.getElementById("stepBtn").addEventListener("click",function(){stopRun();doStep();render()});
+document.getElementById("runBtn").addEventListener("click",toggleRun);
+document.getElementById("resetRun").addEventListener("click",function(){resetRun();render()});
+document.getElementById("showHeat").addEventListener("change",render);
+document.getElementById("showTrail").addEventListener("change",render);
+document.getElementById("tie").addEventListener("change",function(e){tieRandom=e.target.checked;resetRun();render()});
+document.getElementById("maxSteps").addEventListener("input",function(e){
+  maxSteps=parseInt(e.target.value,10);
+  document.getElementById("maxStepsOut").textContent=maxSteps;
+  resetRun();render();
+});
+document.getElementById("resetMap").addEventListener("click",function(){defaultMap();computeBfs();resetRun();render()});
+document.querySelectorAll("[data-mode]").forEach(function(b){
+  b.addEventListener("click",function(){
+    mode=b.getAttribute("data-mode");
+    document.querySelectorAll("[data-mode]").forEach(function(o){o.setAttribute("aria-pressed",o===b?"true":"false")});
+  });
+});
+
+var svg=document.getElementById("board"),painting=false,paintVal=false,lastCell="";
+function cellAt(e){
+  var r=svg.getBoundingClientRect();
+  var x=Math.floor((e.clientX-r.left)/r.width*N),y=N-1-Math.floor((e.clientY-r.top)/r.height*N);
+  x=Math.max(0,Math.min(N-1,x));y=Math.max(0,Math.min(N-1,y));
+  return[x,y];
+}
+function applyCell(c){
+  var x=c[0],y=c[1];
+  if(mode==="wall"){
+    if(same(c,start)||same(c,goal))return;
+    if(paintVal)walls.add(key(x,y));else walls.delete(key(x,y));
+  }else if(mode==="start"){
+    if(isWall(x,y)||same(c,goal))return;
+    start=[x,y];
+  }else{
+    if(isWall(x,y)||same(c,start))return;
+    goal=[x,y];
+  }
+  computeBfs();resetRun();render();
+}
+svg.addEventListener("pointerdown",function(e){
+  var c=cellAt(e);
+  if(mode==="wall")paintVal=!isWall(c[0],c[1]);
+  painting=true;lastCell=key(c[0],c[1]);
+  try{svg.setPointerCapture(e.pointerId)}catch(err){}
+  applyCell(c);
+});
+svg.addEventListener("pointermove",function(e){
+  if(!painting||mode!=="wall")return;
+  var c=cellAt(e),k=key(c[0],c[1]);
+  if(k===lastCell)return;
+  lastCell=k;applyCell(c);
+});
+function endPaint(){painting=false}
+svg.addEventListener("pointerup",endPaint);
+svg.addEventListener("pointercancel",endPaint);
+
+defaultMap();computeBfs();resetRun();syncSliders();render();
+})();
+</script>
+</body>
+</html>

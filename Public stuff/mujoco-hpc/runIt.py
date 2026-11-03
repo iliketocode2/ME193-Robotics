@@ -1,8 +1,8 @@
 """Run one of your MuJoCo scripts on the cluster and bring the results home.
 
-    python3 runIt.py 08_demo.py                  # CPU node
-    python3 runIt.py --gpu 08_demo.py 6 out.mp4  # GPU node; "6 out.mp4" are passed to the script
-    python3 runIt.py 08_demo.py --gpu            # same thing: options work in either place
+    python3 runIt.py scripts/08_demo.py                  # CPU node
+    python3 runIt.py --gpu scripts/08_demo.py 6 out.mp4  # GPU node; "6 out.mp4" are passed to the script
+    python3 runIt.py scripts/08_demo.py --gpu            # same thing: options work in either place
     python3 runIt.py --time 02:00:00 --mem 8G --gpu my_sim.py
 
 runIt's options (--gpu, --time, ...) can go before or after the script name; anything else is
@@ -65,6 +65,9 @@ def main():
     try:
         c.connect()
         rc, _ = c.ssh("test -x ~/mujoco-env/bin/python", check=False, show=False)
+        if rc == 255:   # ssh itself failed, so this says nothing about the environment
+            raise StepFailed("cannot reach the cluster: no network or VPN, or the shared login has expired "
+                             "(it lasts 2 hours). Reconnect with: python3 setup.py   (or ./01b_login.sh), then retry.")
         if rc != 0:
             raise StepFailed("the MuJoCo environment is missing on the cluster. Run: python3 setup.py")
 

@@ -1,5 +1,8 @@
 # Q-Learning Visualizer (LEGO Education, browser/PyScript)
 
+### 👉 [Click here to try it](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/QLearn/)
+
+
 A browser-based app that teaches Q-learning by having students train a LEGO
 Education robot (Double Motor hub + optional Color Sensor hub) over Web
 Bluetooth. Everything runs client-side via [PyScript](https://pyscript.net)

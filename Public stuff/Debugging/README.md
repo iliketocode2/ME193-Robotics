@@ -1,5 +1,8 @@
 # Debugging
 
+### 👉 [Click here to try it](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/Debugging/)
+
+
 `index.html` is a standalone MQTT console: subscribe to and publish on any
 topic, on any broker, straight from the browser — no install, no server.
 Open it directly (double-click, or `file://.../index.html`) or serve it via
