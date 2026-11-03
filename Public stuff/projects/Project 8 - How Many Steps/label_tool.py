@@ -115,8 +115,9 @@ def main():
     plt.rcParams["keymap.save"] = ["ctrl+s"]
     plt.rcParams["keymap.back"] = ["left", "backspace"]
     plt.rcParams["keymap.pan"] = []
-    Labeler(name)
+    labeler = Labeler(name)
     plt.show()
+    return labeler
 
 
 if __name__ == "__main__":

@@ -60,8 +60,8 @@ def train(channel_set="all", epochs=30, seed=0, quiet=False):
     sessions = {s.name: s for s in dataset.load_sessions()}
     split = dataset.split_sessions(sessions.values(), seed)
     if not split["train"] or not split["val"]:
-        raise SystemExit("Need labeled sessions to train: record at least 3 labeled sessions of one "
-                         "activity so whole sessions can be held out for validation.")
+        raise SystemExit("Need at least 2 labeled sessions to train (one is held out for validation). "
+                         "Label a session with label_tool.py.")
     train_s = [sessions[n] for n in split["train"]]
     val_s = [sessions[n] for n in split["val"]]
     channels = config.CHANNEL_SETS[channel_set]

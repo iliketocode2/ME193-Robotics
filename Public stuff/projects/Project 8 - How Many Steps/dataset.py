@@ -83,6 +83,8 @@ def split_sessions(sessions, seed=0):
         split["test"] += names[:n_hold]
         split["val"] += names[n_hold:2 * n_hold]
         split["train"] += names[2 * n_hold:]
+    if not split["val"] and len(split["train"]) >= 2:
+        split["val"].append(split["train"].pop(rng.randrange(len(split["train"]))))
     return split
 
 
