@@ -1,7 +1,12 @@
 <mujoco model="scene">
   <include file="robot.xml"/>
+  <asset>
+    <!-- checkered floor: each square is 10 cm, so you can see which way and how far the robot drives -->
+    <texture name="checker" type="2d" builtin="checker" width="512" height="512" rgb1=".3 .4 .5" rgb2=".15 .2 .25"/>
+    <material name="checker" texture="checker" texrepeat="5 5" texuniform="true"/>
+  </asset>
   <worldbody>
     <light pos="0 -1 3" dir="0 .3 -1"/>
-    <geom name="floor" type="plane" size="5 5 .1" rgba=".3 .4 .5 1"/>
+    <geom name="floor" type="plane" size="5 5 .1" material="checker"/>
   </worldbody>
 </mujoco>

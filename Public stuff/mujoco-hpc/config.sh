@@ -1,6 +1,6 @@
 # Edit these two lines, then everything else just works.
 # Sourced by the scripts that run on your laptop.
-export HPC_USER="YOUR_TUFTS_USERNAME"    # <-- replace with your Tufts username (UTLN)
+export HPC_USER="wgoldm03"    # <-- replace with your Tufts username (UTLN)
 export HPC_HOST="login-prod.pax.tufts.edu"     # Tufts HPC login node; check research.tufts.edu if this has changed
 export HPC_DIR="~/mujoco-hpc"             # where the files land on the cluster
 
