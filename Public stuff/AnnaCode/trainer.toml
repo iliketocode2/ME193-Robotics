@@ -1,8 +1,9 @@
 name = "network-trainer"
-packages = [ "legoeducation==1.0.6","numpy"]
+packages = [ "legoeducation==1.2.0","numpy"]
 
 [files]
 "./trainer/Device.py" = "./Device.py"
+"../QLearn/webhub.py" = "./webhub.py"
 "./trainer/main.py" = "./main.py"
 "./trainer/plots/fit_plot.py" = "./fit_plot.py"
 "./trainer/plots/live_plot.py" = "./live_plot.py"

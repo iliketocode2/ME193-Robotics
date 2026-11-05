@@ -1,5 +1,5 @@
 name = "AnnaCode"
-packages = [ "legoeducation==1.0.6","numpy"]
+packages = [ "legoeducation==1.2.0","numpy"]
 
 [files]
 "./glue/bindings.py" = "./bindings.py"
@@ -12,6 +12,7 @@ packages = [ "legoeducation==1.0.6","numpy"]
 "./network/presets.py" = "./presets.py"
 "./network/training.py" = "./training.py"
 "./Device.py" = "./Device.py"
+"../QLearn/webhub.py" = "./webhub.py"
 "./plot.py" = "./plot.py"
 "./main.py" = "./main.py"
 "./misc_ui/arrows.py" = "./arrows.py"

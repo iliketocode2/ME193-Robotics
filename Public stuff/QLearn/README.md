@@ -41,9 +41,12 @@ The application logic, run in-browser as Python via PyScript. Responsibilities:
 
 - **BLE device wiring** — `WebDevice`/`DoubleMotorDevice`/`ColorSensorDevice`
   wrap the `legoeducation` package's `DoubleMotor`/`ColorSensor` classes and
-  bridge their internal BLE worker (normally a background thread + `bleak`)
-  to the single-threaded Pyodide runtime, routing actual sends/notifications
-  through `ble.js`'s Web Bluetooth wrapper instead.
+  route their sends and notifications through `ble.js`'s Web Bluetooth wrapper
+  (via `webhub.py`) instead of the library's own Bluetooth thread.
+- **Firmware check** — `webhub.py` (also used by the AnnaCode pages) checks each hub when
+  it connects. Only the latest firmware is supported: a hub with older firmware gets an
+  alert to update at https://code.legoeducation.com/ and is disconnected. This needs
+  `legoeducation` 1.2.0 or later, which `pyscript.toml` pins.
 - **UI event handlers** — every `py-click` target in `index.html` (connect/
   disconnect, apply settings, reset Q-table, start/stop/step training, run
   policy, yaw/reflection modals) lives here.

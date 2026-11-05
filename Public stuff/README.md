@@ -6,6 +6,7 @@
 - [Reward Lab](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/reward-lab/) — design a reward and watch where a robot gets stuck
 - [AnnaCode Builder](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/AnnaCode/) — neural networks on LEGO hardware
 - [Kernels](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/Kernels/) — explore image convolution
+- [LQR & MPC](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/LQR-MPC-web/) — steer a line follower, simulated or on the LEGO robot, with LQR and MPC
 - [MQTT Debugging console](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/Debugging/)
 
 The public-facing part of the ME193 Robotics course code (Fall 2026) — the
@@ -35,6 +36,8 @@ subset of the class repo that's meant to be shared.
   simulation on a GPU node and brings the video home. `09_onshape_robot/`
   turns a two-wheeled robot designed in Onshape into a MuJoCo model and drives it.
   Edit `config.sh` with your Tufts username first.
+- [LQR-MPC-web/](LQR-MPC-web/) — LQR vs MPC on a line-following robot, simulated or on LEGO hardware, in
+  the browser (PyScript, no install; connects to the LEGO robot over Web Bluetooth). [Try it online](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/LQR-MPC-web/).
 - [QLearn/](QLearn/) — a browser-based Q-learning visualizer (PyScript +
   Web Bluetooth): train a LEGO Education robot on Silly Walk, Line Follower
   and Maze Solver tasks while watching the Q-table update live. Needs

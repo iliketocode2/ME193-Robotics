@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive LQR / MPC line follower</title>
+<link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel-bg: #ffffff;
+    --fg: #1b1e24;
+    --muted: #5b6270;
+    --grid: #e2e4e9;
+    --border: #d8dbe1;
+    --accent: #2563eb;
+    --ok: #157a3d;
+    --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --panel-bg: #1c1f26;
+      --fg: #e7e9ee;
+      --muted: #9aa2b1;
+      --grid: #333844;
+      --border: #333844;
+      --accent: #6ea8fe;
+      --ok: #4fd17a;
+      --bad: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.5;
+  }
+  header {
+    padding: 14px 20px 0 20px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px 0; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  nav {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 0 20px 10px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  nav button {
+    background: none; border: 1px solid var(--border); color: var(--fg);
+    padding: 7px 13px; border-radius: 7px 7px 0 0; cursor: pointer;
+    font-size: 13.5px; font-family: inherit;
+  }
+  nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { padding: 16px 20px 40px 20px; max-width: 1180px; margin: 0 auto; }
+  .tab { display: none; }
+  .tab.active { display: block; }
+  .lede { color: var(--muted); margin: 4px 0 14px 0; font-size: 13.8px; }
+  .lede a { color: var(--accent); }
+  .grid2 {
+    display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 18px;
+    align-items: start;
+  }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .grid3 {
+    display: grid; grid-template-columns: minmax(220px, 300px) minmax(260px, 320px) 1fr;
+    gap: 18px; align-items: start;
+  }
+  @media (max-width: 1080px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 700px) { .grid3 { grid-template-columns: 1fr; } }
+  .grid2-even {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start;
+  }
+  @media (max-width: 640px) { .grid2-even { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .panel + .panel { margin-top: 14px; }
+  .panel h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); margin: 0 0 10px 0; font-weight: 600; }
+  .slider-row { margin-bottom: 12px; }
+  .slider-row label {
+    display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 3px;
+  }
+  .slider-row label .val { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+  .slider-row input[type=range] { width: 100%; }
+  .readout-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; font-size: 13px;
+  }
+  .readout-grid div.k { color: var(--muted); }
+  .readout-grid div.v { font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+  .readout-grid div.v.ok { color: var(--ok); }
+  .readout-grid div.v.bad { color: var(--bad); }
+  .plotwrap { margin-bottom: 14px; }
+  .plotwrap .caption { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  canvas { display: block; width: 100%; }
+  table.caltable { border-collapse: collapse; font-size: 13px; width: 100%; }
+  table.caltable td { padding: 3px 8px 3px 0; }
+  table.caltable td:first-child { color: var(--muted); }
+  table.caltable td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .banner {
+    background: #fff3cd; color: #664d03; border: 1px solid #ffe69c;
+    border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .banner { background: #3a2f10; color: #ffd97a; border-color: #5c4a10; }
+  }
+  .eqn { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px;
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; display: inline-block; margin: 2px 6px 2px 0; }
+  .code-block { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; margin: 0; overflow-x: auto; line-height: 1.5; }
+  .shared-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; }
+  .site-nav { display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--panel-bg); }
+  .site-nav a { color: var(--muted); text-decoration: none; font-size: 13px;
+    padding: 6px 10px; border-radius: 6px; }
+  .site-nav a:hover { background: var(--grid); color: var(--fg); }
+  .site-nav a.active { background: var(--accent); color: #fff; }
+  .site-nav a.robot-btn { margin-left: auto; background: var(--ok); color: #fff; font-weight: 600; }
+  .site-nav a.robot-btn.disabled { background: var(--muted); pointer-events: none; }
+  .site-nav .robot-warn { flex-basis: 100%; text-align: right; font-size: 11.5px;
+    color: var(--bad); display: none; }
+  .btn { background: var(--accent); color: #fff; border: none; border-radius: 7px;
+    padding: 8px 14px; font-size: 13px; font-family: inherit; cursor: pointer; margin: 3px 6px 3px 0; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn.secondary { background: var(--grid); color: var(--fg); }
+  .field { font-size: 13px; margin: 8px 0; display: flex; align-items: center; gap: 8px; }
+  .field input[type=number] { width: 80px; padding: 4px 6px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
+  .hw-status { font-size: 12.5px; margin: 8px 0; min-height: 1.4em; }
+  .hw-status.err { color: var(--bad); }
+  .hw-status.ok { color: var(--ok); }
+</style>
+<style>
+  .tab { display: none; } .tab.active { display: block; }
+  svg.plot { width: 100%; height: auto; display: block; }
+  svg.plot text { fill: var(--muted); font-size: 11px; }
+  svg.plot .axis { stroke: var(--border); }
+  svg.plot .gridline { stroke: var(--grid); }
+  svg.plot .vspan { fill: rgba(128,128,128,.18); }
+  svg.plot .limit { stroke: #e33; stroke-width: 1; stroke-dasharray: 5 4; }
+  svg.plot path.s { fill: none; stroke-width: 2; stroke-linejoin: round; }
+  svg.plot .sim { stroke: var(--fg); } svg.plot .scope { stroke: var(--fg); }
+  svg.plot .real { stroke: #157a3d; }
+  svg.plot .mpc { stroke: #b3261e; }
+  svg.plot .lqrd { stroke: #2563eb; stroke-width: 1.5; stroke-dasharray: 6 4; }
+  svg.plot .trk { stroke: var(--grid); stroke-width: 3; }
+  svg.plot .blinddot { fill: var(--bad); } svg.plot .startdot { fill: var(--accent); }
+  svg.plot text.exag { fill: var(--fg); }
+  .legend { font-size: 12.5px; margin: 0 0 4px; } .legend span { margin-right: 14px; }
+  .swatch { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+  .sim-c { background: var(--fg); } .real-c { background: #157a3d; } .mpc-c { background: #b3261e; } .lqrd-c { background: #2563eb; }
+</style>
+</head>
+<body>
+
+<div class="site-nav" id="site-nav">
+  <a href="reader.html?src=notes/README.md">Home</a>
+  <a href="reader.html?src=notes/00-sim.md">00 · sim.py</a>
+  <a href="reader.html?src=notes/01-lqr.md">01 · LQR</a>
+  <a href="reader.html?src=notes/02-mpc.md">02 · MPC</a>
+  <a href="reader.html?src=notes/03-lqr-vs-mpc.md">03 · LQR vs MPC</a>
+  <a href="interactive.html" class="active">Interactive</a>
+  <a href="#robot" class="robot-btn" id="nav-robot-btn">🔌 Connect to robot</a>
+  <span class="robot-warn" id="nav-robot-warn"></span>
+</div>
+
+<div class="banner" id="loading-banner" style="margin:12px 20px 0">Loading Python, numpy and the LEGO library… the sliders come alive in about 20 seconds the first time.</div>
+
+<header>
+  <h1>Interactive LQR / MPC line follower</h1>
+  <div class="subtitle" id="cal-subtitle">loading calibration…</div>
+</header>
+
+<nav id="tabnav">
+  <button data-tab="robot" class="active">Your robot</button>
+  <button data-tab="bangbang">1. Bang-bang</button>
+  <button data-tab="pd">2. P / PD</button>
+  <button data-tab="lqr">3. LQR</button>
+  <button data-tab="mpc">5. MPC</button>
+</nav>
+
+<main>
+
+  <div id="cal-banner"></div>
+
+  <!-- ============================== TAB: ROBOT ============================== -->
+  <section class="tab active" id="tab-robot">
+    <p class="lede">These numbers are your robot's calibration — what the panel below measures and saves in this
+      browser after you measure your own robot (until then, a generic reference build). Every
+      simulation on this page uses them, so the sliders below are showing you
+      <em>your</em> robot's behavior, not a generic reference build. Full background:
+      <a href="reader.html?src=notes/00-sim.md">docs/00-sim.md</a>.</p>
+
+    <div class="grid2">
+      <div>
+        <div class="panel">
+          <h3>Sample build</h3>
+          <img src="assets/robot.jpg" alt="LEGO Education Double Motor + Color Sensor line follower, sensor mounted forward and downward-facing over black tape"
+               style="width:100%; border-radius:8px; display:block;">
+          <p class="shared-note">LEGO Education Double Motor + Color Sensor, sensor
+            mounted forward of the axle and downward-facing over the tape — see
+            "The robot" in the <a href="reader.html?src=notes/README.md#the-robot">README</a>.</p>
+        </div>
+
+        <div class="panel">
+          <h3>What calibration measures</h3>
+          <p style="margin-top:0"><b>To estimate e and θ from one raw sensor number, we need to measure
+            a few things about this specific robot first</b> — that's what
+            calibration is, and it's exactly the 4 steps in the panel below:</p>
+          <ol style="margin:0 0 4px 0; padding-left: 1.2em;">
+            <li>reflection fully over the <b>black</b> tape</li>
+            <li>reflection fully over the <b>white</b> background</li>
+            <li>the width of the sensor's transition region between them (± e_max)</li>
+            <li>wheel speed at 100% and the track width</li>
+          </ol>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel">
+          <h3>The model (docs/00-sim.md &amp; 01-lqr.md)</h3>
+          <p style="margin-top:0">Two numbers describe the robot: lateral offset
+            <b>e</b> [mm] and heading error <b>θ</b> [rad]. Forward speed
+            <b>v</b> and curvature <b>κ</b> of the line drive them:</p>
+          <div class="eqn">de/dt&nbsp;&nbsp;&nbsp;= v·sin(θ) ≈ v·θ</div>
+          <div class="eqn">dθ/dt = ω − κ·v</div>
+          <p>ω [rad/s] is the yaw rate every controller below is choosing.
+            The sensor can only report <b>e</b> inside ±e_max — outside that window
+            the reading saturates and the robot goes "blind." That single hard
+            number is what breaks fixed-speed LQR on sharp turns and is the whole
+            reason MPC gets invented.</p>
+        </div>
+
+        <div class="grid2-even" style="margin-top:14px">
+          <div>
+            <div class="panel" id="connect-panel">
+              <h3>Connect to robot</h3>
+              <div class="field"><button class="btn" id="conn-cs">Connect color sensor</button>
+                <span class="shared-note" id="conn-cs-status">not connected</span></div>
+              <div class="field"><button class="btn" id="conn-dm">Connect double motor</button>
+                <span class="shared-note" id="conn-dm-status">not connected</span></div>
+              <p class="shared-note">Bluetooth, in Chrome or Edge. Both must be connected to use the
+                "Run on real robot" buttons on the other tabs.</p>
+            </div>
+
+            <div class="panel">
+              <h3>Calibration</h3>
+              <table class="caltable" id="cal-table"></table>
+            </div>
+
+            <div class="panel" id="recal-panel">
+              <h3>Redo calibration</h3>
+              <div class="hw-status" id="recal-status">Connect the sensor over Bluetooth to start.</div>
+
+              <div id="recal-step-start">
+                <button class="btn" id="recal-connect-sensor">1/4 Connect sensor</button>
+              </div>
+
+              <div id="recal-step-sensor" style="display:none">
+                <div class="readout-grid">
+                  <div class="k">live reflection</div><div class="v" id="recal-live">--</div>
+                </div>
+                <div class="field">
+                  <button class="btn secondary" id="recal-sample-black">2/4 Sample BLACK (3s)</button>
+                  <span class="shared-note" id="recal-black-result"></span>
+                </div>
+                <div class="field">
+                  <button class="btn secondary" id="recal-sample-white">3/4 Sample WHITE (3s)</button>
+                  <span class="shared-note" id="recal-white-result"></span>
+                </div>
+                <div class="field">
+                  <label>Sensor window span (mm)</label>
+                  <input type="number" id="recal-span" value="12" step="0.5">
+                  <button class="btn secondary" id="recal-set-window">Set window</button>
+                  <span class="shared-note" id="recal-window-result"></span>
+                </div>
+                <button class="btn" id="recal-to-motors">4/4 Connect motors</button>
+              </div>
+
+              <div id="recal-step-motors" style="display:none">
+                <p class="shared-note">Clear a straight run of at least 1 m before driving.</p>
+                <button class="btn secondary" id="recal-drive-test">Drive straight 2s at 100%</button>
+                <div class="field">
+                  <label>Distance traveled (mm)</label>
+                  <input type="number" id="recal-distance">
+                </div>
+                <div class="field">
+                  <label>Track width (mm)</label>
+                  <input type="number" id="recal-trackwidth">
+                </div>
+                <button class="btn" id="recal-save">Save calibration</button>
+              </div>
+
+              <div id="recal-done" style="display:none">
+                <p class="shared-note">Saved — the table above and every tab now use this run's numbers.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h3>Live oscilloscope</h3>
+            <div class="plotwrap">
+              <div id="scope-plot" data-aspect="0.6"></div>
+              <div class="caption">Raw reflection reading, live, y fixed 0–100. Dashed lines are your
+                calibrated black/white values. Starts once the sensor is connected (step 1/4).</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== TAB: BANG-BANG ============================== -->
+  <section class="tab" id="tab-bangbang">
+    <p class="lede"><code>if reflection &gt; threshold: turn left, else turn right</code> —
+      the simplest control law there is. It only uses the <em>sign</em> of the
+      error, so it can't help but overshoot and turn back, forever. Full
+      writeup: <a href="reader.html?src=notes/README.md#session-1--bang-bang-and-why-it-wobbles">README, Session 1</a>.</p>
+    <div class="grid2">
+      <div>
+        <div class="panel">
+          <h3>Controls</h3>
+          <div class="slider-row">
+            <label>forward speed v <span class="val" id="bb-v-val"></span></label>
+            <input type="range" id="bb-v" min="50" max="300" step="5">
+          </div>
+          <div class="slider-row">
+            <label>turn rate ω_mag <span class="val" id="bb-w-val"></span></label>
+            <input type="range" id="bb-w" min="0.2" max="6" step="0.1">
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Result</h3>
+          <div class="readout-grid" id="bb-readout"></div>
+        </div>
+        <div class="panel">
+          <h3>Run on real robot</h3>
+          <div class="hw-status" id="bb-hw-status"></div>
+          <div class="field">
+            <label>duration (s)</label>
+            <input type="number" id="bb-hw-duration" value="8" min="2" max="30" step="1">
+            <button class="btn" id="bb-hw-run">▶ Run on robot</button>
+          </div>
+          <div class="readout-grid" id="bb-hw-readout"></div>
+        </div>
+        <div class="panel">
+          <h3>Equations</h3>
+          <p style="margin-top:0">Model (same as every other tab):</p>
+          <div class="eqn">de/dt&nbsp;&nbsp;&nbsp;= v·sin(θ) ≈ v·θ</div>
+          <div class="eqn">dθ/dt = ω − κ·v</div>
+          <p>Control law — the sign of e is the only thing bang-bang looks at:</p>
+          <div class="eqn">ω = −ω_mag · sign(e)</div>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <div class="plotwrap">
+            <div id="bb-plot-e" data-aspect="0.42"></div>
+            <div class="caption">e(t) — dashed red lines are the sensor window ±e_max. Solid black =
+              simulated; green = your real robot's last run, if any.</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>The simulated calculation</h3>
+          <p style="margin-top:0" class="shared-note">The plot above comes from this loop
+            (this page runs exactly this Python, from <a href="lqrmpc.py"><code>lqrmpc.py</code></a>):</p>
+          <pre class="code-block"><code>e, theta = E_MAX * 0.7, 0.0     # start near the edge of the sensor window
+log = []
+for i in range(int(6.0 / DT)):  # 6 s of simulated time
+    sign = 1.0 if e &gt; 0 else -1.0
+    omega = -omega_mag * sign
+    log.append((i * DT, e))
+    e, theta = step(e, theta, v, omega, kappa=0.0, dt=DT)
+
+def step(e, theta, v, omega, kappa, dt):
+    e_next = e + dt * v * math.sin(theta)
+    th_next = theta + dt * (omega - kappa * v)
+    return e_next, th_next</code></pre>
+          <p class="shared-note">The control law is one line — turn one way or the other at a
+            fixed rate, based only on which side of the line you're on. The model is two lines —
+            lateral offset <b>e</b> drifts by v·sin(θ), heading error <b>θ</b> drifts by the
+            commanded yaw rate ω. No solver, no matrices.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== TAB: PD ============================== -->
+  <section class="tab" id="tab-pd">
+    <p class="lede">Proportional (and PD) control, entering a turn of radius R at
+      constant speed. Push k_p up and it oscillates on entry; push it down and it
+      settles into a large steady-state offset once it's in the turn — "corners
+      badly." Full writeup: <a href="reader.html?src=notes/README.md#session-2--p-then-pd-then-the-tuning-wall">README, Session 2</a>.</p>
+    <div class="grid2">
+      <div>
+        <div class="panel" id="scenario-panel-pd"></div>
+        <div class="panel">
+          <h3>Controls</h3>
+          <div class="slider-row">
+            <label>k_p <span class="val" id="pd-kp-val"></span></label>
+            <input type="range" id="pd-kp" min="0" max="0.6" step="0.005">
+          </div>
+          <div class="slider-row">
+            <label>k_d <span class="val" id="pd-kd-val"></span></label>
+            <input type="range" id="pd-kd" min="0" max="20" step="0.25">
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Result</h3>
+          <div class="readout-grid" id="pd-readout"></div>
+        </div>
+        <div class="panel">
+          <h3>Run on real robot</h3>
+          <p class="shared-note" style="margin-top:0">Runs on whatever track you actually built —
+            not the simulated turn radius R above. Compare the character of the response
+            (oscillation, blindness), not point-for-point.</p>
+          <div class="hw-status" id="pd-hw-status"></div>
+          <div class="field">
+            <label>duration (s)</label>
+            <input type="number" id="pd-hw-duration" value="8" min="2" max="30" step="1">
+            <button class="btn" id="pd-hw-run">▶ Run on robot</button>
+          </div>
+          <div class="readout-grid" id="pd-hw-readout"></div>
+        </div>
+        <div class="panel">
+          <h3>Equations</h3>
+          <p style="margin-top:0">Model (same as every other tab):</p>
+          <div class="eqn">de/dt&nbsp;&nbsp;&nbsp;= v·sin(θ) ≈ v·θ</div>
+          <div class="eqn">dθ/dt = ω − κ·v</div>
+          <p>Control law — proportional on the error, plus derivative on the heading θ
+            as a stand-in for de/dt (since ė ≈ vθ):</p>
+          <div class="eqn">ω = −k_p·e − k_d·θ</div>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <div class="plotwrap">
+            <div id="pd-plot-e" data-aspect="0.42"></div>
+            <div class="caption">e(t) — shaded region is the simulated turn; dashed red lines are
+              ±e_max. Solid black = simulated; green = your real robot's last run, if any.</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>The simulated calculation</h3>
+          <p style="margin-top:0" class="shared-note">The plot above comes from this loop
+            (this page runs exactly this Python, from <a href="lqrmpc.py"><code>lqrmpc.py</code></a>):</p>
+          <pre class="code-block"><code>s = e = theta = 0.0
+log = []
+for i in range(int(t_max / dt)):
+    if s &gt; track.length:
+        break
+    e_measured = coerce(e, e_max)     # sensor saturates outside +-e_max
+    omega = -kp * e_measured - kd * theta
+    log.append((i * dt, e, theta))
+    kappa = track.kappa(s)             # 0 on the straight, 1/R in the turn
+    e, theta = step(e, theta, v, omega, kappa, dt)
+    s += v * dt
+
+def coerce(e, e_max):
+    return max(-e_max, min(e_max, e))   # sensor only sees +-e_max either side
+
+def step(e, theta, v, omega, kappa, dt):
+    e_next = e + dt * v * math.sin(theta)
+    th_next = theta + dt * (omega - kappa * v)
+    return e_next, th_next
+
+class Track:
+    def __init__(self, segments):           # [(length_mm, radius_mm|None), ...]
+        self.length = sum(L for L, _ in segments)
+
+    def kappa(self, s):                      # curvature at arclength s
+        acc = 0.0
+        for L, radius in self.segments:
+            if s &lt; acc + L:
+                return 0.0 if radius is None else 1.0 / radius
+            acc += L
+        return 0.0</code></pre>
+          <p class="shared-note">Same plant model as bang-bang, plus two new pieces:
+            <code>coerce()</code> clips e to what the sensor can actually report (bang-bang's
+            control law didn't need the clipped value, only its sign), and <code>track.kappa(s)</code>
+            looks up how curved the line is at the robot's current position along it — 0 on the
+            straights, 1/R on the turn — by walking the track's <code>segments</code> until it finds
+            the one <code>s</code> falls in; <code>track.length</code> is just their total, which is
+            what tells the loop above when the robot has reached the end.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== TAB: LQR ============================== -->
+  <section class="tab" id="tab-lqr">
+    <p class="lede">Same scenario, but the gains come from a cost function instead
+      of a guess: pick Q_e, Q_θ, R and the Riccati equation hands back k_e, k_θ.
+      Widen the turn radius until the verdict flips to BLIND — that's the
+      steady-state offset e_ss = −κv/k_e breaking the sensor window. Full
+      writeup: <a href="reader.html?src=notes/01-lqr.md">docs/01-lqr.md</a>, and
+      <a href="reader.html?src=notes/02-mpc.md#where-lqr-runs-out">docs/02-mpc.md, "Where LQR runs out."</a></p>
+    <div class="grid2">
+      <div>
+        <div class="panel" id="scenario-panel-lqr"></div>
+        <div class="panel">
+          <h3>Cost weights</h3>
+          <div class="slider-row">
+            <label>Q_e (cost per mm²) <span class="val" id="lqr-qe-val"></span></label>
+            <input type="range" id="lqr-qe" min="0.1" max="20" step="0.1">
+          </div>
+          <div class="slider-row">
+            <label>Q_θ (cost per rad²) <span class="val" id="lqr-qth-val"></span></label>
+            <input type="range" id="lqr-qth" min="0" max="30" step="0.5">
+          </div>
+          <div class="slider-row">
+            <label>R (cost per (rad/s)²) <span class="val" id="lqr-r-val"></span></label>
+            <input type="range" id="lqr-r" min="1" max="200" step="1">
+          </div>
+          <div class="shared-note">Q_e, Q_θ, R here also drive the MPC tab's steering
+            law and tracking cost, exactly like sim.py's shared module constants.</div>
+        </div>
+        <div class="panel">
+          <h3>Gains (Riccati solution)</h3>
+          <div class="readout-grid" id="lqr-gains-readout"></div>
+        </div>
+        <div class="panel">
+          <h3>Result</h3>
+          <div class="readout-grid" id="lqr-readout"></div>
+        </div>
+        <div class="panel">
+          <h3>Run on real robot</h3>
+          <p class="shared-note" style="margin-top:0">Runs on whatever track you actually built —
+            not the simulated turn radius R above. Compare the character of the response
+            (oscillation, blindness), not point-for-point.</p>
+          <div class="hw-status" id="lqr-hw-status"></div>
+          <div class="field">
+            <label>duration (s)</label>
+            <input type="number" id="lqr-hw-duration" value="8" min="2" max="30" step="1">
+            <button class="btn" id="lqr-hw-run">▶ Run on robot</button>
+          </div>
+          <div class="readout-grid" id="lqr-hw-readout"></div>
+        </div>
+        <div class="panel">
+          <h3>Equations</h3>
+          <p style="margin-top:0">Model (same as every other tab):</p>
+          <div class="eqn">de/dt&nbsp;&nbsp;&nbsp;= v·sin(θ) ≈ v·θ</div>
+          <div class="eqn">dθ/dt = ω − κ·v</div>
+          <p>Control law — same form as P/PD, but the gains aren't guessed:</p>
+          <div class="eqn">ω = −k_e·e − k_θ·θ</div>
+          <p>Gains, closed form (continuous-time; full discrete-time derivation in
+            <a href="reader.html?src=notes/01-lqr.md">docs/01-lqr.md</a>):</p>
+          <div class="eqn">k_e = √(Q_e / R)</div>
+          <div class="eqn">k_θ = √(Q_θ/R + 2v·k_e)</div>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <div class="plotwrap">
+            <div id="lqr-plot-e" data-aspect="0.42"></div>
+            <div class="caption">e(t) — shaded region is the simulated turn; dashed red lines are
+              ±e_max. Solid black = simulated; green = your real robot's last run, if any.</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Track shape (plan view)</h3>
+          <div class="plotwrap">
+            <div id="lqr-track-plot" data-aspect="0.55"></div>
+            <div class="caption">Top-down shape of the straight → R-turn → straight track above,
+              to true scale. Gray = centerline; black = the simulated robot's actual path, with its
+              deviation from the line exaggerated so it's visible (e_max is a few mm; the track is
+              hundreds). Red dots mark where it went blind.</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>The simulated calculation</h3>
+          <p style="margin-top:0" class="shared-note">The plot above comes from this loop
+            (this page runs exactly this Python, from <a href="lqrmpc.py"><code>lqrmpc.py</code></a>):</p>
+          <pre class="code-block"><code>k_e, k_th = lqr_gains_discrete(v_cmd, dt)   # solved once, offline (Riccati)
+s = e = theta = 0.0
+log = []
+for i in range(int(t_max / dt)):
+    if s &gt; track.length:
+        break
+    omega = -k_e * coerce(e, e_max) - k_th * theta
+    log.append((i * dt, s, e, theta, v_cmd, omega))
+    kappa = track.kappa(s)
+    e, theta = step(e, theta, v_cmd, omega, kappa, dt)
+    s += v_cmd * dt</code></pre>
+          <p class="shared-note">Same loop as P/PD — the only thing that changed is where
+            k_e and k_θ come from. P/PD, you pick them by hand. Here,
+            <code>lqr_gains_discrete</code> solves the discrete algebraic Riccati equation
+            once, before the loop starts, and the loop never touches them again (see
+            "Cost weights" → "Gains" above, and the derivation in
+            <a href="reader.html?src=notes/01-lqr.md">docs/01-lqr.md</a>).</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== TAB: MPC ============================== -->
+  <section class="tab" id="tab-mpc">
+    <p class="lede">Same steering law as LQR (using the gains from the LQR tab),
+      but forward speed is re-decided every control period from a short preview
+      of the track. Watch v(t) drop before the corner, and e(t) stay inside the
+      window where fixed-speed LQR went blind. Full writeup:
+      <a href="reader.html?src=notes/02-mpc.md">docs/02-mpc.md</a> and
+      <a href="reader.html?src=notes/03-lqr-vs-mpc.md">docs/03-lqr-vs-mpc.md</a>.</p>
+    <div class="grid2">
+      <div>
+        <div class="panel" id="scenario-panel-mpc"></div>
+        <div class="panel">
+          <h3>MPC controls</h3>
+          <div class="slider-row">
+            <label>horizon N (steps) <span class="val" id="mpc-n-val"></span></label>
+            <input type="range" id="mpc-n" min="1" max="40" step="1">
+          </div>
+          <div class="slider-row">
+            <label>q_v (cost per (mm/s)² speed deviation) <span class="val" id="mpc-qv-val"></span></label>
+            <input type="range" id="mpc-qv" min="-3" max="0" step="0.05">
+          </div>
+          <div class="shared-note" id="mpc-shared-gains"></div>
+        </div>
+        <div class="panel">
+          <h3>LQR vs MPC, this run</h3>
+          <div class="readout-grid" id="mpc-readout"></div>
+        </div>
+        <div class="panel">
+          <h3>Convergence: MPC → LQR as N grows</h3>
+          <div class="readout-grid" id="conv-readout"></div>
+          <div class="caption" style="margin-top:6px">Test state e=4mm, θ=0.1rad — the
+            first move of an N-step finite-horizon solve approaches the infinite-horizon
+            LQR gain as N grows (see docs/03-lqr-vs-mpc.md).</div>
+        </div>
+        <div class="panel">
+          <h3>Run on real robot</h3>
+          <p class="shared-note" style="margin-top:0">Runs on whatever track you actually built, using
+            the reactive curvature estimate from run_mpc.py (no true track map) — not the simulated
+            track above. See docs/02-mpc.md, "Where does the preview come from?"</p>
+          <div class="hw-status" id="mpc-hw-status"></div>
+          <div class="field">
+            <label>duration (s)</label>
+            <input type="number" id="mpc-hw-duration" value="8" min="2" max="30" step="1">
+            <button class="btn" id="mpc-hw-run">▶ Run on robot</button>
+          </div>
+          <div class="readout-grid" id="mpc-hw-readout"></div>
+        </div>
+        <div class="panel">
+          <h3>Equations</h3>
+          <p style="margin-top:0">Steering law is identical to LQR's, just re-solved for
+            whichever speed v is currently chosen:</p>
+          <div class="eqn">ω = −k_e(v)·e − k_θ(v)·θ</div>
+          <p>What's new: v is no longer fixed. Every control period it's re-picked from a
+            short list of candidates by minimizing a short-horizon cost:</p>
+          <div class="eqn">v* = argmin_v&nbsp; Σ (Q_e·e² + Q_θ·θ²)dt&nbsp; +&nbsp; Q_v(v−v_ref)²·N·dt</div>
+          <p class="shared-note">sum taken over N steps of the model above, rolled forward
+            under the previewed curvature — see "The simulated calculation" below.</p>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <div class="plotwrap">
+            <div id="mpc-plot-e" data-aspect="0.34"></div>
+            <div class="caption">e(t) — solid red = simulated MPC, dashed blue = simulated fixed-speed
+              LQR, solid green = your real robot's last MPC run, if any.</div>
+          </div>
+          <div class="plotwrap">
+            <div id="mpc-plot-v" data-aspect="0.34"></div>
+            <div class="caption">v(t) — MPC's speed schedule vs LQR's constant v_ref; green = real robot</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>The simulated calculation</h3>
+          <p style="margin-top:0" class="shared-note">The plots above come from this loop
+            (this page runs exactly this Python, from <a href="lqrmpc.py"><code>lqrmpc.py</code></a>):</p>
+          <pre class="code-block"><code>def mpc_choose_speed(e, theta, s, track, candidates, horizon,
+                      dt, e_max, v_ref, q_e, q_th, q_v, pen=1e4):
+    best_cost, best_v = float("inf"), candidates[0]
+    for v in candidates:
+        k_e, k_th = lqr_gains_discrete(v, dt)   # re-solved per candidate speed
+        ep, thp, sp, cost = e, theta, s, 0.0
+        for _ in range(horizon):                 # roll forward under LQR steering
+            omega = -k_e * coerce(ep, e_max) - k_th * thp
+            cost += (q_e * ep**2 + q_th * thp**2) * dt
+            cost += pen * max(0.0, abs(ep) - e_max)**2 * dt   # blindness penalty
+            ep, thp = step(ep, thp, v, omega, track.kappa(sp), dt)
+            sp += v * dt
+        cost += q_v * (v - v_ref)**2 * horizon * dt   # prefer staying near v_ref
+        if cost &lt; best_cost:
+            best_cost, best_v = cost, v
+    return best_v
+
+s = e = theta = 0.0
+log = []
+for i in range(int(t_max / dt)):
+    if s &gt; track.length:
+        break
+    v = mpc_choose_speed(e, theta, s, track, candidates, horizon, dt, e_max, ...)
+    k_e, k_th = lqr_gains_discrete(v, dt)
+    omega = -k_e * coerce(e, e_max) - k_th * theta
+    log.append((i * dt, s, e, theta, v, omega))
+    e, theta = step(e, theta, v, omega, track.kappa(s), dt)
+    s += v * dt</code></pre>
+          <p class="shared-note">The outer loop is identical to LQR's. The new part is
+            <code>mpc_choose_speed</code>: for every candidate forward speed, it re-solves
+            the LQR gains for that speed and rolls the model <b>horizon</b> steps into the
+            future using the previewed curvature, scoring how much error and "blindness"
+            that speed would cause. The candidate with the lowest predicted cost wins, its
+            first move gets applied, and the whole search reruns next control period — a
+            receding horizon.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>Runs in your browser: the simulator is Python (PyScript) from <a href="lqrmpc.py">lqrmpc.py</a>,
+  and the robot buttons use Web Bluetooth (Chrome or Edge). Your calibration is saved in this browser.</footer>
+
+<script>
+  // Tabs work before Python has finished loading.
+  function selectTab(name) {
+    const btn = document.querySelector(`#tabnav button[data-tab="${name}"]`);
+    if (!btn) return;
+    document.querySelectorAll("#tabnav button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.getElementById("tab-" + name).classList.add("active");
+  }
+  document.querySelectorAll("#tabnav button").forEach(btn =>
+    btn.addEventListener("click", () => { selectTab(btn.dataset.tab); location.hash = btn.dataset.tab; }));
+  window.addEventListener("hashchange", () => selectTab(location.hash.replace("#", "")));
+  selectTab(location.hash.replace("#", ""));
+  if (!navigator.bluetooth) {
+    const w = document.getElementById("nav-robot-warn");
+    w.textContent = "This browser has no Web Bluetooth. Use Chrome or Edge to connect a robot.";
+    w.style.display = "block";
+  }
+</script>
+<script type="py" src="./interactive_page.py" config="./pyscript.toml"></script>
+</body>
+</html>

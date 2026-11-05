@@ -1,151 +1,13 @@
 import asyncio
-import threading
-import concurrent.futures
 import legoeducation as le
-import legoeducation.background_worker as bw
-import legoeducation.basic_device as bd
+import webhub
+from webhub import flush_pending_commands, drop_stale_commands   # re-exported: other modules call Device.flush_pending_commands()
 from pyscript import document, window
 from pyscript.js_modules import ble
 from pyscript.ffi import create_proxy
 import json
 
 import state
-
-def _nowait_event_wait(self, timeout=None):
-    return self._flag
-threading.Event.wait = _nowait_event_wait
-
-def _nowait_future_result(self, timeout=None):
-    if self._state == 'FINISHED':
-        return self._Future__get_result()
-    return None
-concurrent.futures.Future.result = _nowait_future_result
-
-_worker_started = False
-
-def _wasm_start_thread(self):
-    global _worker_started
-    if _worker_started:
-        return
-    _worker_started = True
-    self.loop = asyncio.get_event_loop()
-    self.loop_ready.set()
-    asyncio.ensure_future(_wasm_worker_loop(self))
-
-def _wasm_put_request(self, request):
-    asyncio.ensure_future(self.async_put_request(request))
-
-bw.Worker.start_thread = _wasm_start_thread
-bw.Worker.put_request  = _wasm_put_request
-
-async def _wasm_worker_loop(worker):
-    worker._js_ble_registry = {}
-    while True:
-        try:
-            req = await worker.request_queue.get()
-            if req is None:
-                break
-            topic = req.get('topic')
-            if topic == 'send':
-                device  = req.get('msg')
-                message = req.get('msg2')
-                js_ble  = worker._js_ble_registry.get(id(device))
-                if js_ble is not None and message is not None:
-                    try:
-                        await js_ble.send(list(message))
-                    except Exception as e:
-                        print(f"BLE send error: {e}")
-            elif topic == 'connect':
-                cb = req.get('msg3')
-                if cb:
-                    cb(True)
-            elif topic == 'disconnect':
-                device = req.get('msg')
-                js_ble = worker._js_ble_registry.pop(id(device), None)
-                if js_ble is not None:
-                    js_ble.disconnect()
-            elif topic == 'scan':
-                cb = req.get('msg2')
-                if cb:
-                    cb([])
-        except Exception as e:
-            print(f"Worker loop error: {e}")
-
-bd.my_worker.start_thread()
-
-# ── Firmware-tolerant notification parsing ───────────────────────────────────
-# Newer hub firmware (RPC 2.x) appends a 1-byte colorSensorMode to the color
-# sensor item (13 bytes instead of the 12 that legoeducation 1.0.6 expects).
-# The stock parser then reads that extra byte as the start of another item
-# (0x01 = IMU), runs out of buffer and drops the whole notification. Accept
-# either size, choosing whichever one makes the message split up exactly.
-from legoeducation import rpc_message as rm
-
-_NOTIFICATION_CLASSES = {
-    rm.INFO_DEVICE_NOTIFICATION:  rm.InfoDeviceNotification,
-    rm.IMU_DEVICE_NOTIFICATION:   rm.ImuDeviceNotification,
-    rm.CARD_NOTIFICATION:         rm.CardNotification,
-    rm.BUTTON_STATE_NOTIFICATION: rm.ButtonStateNotification,
-    rm.MOTOR_NOTIFICATION:        rm.MotorNotification,
-    rm.COLOR_SENSOR_NOTIFICATION: rm.ColorSensorNotification,
-    rm.CONTROLLER_NOTIFICATION:   rm.ControllerNotification,
-    rm.IMU_GESTURE_NOTIFICATION:  rm.ImuGestureNotification,
-}
-
-def _split_notification_items(data: bytes, strict: bool):
-    """Split device data into (class, body) pairs; None if it can't be split.
-
-    With strict=False an unknown item type ends the list early (like the stock
-    parser) instead of failing the whole split.
-    """
-    if not data:
-        return []
-    cls = _NOTIFICATION_CLASSES.get(data[0])
-    if cls is None:
-        return None if strict else []
-    size = rm.SizeUtil.getMsgSize(cls)
-    sizes = (size + 1, size) if cls is rm.ColorSensorNotification else (size,)
-    for n in sizes:
-        if 1 + n > len(data):
-            continue
-        rest = _split_notification_items(data[1 + n:], strict)
-        if rest is not None:
-            return [(cls, data[1:1 + n])] + rest
-    return None
-
-def _tolerant_device_notification_parser(notification_obj):
-    data = bytes(notification_obj.deviceData[:notification_obj.deviceDataByteLength])
-    items = _split_notification_items(data, strict=True)
-    if items is None:
-        items = _split_notification_items(data, strict=False)
-    if items is None:
-        print(f"Unparseable device notification: {data.hex(' ')}")
-        return []
-    return [cls.Deserialize(body) for cls, body in items]
-
-# The library binds the parser by name in several modules; replace each one.
-rm.device_notification_parser = _tolerant_device_notification_parser
-bd._raw_device_notification_parser = _tolerant_device_notification_parser
-le._raw_device_notification_parser = _tolerant_device_notification_parser
-
-def flush_pending_commands():
-    """Drop any not-yet-sent BLE requests.
-
-    The run loop enqueues a 'send' request every tick (main.py's 50ms
-    loop_network) but _wasm_worker_loop sends them strictly one at a
-    time, awaiting each BLE write. If BLE round-trips run slower than
-    the tick rate, motor-speed updates pile up in request_queue faster
-    than they drain. Stop's motor_stop() request would otherwise land
-    at the tail of that backlog, so the robot keeps executing stale
-    speed commands for a while after Stop is pressed. Call this right
-    before issuing the stop command so it isn't stuck behind them.
-    """
-    q = bd.my_worker.request_queue
-    while not q.empty():
-        try:
-            q.get_nowait()
-        except Exception:
-            break
 
 _DEVICE_MAP = {
     "Double Motor": le.DoubleMotor,
@@ -392,16 +254,23 @@ class Element:
             
             self.hub.device = self.hub  # <-- THIS is the fix
 
-            registry = getattr(bd.my_worker, '_js_ble_registry', None)
-            if registry is not None:
-                registry[id(self.hub)] = self.myble 
-                print(f"Registered hub id={id(self.hub)}")
-            else:
-                print("WARNING: worker registry not found")
+            webhub.registry[id(self.hub)] = self.myble
+            self.hub._first_notification_ready = asyncio.Event()
+            print(f"Registered hub id={id(self.hub)}")
 
             self.hub.connected = True
             
             await asyncio.sleep(0)
+
+            # Only the latest firmware is supported: older hubs get an alert to update.
+            kind = next(k for k in _DEVICE_MAP if k in self.name)
+            if not await webhub.check_firmware(self.hub, kind):
+                self.myble.disconnect()
+                webhub.registry.pop(id(self.hub), None)
+                self.hub.connected = False
+                self.hub = None
+                return
+
             
             # Hub sometimes ignores the first request; re-send until the
             # first notification arrives (3 tries x 2 s).

@@ -1,0 +1,8 @@
+name = "LQR-MPC-notes"
+packages = ["numpy"]
+
+[files]
+"./lqrmpc.py" = ""
+"./docs_runs.py" = ""
+"./ui.py" = ""
+"./sim.py" = ""

@@ -1,8 +1,9 @@
 name = "QLearn-Activities"
-packages = [ "legoeducation==1.0.6","numpy",]
+packages = [ "legoeducation==1.2.0","numpy",]
 
 [files]
 "./qlearn.py" = ""
+"./webhub.py" = ""
 
 [js_modules.main]
 "./ble.js" = "ble"

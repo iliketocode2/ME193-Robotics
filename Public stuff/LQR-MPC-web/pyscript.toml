@@ -1,0 +1,7 @@
+name = "LQR-MPC"
+packages = ["legoeducation==1.2.0", "numpy"]
+
+[files]
+"./lqrmpc.py" = ""
+"./ui.py" = ""
+"./hardware.py" = ""

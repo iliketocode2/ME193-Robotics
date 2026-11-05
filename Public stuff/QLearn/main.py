@@ -7,57 +7,11 @@ from pyodide.ffi import create_proxy
 import sys
 
 import legoeducation as le
-import legoeducation.background_worker as bw
+import webhub
 from pyscript.js_modules.ble import BLEDevice as _BLEDeviceJS
 from legoeducation import DoubleMotor as _DM
 from legoeducation import ColorSensor as _CS
-from legoeducation.rpc_message import InfoRequest, InfoResponse, RPC_VERSION
 from qlearn import QTable
-
-# ── WASM WORKER PATCH ──
-def _wasm_start_thread(self):
-    if getattr(self, '_wasm_loop_started', False): return
-    self._wasm_loop_started = True
-    if not hasattr(self, '_js_ble_registry'): self._js_ble_registry = {}
-    try:
-        self.loop = asyncio.get_running_loop()
-        self.loop_ready.set()
-        asyncio.ensure_future(_wasm_worker_loop(self))
-    except RuntimeError: pass
-
-def _wasm_put_request(self, request):
-    if not self.loop_ready.is_set():
-        try:
-            self.loop = asyncio.get_running_loop()
-            self.loop_ready.set()
-            if not hasattr(self, '_js_ble_registry'): self._js_ble_registry = {}
-            asyncio.ensure_future(_wasm_worker_loop(self))
-        except RuntimeError: return
-    asyncio.ensure_future(self.async_put_request(request))
-
-bw.Worker.start_thread = _wasm_start_thread
-bw.Worker.put_request = _wasm_put_request
-
-async def _wasm_worker_loop(worker):
-    while True:
-        try:
-            req = await worker.request_queue.get()
-            if req is None: break
-            topic = req.get('topic')
-            if topic == 'send':
-                device = req.get('msg')
-                message = req.get('msg2')
-                js_ble = worker._js_ble_registry.get(id(device))
-                if js_ble and message:
-                    await js_ble.send(list(message))
-            elif topic == 'connect':
-                cb = req.get('msg3')
-                if cb: cb(True)
-            elif topic == 'disconnect':
-                device = req.get('msg')
-                js_ble = worker._js_ble_registry.pop(id(device), None)
-                if js_ble: js_ble.disconnect()
-        except Exception as e: print(f"Worker error: {e}")
 
 SERVICE_UUID = '0000fd02-0000-1000-8000-00805f9b34fb'
 WRITE_UUID   = '0000fd02-0001-1000-8000-00805f9b34fb'
@@ -76,39 +30,7 @@ def log(msg):
     term.scrollTop = term.scrollHeight
     print(msg)
 
-# ── FIRMWARE VERSION CHECK ──
-async def _check_firmware_version(device, timeout=3.0):
-    """Ask the hub for its RPC/firmware version and warn in the log if it's
-    out of sync with this app's legoeducation package.
-
-    Reimplements what device.connect()/info() already do natively, but
-    awaiting the response via asyncio instead of blocking on a
-    concurrent.futures.Future.result() — that call (used by info()) would
-    freeze the browser's single-threaded event loop, same reason every
-    motor/sensor call elsewhere in this file passes blocking=False.
-    """
-    msg = InfoRequest().Serialize()
-    response_id = msg[0] + 1
-    future = Future()
-    device._pending_responses.setdefault(response_id, deque()).append(future)
-    device._ask('send', device.device, msg)
-    try:
-        payload = await asyncio.wait_for(asyncio.wrap_future(future), timeout=timeout)
-    except asyncio.TimeoutError:
-        log(f"{device.prefix.upper()}: could not read firmware version (no response).")
-        return
-
-    info = InfoResponse.Deserialize(payload)
-    version_rpc = (info.rpcMajor, info.rpcMinor, info.rpcBuild)
-    if version_rpc == RPC_VERSION:
-        return
-    if version_rpc < RPC_VERSION:
-        log(f"{device.prefix.upper()}: firmware update needed (hub RPC version {version_rpc} "
-            f"< app's {RPC_VERSION}). Go to https://code.legoeducation.com/ to update your hardware.")
-    else:
-        log(f"{device.prefix.upper()}: app update needed (hub RPC version {version_rpc} "
-            f"> app's {RPC_VERSION}). Run: pip install --upgrade legoeducation.")
-
+webhub.log = log
 
 # ── DEVICE MANAGEMENT ──
 class WebDevice:
@@ -129,8 +51,15 @@ class WebDevice:
             self.js_ble = js_ble
             self.connected = True
             self.device = self
-            import legoeducation.basic_device as bd
-            bd.my_worker._js_ble_registry[id(self)] = self.js_ble
+            webhub.registry[id(self)] = self.js_ble
+            self._first_notification_ready = asyncio.Event()
+
+            # Only the latest firmware is supported: older hubs get an alert to update.
+            label = 'Double Motor' if self.prefix == 'dm' else 'Color Sensor'
+            if not await webhub.check_firmware(self, label):
+                self.disconnect_web()
+                return
+
             try:
                 self.device_notification_request(100, blocking=False)
             except: pass
@@ -146,7 +75,6 @@ class WebDevice:
                 btn_dis.style.display = 'inline-block'
             log(f"{self.prefix.upper()} connected.")
             check_ready()
-            asyncio.ensure_future(_check_firmware_version(self))
 
     async def _on_notification(self, data: bytes):
         await self._device_callback(NOTIFY_UUID, data)

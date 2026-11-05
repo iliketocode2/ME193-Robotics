@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notes · LQR &amp; MPC</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel-bg: #ffffff; --fg: #1b1e24; --muted: #5b6270;
+    --grid: #e2e4e9; --border: #d8dbe1; --accent: #2563eb; --ok: #157a3d; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --panel-bg: #1c1f26; --fg: #e7e9ee; --muted: #9aa2b1;
+      --grid: #333844; --border: #333844; --accent: #6ea8fe; --ok: #4fd17a; --bad: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.6; }
+  .site-nav { display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--panel-bg); }
+  .site-nav a { color: var(--muted); text-decoration: none; font-size: 13px;
+    padding: 6px 10px; border-radius: 6px; }
+  .site-nav a:hover { background: var(--grid); color: var(--fg); }
+  .site-nav a.active { background: var(--accent); color: #fff; }
+  .site-nav a.robot-btn { margin-left: auto; background: var(--ok); color: #fff; font-weight: 600; }
+  .site-nav .fallback-note { flex-basis: 100%; font-size: 11.5px; color: var(--muted); }
+  main.doc { max-width: 78ch; margin: 0 auto; padding: 28px 20px 60px 20px; }
+  main.doc h1, main.doc h2, main.doc h3 { line-height: 1.25; }
+  main.doc h1 { font-size: 26px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+  main.doc h2 { font-size: 20px; margin-top: 2.2em; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  main.doc h3 { font-size: 16px; margin-top: 1.8em; }
+  main.doc a { color: var(--accent); }
+  main.doc code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em;
+    background: var(--grid); padding: 0.15em 0.4em; border-radius: 4px; }
+  main.doc pre { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; }
+  main.doc pre code { background: none; padding: 0; }
+  main.doc blockquote { border-left: 3px solid var(--accent); margin: 1.2em 0; padding: 4px 16px;
+    background: var(--panel-bg); border-radius: 0 6px 6px 0; color: var(--muted); }
+  main.doc table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: 14px;
+    display: block; overflow-x: auto; }
+  main.doc th, main.doc td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+  main.doc th { background: var(--panel-bg); }
+  main.doc hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+  main.doc img { max-width: 100%; border-radius: 8px; }
+  .banner { background: #fff3cd; color: #664d03; border: 1px solid #ffe69c;
+    border-radius: 8px; padding: 8px 12px; font-size: 13px; margin: 20px; }
+  @media (prefers-color-scheme: dark) {
+    .banner { background: #3a2f10; color: #ffd97a; border-color: #5c4a10; }
+  }
+  .pyrun { border: 1px solid var(--border); border-left: 4px solid var(--ok); border-radius: 8px;
+    background: var(--panel-bg); padding: 10px 14px; margin: 1.2em 0; }
+  .pyrun-head { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .pyrun-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .pyrun-row input { flex: 1; min-width: 8em; max-width: 22em; padding: 5px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+    font: 0.9em ui-monospace, Menlo, monospace; }
+  .pyrun-row button { background: var(--ok); color: #fff; border: none; border-radius: 7px; padding: 6px 14px;
+    font: inherit; font-size: 13px; cursor: pointer; }
+  .pyrun-row button:disabled { opacity: .55; cursor: default; }
+  .pyrun-out { margin: 10px 0 0; max-height: 28em; overflow: auto; font-size: 12px; line-height: 1.45;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .pylab { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px;
+    background: var(--panel-bg); padding: 12px 14px; margin: 1.2em 0; }
+  .pylab-grid { display: grid; grid-template-columns: minmax(200px, 270px) 1fr; gap: 18px; }
+  @media (max-width: 760px) { .pylab-grid { grid-template-columns: 1fr; } }
+  .lab-row { margin-bottom: 9px; font-size: 13px; }
+  .lab-row label { display: block; margin-bottom: 1px; }
+  .lab-row .val { float: right; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .lab-row input[type=range] { width: 100%; }
+  main.doc .pylab h4 { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  main.doc .pylab h4:first-child { margin-top: 0; }
+  main.doc .pylab table { display: table; font-size: 12.5px; margin: 4px 0; font-variant-numeric: tabular-nums; }
+  main.doc .pylab th, main.doc .pylab td { padding: 3px 8px; border: none; border-bottom: 1px solid var(--border); text-align: right; background: none; }
+  main.doc .pylab th:first-child, main.doc .pylab td:first-child { text-align: left; }
+  .pylab tr.pick td { font-weight: 700; color: var(--ok); }
+  .pylab tr.bad td { color: var(--bad); }
+  svg.plot { width: 100%; height: auto; display: block; }
+  svg.plot text { fill: var(--muted); font-size: 11px; }
+  svg.plot .axis { stroke: var(--border); } svg.plot .gridline { stroke: var(--grid); }
+  svg.plot .vspan { fill: rgba(128,128,128,.18); }
+  svg.plot .limit { stroke: #e33; stroke-width: 1; stroke-dasharray: 5 4; }
+  svg.plot path.s { fill: none; stroke-width: 2; stroke-linejoin: round; }
+  svg.plot .mpc { stroke: #b3261e; } svg.plot .lqrd { stroke: #2563eb; stroke-dasharray: 6 4; }
+  .legend { font-size: 12.5px; margin: 0 0 2px; } .legend span { margin-right: 14px; }
+  .swatch { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+  .mpc-c { background: #b3261e; } .lqrd-c { background: #2563eb; }
+  .pyrun-edit-btn { margin-left: auto; background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 7px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .pyrun-edit-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pyrun-editor { margin-top: 10px; }
+  .pyrun-editor[hidden] { display: none; }
+  .pyrun-ehead { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .pyrun-ehead button { background: var(--grid); color: var(--fg); border: none; border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  /* A light tan code box in both themes. A highlighted <pre> sits under a transparent <textarea>. */
+  .codebox { position: relative; height: 26em; resize: vertical; overflow: hidden; background: #f6efdc; color: #2b2a26;
+    border: 1px solid #d9cca6; border-radius: 6px; }
+  .codebox pre, .codebox textarea { position: absolute; inset: 0; margin: 0; padding: 10px 12px; border: 0; box-sizing: border-box;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4; white-space: pre;
+    letter-spacing: 0; word-spacing: 0; overflow: auto; }
+  .codebox pre { pointer-events: none; overflow: hidden; background: none; }
+  .codebox pre code { background: none; padding: 0; font: inherit; color: inherit; }
+  .codebox textarea { background: transparent; color: transparent; caret-color: #2b2a26; resize: none; outline: none; }
+  .codebox textarea::selection { background: rgba(37, 99, 235, .25); }
+  .tk-kw { color: #a626a4; font-weight: 600; } .tk-str { color: #3b7a1e; } .tk-com { color: #8a8576; font-style: italic; }
+  .tk-num { color: #b25c00; } .tk-def { color: #1c5fb0; font-weight: 600; } .tk-bi { color: #0b7285; }
+  .tk-self { color: #b03a48; font-style: italic; } .tk-dec { color: #7a5200; }
+  .pyrun-out.err { color: var(--bad); }
+</style>
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [["\\(", "\\)"]], displayMath: [["\\[", "\\]"]] }
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+</head>
+<body>
+<div class="site-nav" id="site-nav"></div>
+<main class="doc" id="doc-main"><p>Loading…</p></main>
+<script>
+"use strict";
+/* Renders the course notes (Markdown + TeX) in the browser: marked.js for the
+   Markdown, MathJax for the maths. $...$ is pulled out before marked sees it so
+   underscores inside formulas survive. All paths are relative to this page, so
+   it works from any folder, including a github.io project site. */
+const NOTES = [
+  ["notes/README.md", "Home"],
+  ["notes/00-sim.md", "00 · sim.py"],
+  ["notes/01-lqr.md", "01 · LQR"],
+  ["notes/02-mpc.md", "02 · MPC"],
+  ["notes/03-lqr-vs-mpc.md", "03 · LQR vs MPC"],
+];
+const ROOT = decodeURI(new URL(".", location.href).pathname);
+
+function renderNav(active) {
+  const links = NOTES.map(([h, t]) =>
+    `<a href="reader.html?src=${encodeURIComponent(h)}"${h === active ? ' class="active"' : ""}>${t}</a>`);
+  links.push('<a href="interactive.html">Interactive</a>');
+  links.push('<a href="interactive.html#robot" class="robot-btn">\u{1F50C} Connect to robot</a>');
+  document.getElementById("site-nav").innerHTML = links.join("\n");
+}
+function extractMath(md) {
+  const store = [];
+  let out = md.replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => { store.push(`\\[${t}\\]`); return `@@MATH${store.length - 1}@@`; });
+  out = out.replace(/\$((?:[^\$\n]|\n(?!\n))+?)\$/g, (_, t) => { store.push(`\\(${t}\\)`); return `@@MATH${store.length - 1}@@`; });
+  return { text: out, store };
+}
+const restoreMath = (html, store) => html.replace(/@@MATH(\d+)@@/g, (_, i) => store[Number(i)]);
+const slugify = raw => raw.toLowerCase().replace(/[^\w\s-]/g, "").trim().replace(/\s/g, "-");
+function makeRenderer() {
+  const r = new marked.Renderer(), seen = {};
+  r.heading = (text, level, raw) => {
+    let slug = slugify(raw);
+    if (seen[slug] !== undefined) { seen[slug]++; slug += "-" + seen[slug]; } else seen[slug] = 0;
+    return `<h${level} id="${slug}">${text}</h${level}>\n`;
+  };
+  return r;
+}
+function rewriteMdLinks(container, baseURL) {
+  container.querySelectorAll("a[href]").forEach(a => {
+    const href = a.getAttribute("href");
+    if (/^https?:\/\//i.test(href) || !/\.md(#.*)?$/i.test(href)) return;
+    const t = new URL(href, baseURL);
+    const rel = decodeURI(t.pathname).slice(ROOT.length);
+    a.href = `reader.html?src=${encodeURIComponent(rel)}${t.hash}`;
+  });
+}
+
+/* -- "Run it here" boxes: <div class="pyrun" data-run="sim|bangbang|pd|lqr|mpc" ...> in the Markdown.
+      PyScript is only loaded on pages that have one. docs_runs.py wires up the buttons. -- */
+/* -- Python syntax colouring for the editable sim.py boxes -- */
+const PY_KW = new Set("False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield".split(" "));
+const PY_BI = new Set("print range len abs min max sum float int str list dict set tuple zip enumerate isinstance sorted round open type bool map filter any all super reversed next iter format repr divmod pow".split(" "));
+function escHtml(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function highlightPython(src) {
+  const re = /("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\')|(#[^\n]*)|((?:[rRbBfFuU]{0,2})(?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'))|(@[A-Za-z_][\w.]*)|(\b\d[\d_]*\.?\d*(?:[eE][+-]?\d+)?\b|\.\d+)|([A-Za-z_]\w*)|([\s\S])/g;
+  let out = "", prev = "", m;
+  while ((m = re.exec(src)) !== null) {
+    const t = m[0], e = escHtml(t);
+    if (m[1] || m[3]) out += `<span class="tk-str">${e}</span>`;
+    else if (m[2]) out += `<span class="tk-com">${e}</span>`;
+    else if (m[4]) out += `<span class="tk-dec">${e}</span>`;
+    else if (m[5]) out += `<span class="tk-num">${e}</span>`;
+    else if (m[6]) {
+      if (PY_KW.has(t)) out += `<span class="tk-kw">${e}</span>`;
+      else if (prev === "def" || prev === "class") out += `<span class="tk-def">${e}</span>`;
+      else if (t === "self") out += `<span class="tk-self">${e}</span>`;
+      else if (PY_BI.has(t)) out += `<span class="tk-bi">${e}</span>`;
+      else out += e;
+      prev = t;
+      continue;
+    } else out += e;
+    if (!/^\s+$/.test(t)) prev = "";
+  }
+  return out;
+}
+/* Redraw the colours under a code box's textarea. Python calls this after it sets the text. */
+window.refreshCode = function (area) {
+  const box = area.closest(".codebox");
+  if (!box) return;
+  box.querySelector("pre code").innerHTML = highlightPython(area.value) + "\n";
+  const pre = box.querySelector("pre");
+  pre.scrollTop = area.scrollTop; pre.scrollLeft = area.scrollLeft;
+};
+
+function buildLabs(container) {
+  const row = (id, label, min, max, step, value) =>
+    `<div class="lab-row"><label>${label} <span class="val" id="${id}-val"></span></label>` +
+    `<input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}"></div>`;
+  container.querySelectorAll(".pylab").forEach(box => {
+    box.innerHTML = `<div class="pylab-grid"><div>` +
+      row("lab-qth", "Q_TH (cost per rad²)", 0, 30, 0.5, 0) +
+      row("lab-r", "R_W (cost per (rad/s)²)", 1, 200, 1, 25) +
+      row("lab-qe", "Q_E (cost per mm²)", 0.1, 20, 0.1, 1) +
+      row("lab-v", "speed v (mm/s)", 50, 300, 5, 150) +
+      row("lab-radius", "turn radius (mm)", 20, 400, 5, 80) +
+      `<div class="lab-row"><label><input type="checkbox" id="lab-second"> add a second turn to DEMO_TRACK</label></div>` +
+      row("lab-emax", "sensor window e_max (mm)", 2, 15, 0.5, 6) +
+      row("lab-n", "MPC horizon (steps)", 1, 40, 1, 15) +
+      row("lab-qv", "q_v (log scale)", -3, 0, 0.05, -2) +
+      `</div><div><div class="pyrun-head" id="lab-loading">Loading Python… the sliders come alive in about ten seconds.</div>` +
+      `<h4>Gains (section 1)</h4><div id="lab-gains"></div>` +
+      `<h4>Steady-state offset against turn radius (section 3)</h4><div id="lab-radii"></div>` +
+      `<h4>One MPC solve entering the first turn (section 4)</h4><div id="lab-solve"></div>` +
+      `<h4>Head to head (section 5)</h4><div id="lab-stats"></div>` +
+      `<h4>Lateral error e(t)</h4><div id="lab-pe"></div>` +
+      `<h4>Forward speed v(t)</h4><div id="lab-pv"></div>` +
+      `</div></div>`;
+  });
+}
+
+function buildRunBoxes(container) {
+  const boxes = container.querySelectorAll(".pyrun");
+  boxes.forEach(box => {
+    const script = box.dataset.script || "code/sim.py";
+    const args = box.dataset.args;
+    const sec = box.dataset.section;
+    const cmd = `python3 ${script}`;
+    box.innerHTML =
+      `<div class="pyrun-head"><b>Run it here, in your browser.</b> Prints what <code>${cmd}</code> prints` +
+      (sec && sec !== "all" ? ` (section ${sec} of its report)` : "") + `.</div>` +
+      `<div class="pyrun-row"><code>${cmd}</code>` +
+      (args !== undefined ? `<input value="${args}" spellcheck="false" aria-label="arguments for ${script}">` : "") +
+      `<button disabled>Loading Python…</button>` +
+      (box.dataset.run === "sim"
+        ? `<button type="button" class="pyrun-edit-btn pyrun-toggle" aria-pressed="false" ` +
+          `title="Show sim.py. While this is on, Run uses your edited version.">✎ Edit the code</button>` : "") +
+      `</div>` +
+      (box.dataset.run === "sim"
+        ? `<div class="pyrun-editor" hidden><div class="pyrun-ehead">` +
+          `<b>sim.py</b> (edit anything, then press Run; Run uses your edits while Edit the code is on, ` +
+          `and they are shared by every box on this page)` +
+          `<button class="pyrun-reset" type="button">Reset to the original</button></div>` +
+          `<div class="codebox"><pre aria-hidden="true"><code></code></pre>` +
+          `<textarea spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="sim.py source"></textarea></div></div>` : "") +
+      `<pre class="pyrun-out" style="display:none"></pre>`;
+  });
+  boxes.forEach(box => {
+    const toggle = box.querySelector(".pyrun-toggle"), editor = box.querySelector(".pyrun-editor");
+    if (!toggle || !editor) return;
+    toggle.addEventListener("click", () => {
+      const on = toggle.getAttribute("aria-pressed") !== "true";
+      toggle.setAttribute("aria-pressed", String(on));
+      toggle.textContent = on ? "✎ Editing (click to hide)" : "✎ Edit the code";
+      editor.hidden = !on;
+      if (on && window.refreshCode) window.refreshCode(editor.querySelector("textarea"));
+    });
+    const area = editor.querySelector("textarea");
+    area.addEventListener("input", () => window.refreshCode(area));
+    area.addEventListener("scroll", () => {
+      const pre = editor.querySelector("pre");
+      pre.scrollTop = area.scrollTop; pre.scrollLeft = area.scrollLeft;
+    });
+  });
+  buildLabs(container);
+  if (!boxes.length && !container.querySelector(".pylab")) return;
+  const css = document.createElement("link");
+  css.rel = "stylesheet"; css.href = "https://pyscript.net/releases/2024.1.1/core.css";
+  document.head.appendChild(css);
+  const core = document.createElement("script");
+  core.type = "module"; core.src = "https://pyscript.net/releases/2024.1.1/core.js";
+  document.head.appendChild(core);
+  const py = document.createElement("script");
+  py.type = "py"; py.src = "./docs_runs.py"; py.setAttribute("config", "./docs.toml");
+  document.body.appendChild(py);
+}
+
+async function main() {
+  const src = new URLSearchParams(location.search).get("src") || "notes/README.md";
+  renderNav(src);
+  const hit = NOTES.find(([h]) => h === src);
+  document.title = (hit ? hit[1] : src) + " · LQR & MPC";
+  const box = document.getElementById("doc-main");
+  let md;
+  try {
+    const res = await fetch(src);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    md = await res.text();
+  } catch (err) {
+    box.innerHTML = `<div class="banner">Could not load <code>${src}</code> (${err.message}). ` +
+      `Serve the folder over HTTP (<code>python3 -m http.server</code>) instead of opening the file directly.</div>`;
+    return;
+  }
+  const { text, store } = extractMath(md);
+  box.innerHTML = restoreMath(marked.parse(text, { renderer: makeRenderer(), gfm: true }), store);
+  rewriteMdLinks(box, new URL(src, location.href));
+  buildRunBoxes(box);
+  if (window.MathJax && MathJax.typesetPromise) await MathJax.typesetPromise([box]);
+  if (location.hash) { const el = document.getElementById(location.hash.slice(1)); if (el) el.scrollIntoView(); }
+}
+main();
+</script>
+</body>
+</html>

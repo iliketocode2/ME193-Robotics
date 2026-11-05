@@ -84,8 +84,12 @@ Notes:
 - **The two pages have separate copies of `Device.py`.** A fix to Bluetooth
   handling must be made in both `Device.py` and `trainer/Device.py`
   (`JS/ble.js` and `trainer/JS/ble.js` likewise).
-- **`legoeducation` is pinned to 1.0.6** in both `.toml` files. Version 1.1.1
-  replaced the worker the page patches for the browser, and breaks it.
+- **`legoeducation` is pinned to 1.2.0** in both `.toml` files, so the pages understand
+  the latest hub firmware. Bluetooth still goes through `ble.js`: `webhub.py` (shared with
+  QLearn, loaded from `../QLearn/webhub.py`) registers a transport for the library's sending,
+  and checks each hub's firmware when it connects. A hub with older firmware gets an alert to
+  update at code.legoeducation.com and is disconnected. Keep the pin at 1.2.0 or later: earlier
+  versions cannot read current firmware.
 - The builder page still includes the original PyScript analytics snippet;
   the trainer page does not.
 
