@@ -38,6 +38,12 @@ subset of the class repo that's meant to be shared.
   Edit `config.sh` with your Tufts username first.
 - [LQR-MPC-web/](LQR-MPC-web/) — LQR vs MPC on a line-following robot, simulated or on LEGO hardware, in
   the browser (PyScript, no install; connects to the LEGO robot over Web Bluetooth). [Try it online](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/LQR-MPC-web/).
+- [bc_gridworld/](bc_gridworld/) — "Clone the Navigator", a browser lesson on
+  behavior cloning: drive a robot with three yes/no sensors to a goal, watch the
+  recorded (sensor, action) cards pile up, train a lookup-table policy from them,
+  then let the clone drive and correct it where it goes wrong (DAgger). Includes a
+  printable unplugged version for the classroom (activity guide and scribe
+  worksheet PDFs). Open `index.html`; no install needed.
 - [QLearn/](QLearn/) — a browser-based Q-learning visualizer (PyScript +
   Web Bluetooth): train a LEGO Education robot on Silly Walk, Line Follower
   and Maze Solver tasks while watching the Q-table update live. Needs

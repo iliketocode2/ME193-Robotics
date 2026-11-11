@@ -1,0 +1,93 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Clone the Navigator: activity guide</title>
+<link rel="stylesheet" href="style.css"></head><body>
+<h1>Clone the Navigator</h1>
+<div class="sub">An unplugged behavior cloning activity &middot; about 45 minutes &middot; instructor guide</div>
+
+<div class="box"><b>The idea.</b> One student, the <b>Expert</b>, walks through the crowded room to a goal. A <b>Scribe</b> writes down, at every step, what the robot's three sensors would read and what the Expert did. The class turns those cards into a rule (the policy). A second student, the <b>Robot</b>, follows that rule and nothing else. Does it get across?</div>
+
+<h2>Set up</h2>
+<ul>
+<li><b>Room:</b> tables and chairs are the obstacles. Tape a <b>start</b> and a <b>goal</b>. Two or three different starts work best. Tape a floor grid if you can, so one &ldquo;step&rdquo; means the same thing to everyone.</li>
+<li><b>Materials:</b> the scribe worksheet (one per scribe), a second ink color, a timer, a blindfold or sunglasses for the Robot (optional).</li>
+</ul>
+
+<h2>The robot&rsquo;s senses and actions</h2>
+<table>
+<tr><th style="width:50%">Sensors (yes/no, one step away)</th><th>Actions (one per step)</th></tr>
+<tr><td><b>F</b> front blocked? &nbsp; <b>L</b> left blocked? &nbsp; <b>R</b> right blocked?<br>That is 8 possible readings.<br><span class="small"><b>Extension:</b> add the goal direction (ahead / left / right / behind): 32 readings.</span></td>
+<td><b>Forward:</b> step ahead.<br><b>Left:</b> turn left, then step.<br><b>Right:</b> turn right, then step.</td></tr>
+</table>
+
+<h2>Roles</h2>
+<table>
+<tr><th style="width:22%">Role</th><th>Job</th><th style="width:30%">Vocabulary</th></tr>
+<tr><td>Expert</td><td>Walks to the goal</td><td>Demonstrator</td></tr>
+<tr><td>Sensor</td><td>Walks beside whoever is walking and calls out F, L and R at every step</td><td>Observation</td></tr>
+<tr><td>Scribe</td><td>Writes one row per step on the worksheet</td><td>One (observation, action) pair</td></tr>
+<tr><td>Policy builders (2&ndash;4)</td><td>Tally the rows and write the lookup table</td><td>Training</td></tr>
+<tr><td>Robot</td><td>Walks the room using only the table</td><td>The learned policy</td></tr>
+<tr><td>Referee</td><td>Counts steps and bumps</td><td>Evaluation</td></tr>
+</table>
+
+<h2>Round 1: Collect demonstrations (10 min)</h2>
+<ol>
+<li>The Expert walks from a start to the goal. At each step the <b>Sensor</b> calls the reading, the <b>Expert</b> acts, and the <b>Scribe</b> fills in a row.</li>
+<li>Do 3 or 4 walks from different starts, one worksheet page per walk.</li>
+</ol>
+<p class="q"><i>Ask:</i> The Expert can see the whole room, but the sheet records only 3 bits. Is that fair? (Partial observability. Save their answers for the discussion.)</p>
+
+<h2>Round 2: Build the policy (10 min)</h2>
+<ol>
+<li>Policy builders use the <b>Tally &amp; Policy sheet</b>. For every row on every worksheet, add a tally mark in the line for that reading and the action taken.</li>
+<li>For each reading, pick the action with the most tallies. Write it in the &ldquo;Policy does&rdquo; column. That table is the trained model.</li>
+<li>Conflicts will appear: a reading with tallies for both left and right. The builders must choose (most tallies, or most recent). Nobody can &ldquo;average&rdquo; a left and a right turn into something sensible. (Multimodality.)</li>
+</ol>
+
+<h2>Round 3: Run the policy (10 min)</h2>
+<p>The Robot starts at a spot. Loop, with <b>no coaching from the Expert</b>: Sensor calls the reading &rarr; Robot finds the line in the table &rarr; Robot does that action. The Referee counts steps and bumps. Try a start the Expert used, and a new one.</p>
+<p>Name each failure when it happens:</p>
+<ul>
+<li><b>A reading with no tallies.</b> No card covered it. The Robot has to guess, or copy the most similar reading (nearest neighbor, as in the KNN activity). <i>Distribution shift.</i></li>
+<li><b>Spinning or looping.</b> A policy that only sees the current reading cannot know it has been here before. <i>Memoryless policy.</i></li>
+<li><b>Drifting into a corner the Expert never entered.</b> One slip leads to the next. <i>Compounding error.</i></li>
+</ul>
+
+<h2>Round 4: Fix it with corrections (10 min)</h2>
+<ol>
+<li>Run the Robot again. The Expert follows along, and whenever the Robot is about to go wrong, says what they would do at that reading.</li>
+<li>The Scribe records those rows in a <b>second ink color</b> on a new worksheet.</li>
+<li>Policy builders add the tallies, rebuild the table, and run again. Compare steps and bumps before and after. <i>(DAgger.)</i></li>
+</ol>
+<p class="small"><b>Optional Round 5, recovery data:</b> nudge the Expert off the usual line at the start (a shoulder tap, a random start square) and record the corrections. <i>(Noise injection.)</i></p>
+
+<h2 class="pb">Discussion questions</h2>
+<ol>
+<li>Which readings had conflicting rows, and why? Would the goal direction have resolved some?</li>
+<li>The Expert could see a table beyond sensor range. How did that show up in the data as &ldquo;mistakes&rdquo;?</li>
+<li>Why did the second-ink rows fix more than another full set of demonstrations would have?</li>
+<li>What would remembering the last reading fix? Which failure would it not fix?</li>
+<li>A looping policy has a sensible action for every reading. So what is wrong?</li>
+</ol>
+
+<h2>How it maps to the vocabulary</h2>
+<table>
+<tr><th>In the room</th><th>Term</th></tr>
+<tr><td>The Expert&rsquo;s walk</td><td>Demonstration, trajectory &tau;</td></tr>
+<tr><td>One row on the worksheet</td><td>Pair (o, a)</td></tr>
+<tr><td>All the worksheets together</td><td>Dataset D</td></tr>
+<tr><td>The Policy &ldquo;does&rdquo; column</td><td>Trained policy &pi;<sub>&theta;</sub></td></tr>
+<tr><td>Tallies for two actions on one reading</td><td>Multimodality</td></tr>
+<tr><td>A reading with no tallies</td><td>Out of distribution, distribution shift</td></tr>
+<tr><td>Second-ink rows</td><td>DAgger corrections</td></tr>
+<tr><td>The Expert sees more than 3 bits</td><td>Partial observability</td></tr>
+<tr><td>Looping</td><td>A memoryless (Markovian) policy failing</td></tr>
+</table>
+
+<h2>Tips</h2>
+<ul>
+<li><b>Keep the sensors honest.</b> The Sensor reads the bits aloud so nobody quietly uses what they can see of the whole room.</li>
+<li><b>Too hard?</b> Use only F (front blocked) with the actions forward and turn.</li>
+<li><b>Too easy?</b> Add the goal direction, or run the Robot after fewer demonstrations to show where it fails.</li>
+<li><b>Same activity on screen:</b> open <code>index.html</code> in the <code>bc_gridworld</code> folder. It has the same sensors, actions, cards, table, and correction round, so students can repeat it at home.</li>
+</ul>
+</body></html>

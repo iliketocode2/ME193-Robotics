@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clone the Navigator</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1f2933; --mute:#6b7785; --line:#d9dee4;
+          --expert:#2563eb; --dagger:#ea580c; --good:#15803d; --bad:#b91c1c; --wall:#4b5563; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:12px 18px; background:#1f2933; color:#fff; }
+  header h1 { margin:0; font-size:18px; }
+  header p { margin:2px 0 0; color:#c4ccd4; font-size:13px; }
+  main { display:flex; flex-wrap:wrap; gap:14px; padding:14px 18px; align-items:flex-start; }
+  .col { display:flex; flex-direction:column; gap:12px; }
+  #left { flex:0 0 auto; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .panel h2 { margin:0 0 6px; font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--mute); }
+  canvas { display:block; background:#fff; border:1px solid var(--line); border-radius:6px; max-width:100%; }
+  .tabs { display:flex; gap:6px; margin-bottom:8px; }
+  .tabs button { flex:1; padding:7px; border:1px solid var(--line); background:#eef1f4; border-radius:6px; cursor:pointer; font-weight:600; }
+  .tabs button.on { background:#1f2933; color:#fff; border-color:#1f2933; }
+  button.act { padding:6px 10px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; }
+  button.act:hover { background:#eef1f4; }
+  button.primary { background:var(--expert); color:#fff; border-color:var(--expert); }
+  button.primary:hover { background:#1d4fc4; }
+  button.link { border:0; background:none; color:var(--mute); text-decoration:underline; cursor:pointer; font-size:12px; padding:2px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+  label { display:inline-flex; gap:5px; align-items:center; }
+  select { padding:4px; }
+  .msg { min-height:2.6em; margin:6px 0 0; }
+  .ok { color:var(--good); font-weight:600; } .warn { color:var(--bad); font-weight:600; }
+  .small { font-size:12px; color:var(--mute); }
+  .sensors { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .light { min-width:62px; text-align:center; padding:4px 8px; border-radius:6px; border:1px solid var(--line); font-weight:600; }
+  .light.blocked { background:#fee2e2; border-color:#fca5a5; color:var(--bad); }
+  .light.free { background:#dcfce7; border-color:#86efac; color:var(--good); }
+  .light.goal { background:#e0e7ff; border-color:#a5b4fc; color:#3730a3; }
+  .keys { font-size:13px; }
+  kbd { background:#eef1f4; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 5px; font-size:12px; }
+  #tablewrap { max-height:340px; overflow:auto; border:1px solid var(--line); border-radius:6px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { padding:3px 7px; border-bottom:1px solid #eceff2; text-align:left; white-space:nowrap; }
+  th { position:sticky; top:0; background:#f1f4f7; z-index:1; }
+  tr.cur td { background:#fef9c3; }
+  tr.unseen td { color:#9aa5b1; }
+  .blk { color:var(--bad); font-weight:700; } .fre { color:#9aa5b1; }
+  .ex { color:var(--expert); font-weight:700; } .dg { color:var(--dagger); font-weight:700; }
+  .guess { font-style:italic; color:var(--mute); }
+  .subhead { margin:10px 0 3px; font-size:13px; }
+  #cardwrap { max-height:170px; overflow:auto; border:1px solid var(--line); border-radius:6px; }
+  #cardlist td, #cardlist th { font-size:12px; padding:2px 6px; }
+  #cardlist td:nth-child(5) { white-space:normal; }
+  #cardlist td.x { width:26px; text-align:center; }
+  button.del { border:0; background:none; color:#9aa5b1; cursor:pointer; font-size:15px; line-height:1; padding:0 4px; }
+  button.del:hover { color:var(--bad); }
+  #hist td, #hist th { font-size:12px; }
+  .stale { background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:5px 8px; border-radius:6px; margin:6px 0; font-size:13px; }
+  details summary { cursor:pointer; color:var(--mute); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Clone the Navigator</h1>
+  <p>Drive the robot to the goal, and the robot learns what to do from your examples. It sees only three yes/no sensors.</p>
+</header>
+<main>
+  <div class="col" id="left">
+    <div class="panel">
+      <canvas id="cv" width="560" height="420"></canvas>
+      <div class="row" id="runControls" style="display:none">
+        <button class="act" id="runbtn">Run</button>
+        <button class="act" id="stepbtn">Step</button>
+        <label>Speed <input type="range" id="speed" min="1" max="10" value="6"></label>
+      </div>
+      <div class="msg" id="msg"></div>
+    </div>
+    <div class="panel">
+      <h2>What the robot senses right now</h2>
+      <div class="sensors" id="sensors"></div>
+      <p class="small" style="margin:6px 0 0">Each sensor looks one cell away. Walls and tables count as blocked.</p>
+    </div>
+    <div class="panel keys">
+      <h2>Controls</h2>
+      <kbd>&uarr;</kbd> or <kbd>W</kbd> forward &nbsp; <kbd>&larr;</kbd> or <kbd>A</kbd> turn left and step &nbsp; <kbd>&rarr;</kbd> or <kbd>D</kbd> turn right and step<br>
+      <kbd>Enter</kbd> next start, once an attempt has ended<br>
+      <kbd>Space</kbd> (Run tab) run the clone from the start spot, run it again from the same start after an attempt ends, or pause and resume it mid-run
+    </div>
+  </div>
+
+  <div class="col" style="flex:1; min-width:340px; max-width:620px">
+    <div class="panel">
+      <div class="tabs">
+        <button id="tab-demo" class="on">1. Demonstrate</button>
+        <button id="tab-run">2. Run the clone</button>
+      </div>
+      <div class="row">
+        <label>Room <select id="map"></select></label>
+        <label><input type="checkbox" id="useGoal"> Robot also senses which way the goal is</label>
+      </div>
+      <div id="demoBox">
+        <p class="small" style="margin:0">You are the expert. Every key press records one card (what the robot sensed, what you did). Do several starts.</p>
+      </div>
+      <div id="runBox" style="display:none">
+        <div class="row">
+          <label><input type="checkbox" id="dagger" checked> Taking over with a key adds a correction card</label>
+        </div>
+        <div class="row">
+          <label>If it has never seen this reading <select id="fallback">
+            <option value="nearest">copy the most similar reading (nearest neighbor)</option>
+            <option value="forward">just go forward</option></select></label>
+        </div>
+      </div>
+      <div class="row">
+        <button class="act" id="retry">Retry this start</button>
+        <button class="act" id="next">Next start</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>The cards (grouped by what the robot sensed)</h2>
+      <div class="small" id="counts" style="margin-bottom:4px"></div>
+      <div id="tablewrap"><table id="tbl"></table></div>
+      <h3 class="subhead">Every card, newest first <span class="small">(point at a row to see where it was recorded, click &times; to delete a bad example)</span></h3>
+      <div id="cardwrap"><table id="cardlist"><thead><tr><th>#</th><th>Sensed</th><th>Did</th><th>Type</th><th>From</th><th></th></tr></thead><tbody></tbody></table></div>
+      <p class="small" style="margin:6px 0 0"><span class="ex">Blue</span> counts are your demonstrations, <span class="dg">orange</span> counts are corrections you made while the clone ran. Yellow row = the reading right now.</p>
+      <div class="row">
+        <button class="act" id="dl">Save cards</button>
+        <label class="small">Load cards <input type="file" id="ld" accept=".json"></label>
+        <button class="act" id="clear">Clear all cards</button>
+        <button class="link" id="sample" title="For the instructor: adds cards from a scripted expert that sees the whole map">Add scripted expert cards (instructor)</button>
+      </div>
+      <div class="stale" id="stale" style="display:none"></div>
+      <div class="row">
+        <button class="act primary" id="train">Train: build the table from the cards</button>
+        <span class="small" id="trainnote"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Attempts</h2>
+      <table id="hist"><thead><tr><th>#</th><th>Who</th><th>Room</th><th>Start</th><th>Result</th><th>Steps</th><th>Bumps</th><th>Cards</th></tr></thead><tbody></tbody></table>
+      <button class="link" id="clearhist">Clear attempts</button>
+    </div>
+  </div>
+</main>
+
+<script src="logic.js"></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const A = GW.ACTIONS;
+  const CELL = 40;
+  const STORE = 'bc-gridworld-cards';
+
+  const S = { mapIdx: 0, startIdx: 0, ep: null, cards: [], mode: 'demo', policy: null,
+              running: false, timer: null, hist: [], useGoal: false, fallback: 'nearest', rev: 0, walkCount: 0, hover: null };
+  const map = () => GW.MAPS[S.mapIdx];
+
+  try { const saved = JSON.parse(localStorage.getItem(STORE) || '[]'); if (Array.isArray(saved)) S.cards = saved.filter(validCard); } catch (e) {}
+  S.walkCount = S.cards.reduce((m, c) => Math.max(m, +c.walk || 0), 0);
+  function validCard(c) { return c && c.obs && A.indexOf(c.action) >= 0 && typeof c.obs.F === 'number'; }
+  function persist() { S.rev += 1; try { localStorage.setItem(STORE, JSON.stringify(S.cards)); } catch (e) {} }
+
+  function say(html, cls) { const m = $('msg'); m.innerHTML = html; m.className = 'msg ' + (cls || ''); }
+
+  function newEpisode(startIdx) {
+    stopRun();
+    S.startIdx = startIdx;
+    S.ep = GW.newEpisode(map(), startIdx);
+    S.logged = false;
+    if (S.mode === 'demo') say('Start ' + (S.ep.startIdx + 1) + ' of ' + map().starts.length + '. Drive to the green goal.');
+    else say(S.policy ? 'Press Run or Step, or take over with a key.' : 'Press <b>Train</b> first so the robot has a table to follow.');
+    render();
+  }
+
+  function obsNow() { return GW.sense(map(), S.ep.s); }
+
+  function logAttempt(who) {
+    if (S.logged) return;
+    S.logged = true;
+    S.hist.push({ who, room: map().name, start: S.ep.startIdx + 1, outcome: S.ep.outcome,
+                  steps: S.ep.steps, bumps: S.ep.bumps, cards: who === 'clone' ? S.policy.nCards : S.cards.length });
+  }
+
+  function finish(who) {
+    logAttempt(who);
+    const e = S.ep;
+    if (e.outcome === 'goal') say('Reached the goal in ' + e.steps + ' steps with ' + e.bumps + ' bumps. ' + (S.mode === 'run' ? 'Press Space to run it again from this start, or Enter for the next start.' : 'Press Enter for the next start.'), 'ok');
+    else if (e.outcome === 'looping') say('The clone is stuck in a loop: it keeps arriving at the same place facing the same way. Take over to show it what to do, or press Space to run it again.', 'warn');
+    else say('Out of steps (' + GW.MAX_STEPS + '). Press Retry or Next start.', 'warn');
+  }
+
+  function act(action, source) {
+    if (S.ep.over) return;
+    const obs = obsNow();
+    if (source === 'expert' || source === 'dagger') {
+      if (!S.ep.walk) S.ep.walk = ++S.walkCount;
+      S.cards.push({ obs: obs, action: action, src: source, walk: S.ep.walk, room: map().name, start: S.ep.startIdx + 1,
+                     step: S.ep.steps + 1, pos: { x: S.ep.s.x, y: S.ep.s.y, h: S.ep.s.h } });
+      persist();
+    }
+    GW.advance(S.ep, map(), action, { detectLoops: S.mode === 'run' });
+    if (S.ep.over) finish(S.mode === 'run' ? 'clone' : 'expert');
+    render();
+  }
+
+  function cloneTick() {
+    if (!S.policy) { say('Press <b>Train</b> first.', 'warn'); stopRun(); return; }
+    if (S.ep.over) { stopRun(); return; }
+    const d = GW.decide(S.policy, obsNow());
+    act(d.action, 'clone');
+    if (S.ep.over) stopRun();
+  }
+
+  function startRun() {
+    if (!S.policy) { say('Press <b>Train</b> first.', 'warn'); return; }
+    if (S.ep.over) newEpisode(S.startIdx);
+    S.running = true; $('runbtn').textContent = 'Pause';
+    const delay = 1050 - S.speed * 100;
+    S.timer = setInterval(cloneTick, delay);
+  }
+  function stopRun() {
+    S.running = false; $('runbtn').textContent = 'Run';
+    if (S.timer) { clearInterval(S.timer); S.timer = null; }
+  }
+
+  function train() {
+    if (S.cards.length === 0) { say('There are no cards yet. Use tab 1 to demonstrate first.', 'warn'); return; }
+    S.policy = GW.makePolicy(S.cards, S.useGoal, S.fallback);
+    S.policy.nCards = S.cards.length;
+    S.policy.rev = S.rev;
+    say('Trained on ' + S.cards.length + ' cards. The table is built.', 'ok');
+    render();
+  }
+
+  // ---------- drawing ----------
+  const cv = $('cv'), ctx = cv.getContext('2d');
+  function draw() {
+    const m = map();
+    cv.width = m.w * CELL; cv.height = m.h * CELL;
+    $('left').style.width = Math.min(cv.width + 26, window.innerWidth - 36) + 'px';   // the map sets the column width, so long text wraps at the map's edge
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+      const px = x * CELL, py = y * CELL;
+      if (m.grid[y][x] === '#') { ctx.fillStyle = '#4b5563'; ctx.fillRect(px, py, CELL, CELL); }
+      else { ctx.fillStyle = '#fbfcfd'; ctx.fillRect(px, py, CELL, CELL); ctx.strokeStyle = '#e5e9ee'; ctx.strokeRect(px + .5, py + .5, CELL - 1, CELL - 1); }
+    }
+    m.starts.forEach((st, i) => {
+      ctx.fillStyle = i === S.ep.startIdx ? '#dbeafe' : '#eef2f7';
+      ctx.fillRect(st.x * CELL + 2, st.y * CELL + 2, CELL - 4, CELL - 4);
+      ctx.fillStyle = '#64748b'; ctx.font = '11px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText('S' + (i + 1), st.x * CELL + 5, st.y * CELL + 4);
+    });
+    ctx.fillStyle = '#bbf7d0'; ctx.fillRect(m.goal.x * CELL + 2, m.goal.y * CELL + 2, CELL - 4, CELL - 4);
+    ctx.fillStyle = '#15803d'; ctx.font = 'bold 20px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('★', m.goal.x * CELL + CELL / 2, m.goal.y * CELL + CELL / 2 + 1);
+
+    const s = S.ep.s, o = obsNow();
+    const probes = [[s.h, o.F], [(s.h + 3) % 4, o.L], [(s.h + 1) % 4, o.R]];
+    probes.forEach(([h, b]) => {
+      const cx = s.x + GW.DX[h], cy = s.y + GW.DY[h];
+      if (cx < 0 || cy < 0 || cx >= m.w || cy >= m.h) return;
+      ctx.fillStyle = b ? 'rgba(239,68,68,.35)' : 'rgba(34,197,94,.28)';
+      ctx.fillRect(cx * CELL + 2, cy * CELL + 2, CELL - 4, CELL - 4);
+    });
+    // robot: triangle pointing along the heading
+    const cx = s.x * CELL + CELL / 2, cy = s.y * CELL + CELL / 2;
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(s.h * Math.PI / 2);
+    ctx.fillStyle = S.ep.over ? (S.ep.outcome === 'goal' ? '#15803d' : '#b91c1c') : '#1f2933';
+    ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(11, 11); ctx.lineTo(-11, 11); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    const hc = S.hover !== null ? S.cards[S.hover] : null;
+    if (hc && hc.pos && hc.room === m.name) {
+      const hx = hc.pos.x * CELL, hy = hc.pos.y * CELL;
+      ctx.strokeStyle = '#ea580c'; ctx.lineWidth = 3; ctx.strokeRect(hx + 2, hy + 2, CELL - 4, CELL - 4);
+      ctx.save(); ctx.translate(hx + CELL / 2, hy + CELL / 2); ctx.rotate(hc.pos.h * Math.PI / 2);
+      ctx.beginPath(); ctx.moveTo(0, -13); ctx.lineTo(9, 7); ctx.lineTo(-9, 7); ctx.closePath(); ctx.stroke(); ctx.restore();
+      ctx.lineWidth = 1;
+    }
+  }
+
+  function renderSensors() {
+    const o = obsNow();
+    const box = $('sensors');
+    const mk = (label, b) => '<div class="light ' + (b ? 'blocked' : 'free') + '">' + label + ': ' + (b ? 'blocked' : 'free') + '</div>';
+    let html = mk('Front', o.F) + mk('Left', o.L) + mk('Right', o.R);
+    if (S.useGoal) html += '<div class="light goal">Goal: ' + GW.BEARING_WORD[o.G] + '</div>';
+    box.innerHTML = html;
+  }
+
+  function renderTable() {
+    const useGoal = S.useGoal;
+    const live = GW.buildTable(S.cards, useGoal);              // what the cards say now
+    const pol = S.policy && S.policy.useGoal === useGoal ? S.policy : null;   // what the trained policy does
+    const cur = GW.key(obsNow(), useGoal);
+    let rows = '<thead><tr><th>Front</th><th>Left</th><th>Right</th>' + (useGoal ? '<th>Goal</th>' : '') +
+               '<th>Cards: fwd / left / right</th>' + (S.mode === 'run' ? '<th>Clone does</th>' : '') + '</tr></thead><tbody>';
+    let seenReadings = 0;
+    GW.allObs(useGoal).forEach(o => {
+      const k = GW.key(o, useGoal), e = live.get(k);
+      if (e) seenReadings++;
+      const cell = (b) => '<td class="' + (b ? 'blk' : 'fre') + '">' + (b ? 'blocked' : 'free') + '</td>';
+      const ink = (a) => {
+        if (!e) return '0';
+        const x = e.ink[a];
+        return '<span class="ex">' + x.expert + '</span>' + (x.dagger ? '+<span class="dg">' + x.dagger + '</span>' : '');
+      };
+      let cards = e ? ink('F') + ' / ' + ink('L') + ' / ' + ink('R') + (e.conflict ? ' <span class="warn" title="Different actions for the same reading">conflict</span>' : '') : 'no cards';
+      let does = '';
+      if (S.mode === 'run') {
+        if (!pol) does = '<span class="small">train first</span>';
+        else {
+          const d = GW.decide(pol, o);
+          does = d.known ? GW.ACTION_WORD[d.action] : '<span class="guess">guess: ' + GW.ACTION_WORD[d.action] + '</span>';
+        }
+      }
+      rows += '<tr class="' + (k === cur ? 'cur ' : '') + (e ? '' : 'unseen') + '" data-k="' + k + '">' + cell(o.F) + cell(o.L) + cell(o.R) +
+              (useGoal ? '<td>' + GW.BEARING_WORD[o.G] + '</td>' : '') + '<td>' + cards + '</td>' + (S.mode === 'run' ? '<td>' + does + '</td>' : '') + '</tr>';
+    });
+    $('tbl').innerHTML = rows + '</tbody>';
+    const total = GW.allObs(useGoal).length;
+    $('counts').textContent = S.cards.length + ' cards covering ' + seenReadings + ' of ' + total + ' possible readings.';
+    const wrap = $('tablewrap'), tr = $('tbl').querySelector('tr.cur');
+    if (tr) { const t = tr.offsetTop - 60; if (tr.offsetTop < wrap.scrollTop + 30 || tr.offsetTop > wrap.scrollTop + wrap.clientHeight - 30) wrap.scrollTop = Math.max(0, t); }
+    const st = $('stale');
+    if (S.mode === 'run' && S.policy) {
+      if (S.policy.useGoal !== useGoal) { st.style.display = 'block'; st.textContent = 'The goal-sensor setting changed since training. Press Train again.'; }
+      else if (S.policy.rev !== S.rev) { st.style.display = 'block'; st.textContent = 'The cards have changed since the last Train (' + S.cards.length + ' now, ' + S.policy.nCards + ' then). The clone is still using the old table. Press Train to update it.'; }
+      else st.style.display = 'none';
+    } else st.style.display = 'none';
+  }
+
+  function readingText(o) {
+    const w = (b) => b ? 'blocked' : 'free';
+    return 'F ' + w(o.F) + ', L ' + w(o.L) + ', R ' + w(o.R) + (S.useGoal ? ', goal ' + GW.BEARING_WORD[o.G] : '');
+  }
+  function fromText(c) {
+    if (!c.walk) return '<span class="small">unknown</span>';
+    return 'Walk ' + c.walk + (c.step ? ', step ' + c.step : '') + (c.room && S.manyRooms ? ' <span class="small">(' + c.room + ')</span>' : '');
+  }
+  function renderCardList() {
+    const body = $('cardlist').querySelector('tbody');
+    S.manyRooms = new Set(S.cards.map(c => c.room).filter(Boolean)).size > 1;
+    let html = '';
+    for (let i = S.cards.length - 1; i >= 0; i--) {
+      const c = S.cards[i];
+      html += '<tr data-i="' + i + '"><td>' + (i + 1) + '</td><td>' + readingText(c.obs) + '</td><td><b>' + GW.ACTION_WORD[c.action] + '</b></td>' +
+              '<td class="' + (c.src === 'dagger' ? 'dg' : 'ex') + '">' + (c.src === 'dagger' ? 'correction' : 'demo') + '</td>' +
+              '<td>' + fromText(c) + '</td>' +
+              '<td class="x"><button class="del" data-i="' + i + '" title="Delete this card" aria-label="Delete card ' + (i + 1) + '">&times;</button></td></tr>';
+    }
+    body.innerHTML = html || '<tr><td colspan="6" class="small">No cards yet.</td></tr>';
+    $('trainnote').textContent = S.policy ? '' : 'Not trained yet.';
+  }
+
+  function renderHist() {
+    const body = $('hist').querySelector('tbody');
+    body.innerHTML = S.hist.map((h, i) => '<tr><td>' + (i + 1) + '</td><td>' + h.who + '</td><td>' + h.room + '</td><td>S' + h.start +
+      '</td><td class="' + (h.outcome === 'goal' ? 'ok' : 'warn') + '">' + h.outcome + '</td><td>' + h.steps + '</td><td>' + h.bumps + '</td><td>' + h.cards + '</td></tr>').reverse().join('');
+  }
+
+  function render() { draw(); renderSensors(); renderTable(); renderCardList(); renderHist(); }
+
+  // ---------- wiring ----------
+  function setMode(mode) {
+    S.mode = mode; stopRun();
+    $('tab-demo').classList.toggle('on', mode === 'demo'); $('tab-run').classList.toggle('on', mode === 'run');
+    $('demoBox').style.display = mode === 'demo' ? '' : 'none'; $('runBox').style.display = mode === 'run' ? '' : 'none'; $('runControls').style.display = mode === 'run' ? '' : 'none';
+    newEpisode(S.startIdx);
+  }
+  $('tab-demo').onclick = () => setMode('demo');
+  $('tab-run').onclick = () => setMode('run');
+
+  GW.MAPS.forEach((m, i) => { const o = document.createElement('option'); o.value = i; o.textContent = m.name + ' (' + m.starts.length + ' starts)'; $('map').appendChild(o); });
+  $('map').onchange = (e) => { S.mapIdx = +e.target.value; e.target.blur(); newEpisode(0); };
+  $('useGoal').onchange = (e) => { S.useGoal = e.target.checked; e.target.blur(); render(); };
+  $('fallback').onchange = (e) => { S.fallback = e.target.value; if (S.policy) S.policy.fallback = S.fallback; e.target.blur(); render(); };
+  $('speed').oninput = (e) => { S.speed = +e.target.value; if (S.running) { stopRun(); startRun(); } };
+  S.speed = +$('speed').value;
+  $('cardlist').onmouseover = (e) => {
+    const tr = e.target.closest('tr[data-i]'); const i = tr ? +tr.dataset.i : null;
+    if (i !== S.hover) { S.hover = i; draw(); }
+  };
+  $('cardlist').onmouseleave = () => { if (S.hover !== null) { S.hover = null; draw(); } };
+  $('cardlist').onclick = (e) => {
+    const b = e.target.closest('button.del'); if (!b) return;
+    const i = +b.dataset.i;
+    if (i >= 0 && i < S.cards.length) { S.cards.splice(i, 1); S.hover = null; persist(); render(); }
+  };
+  $('train').onclick = (e) => { train(); e.target.blur(); };
+  $('runbtn').onclick = (e) => { S.running ? stopRun() : startRun(); e.target.blur(); };
+  $('stepbtn').onclick = (e) => { stopRun(); if (S.ep.over) newEpisode(S.startIdx); cloneTick(); e.target.blur(); };
+  $('retry').onclick = (e) => { newEpisode(S.startIdx); e.target.blur(); };
+  $('next').onclick = (e) => { newEpisode(S.startIdx + 1); e.target.blur(); };
+  $('clear').onclick = (e) => { if (S.cards.length && !confirm('Delete all ' + S.cards.length + ' cards?')) return; S.cards = []; S.policy = null; S.walkCount = 0; persist(); render(); e.target.blur(); };
+  $('clearhist').onclick = (e) => { S.hist = []; render(); e.target.blur(); };
+  $('sample').onclick = (e) => {
+    map().starts.forEach((_, i) => { const w = ++S.walkCount; GW.expertCards(map(), i).forEach(c => S.cards.push(Object.assign(c, { walk: w, room: map().name, start: i + 1 }))); });
+    persist(); say('Added scripted expert cards for every start of this room.'); render(); e.target.blur();
+  };
+  $('dl').onclick = (e) => {
+    const blob = new Blob([JSON.stringify(S.cards)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'navigator-cards.json'; a.click();
+    e.target.blur();
+  };
+  $('ld').onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const data = JSON.parse(r.result);
+        const ok = Array.isArray(data) ? data.filter(validCard) : [];
+        const off = S.walkCount;
+        ok.forEach(c => { if (c.walk) { c.walk = +c.walk + off; S.walkCount = Math.max(S.walkCount, c.walk); } });
+        S.cards = S.cards.concat(ok); persist();
+        say('Loaded ' + ok.length + ' cards.', 'ok'); render();
+      } catch (err) { say('That file is not a card file.', 'warn'); }
+      e.target.value = '';
+    };
+    r.readAsText(f);
+  };
+
+  window.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+    const k = e.key.toLowerCase();
+    const map2 = { arrowup: 'F', w: 'F', arrowleft: 'L', a: 'L', arrowright: 'R', d: 'R' };
+    if (k in map2) {
+      e.preventDefault();
+      if (S.ep.over) return;
+      if (S.mode === 'demo') act(map2[k], 'expert');
+      else act(map2[k], $('dagger').checked ? 'dagger' : 'manual');
+    } else if (k === 'enter') {
+      if (tag === 'button') return;
+      e.preventDefault();
+      if (S.ep.over) newEpisode(S.startIdx + 1);
+    } else if (k === ' ') {
+      if (tag === 'button') return;
+      e.preventDefault();
+      // Run tab: start the clone (from the start spot, or again from the same start after an attempt ended); pause or resume if it is mid-run
+      if (S.mode === 'run') { S.running ? stopRun() : startRun(); }
+    }
+  });
+
+  window.__S = S; window.__act = act;   // for the automated page test
+  newEpisode(0);
+})();
+</script>
+</body>
+</html>

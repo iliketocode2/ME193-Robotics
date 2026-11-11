@@ -1,0 +1,112 @@
+<!doctype html><meta charset="utf-8"><pre id="out">running</pre>
+<script src="../logic.js"></script>
+<iframe id="f" src="../index.html" width="1100" height="900"></iframe>
+<script>
+const out=[]; let fails=0,n=0;
+const check=(name,c)=>{n++; if(!c){fails++; out.push('FAIL '+name);}};
+function key(w,k){ w.dispatchEvent(new w.KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true})); }
+const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+document.getElementById('f').onload = async () => {
+  try {
+    const w = document.getElementById('f').contentWindow, d = w.document, S = w.__S;
+    check('page loaded with no cards', S.cards.length === 0);
+    check('three maps in the dropdown', d.getElementById('map').options.length === 3);
+    // demonstrate in the open room: forward x2 records two cards and moves
+    key(w,'ArrowUp'); key(w,'ArrowUp');
+    check('two key presses = two cards', S.cards.length === 2);
+    check('cards say expert ink', S.cards.every(c => c.src === 'expert'));
+    check('robot moved right two cells', S.ep.s.x === 3 && S.ep.s.y === 1);
+    check('sensor panel shows readings', d.getElementById('sensors').textContent.indexOf('Front') >= 0);
+    check('first two cards are the same walk', S.cards[0].walk === 1 && S.cards[1].walk === 1);
+    check('cards remember the room and start', S.cards[0].room === 'Open room' && S.cards[0].start === 1);
+    d.getElementById('retry').click(); key(w,'ArrowUp');
+    check('a new attempt is a new walk', S.cards[2].walk === 2);
+    const nPre = S.cards.length;
+    // add the scripted expert cards (instructor button), train, run
+    d.getElementById('sample').click();
+    check('scripted cards added', S.cards.length > 10);
+    const sw = S.cards.slice(nPre).map(c => c.walk);
+    check('scripted cards: one new walk per start', new Set(sw).size === 2 && Math.min(...sw) === 3);
+    check('From column shows the walk', d.querySelector('#cardlist tbody').textContent.indexOf('Walk 3') >= 0);
+    d.getElementById('tab-run').click();
+    check('run tab shows run controls', d.getElementById('runBox').style.display !== 'none');
+    d.getElementById('runbtn').click();   // before training: must refuse
+    check('refuses to run untrained', S.running === false);
+    d.getElementById('train').click();
+    check('policy trained', !!S.policy && S.policy.nCards === S.cards.length);
+    d.getElementById('speed').value = 10; d.getElementById('speed').dispatchEvent(new w.Event('input'));
+    d.getElementById('runbtn').click();
+    for (let i = 0; i < 60 && !S.ep.over; i++) await sleep(100);
+    check('clone attempt ended', S.ep.over);
+    check('an attempt was logged', S.hist.length >= 1 && S.hist[S.hist.length-1].who === 'clone');
+    // keys: Space runs again from the same start after an attempt ended; Enter moves to the next start
+    const si = S.ep.startIdx, nStarts = S.ep.over ? GW.MAPS[S.mapIdx].starts.length : 0;
+    key(w,'Enter');
+    check('Enter after the end goes to the next start', S.ep.startIdx === (si + 1) % nStarts && S.ep.steps === 0 && !S.ep.over);
+    key(w,'Enter');
+    check('Enter mid-attempt does nothing', S.ep.startIdx === (si + 1) % nStarts);
+    const si2 = S.ep.startIdx;
+    key(w,' ');
+    check('Space at the start space starts a run', S.running === true && S.ep.startIdx === si2);
+    key(w,' ');
+    check('Space mid-run pauses', S.running === false);
+    key(w,' ');
+    check('Space resumes', S.running === true);
+    for (let i = 0; i < 80 && !S.ep.over; i++) await sleep(100);
+    check('that run ended', S.ep.over);
+    key(w,' ');
+    check('Space at the end runs again from the same start', S.ep.startIdx === si2 && S.ep.steps <= 1 && S.running === true);
+    for (let i = 0; i < 80 && !S.ep.over; i++) await sleep(100);
+    check('rerun ended', S.ep.over);
+    d.getElementById('tab-demo').click();
+    key(w,' ');
+    check('Space does nothing on the Demonstrate tab', S.running === false && S.ep.steps === 0);
+    d.getElementById('tab-run').click();
+    // take over during a run: dagger card is recorded with orange ink
+    d.getElementById('retry').click();
+    const before = S.cards.length;
+    key(w,'ArrowUp');
+    check('takeover adds a dagger card', S.cards.length === before + 1 && S.cards[S.cards.length-1].src === 'dagger');
+    check('stale banner after a new card', d.getElementById('stale').style.display === 'block');
+    d.getElementById('dagger').click();   // untick: takeover without recording
+    key(w,'ArrowUp');
+    check('takeover with box off adds no card', S.cards.length === before + 1);
+    // hover a card: the map is told which card, and clearing works
+    const row = d.querySelector('#cardlist tbody tr[data-i]');
+    row.dispatchEvent(new w.MouseEvent('mouseover', { bubbles: true }));
+    check('hover remembers the card', S.hover === +row.dataset.i);
+    check('cards carry step and position', S.cards[0].step === 1 && S.cards[0].pos && S.cards[0].pos.x === 1);
+    check('From column shows the step', d.querySelector('#cardlist tbody').textContent.indexOf('step') >= 0);
+    d.getElementById('cardlist').dispatchEvent(new w.MouseEvent('mouseleave'));
+    check('hover clears', S.hover === null);
+    // delete one card with its x: it disappears, the others stay, and the table is marked out of date
+    d.getElementById('train').click();
+    check('trained again', S.policy.rev === S.rev && d.getElementById('stale').style.display === 'none');
+    const nBefore = S.cards.length, victim = S.cards[0];
+    const xs = d.querySelectorAll('#cardlist button.del');
+    check('one x per card', xs.length === nBefore);
+    d.querySelector('#cardlist button.del[data-i="0"]').click();
+    check('x removes exactly that card', S.cards.length === nBefore - 1 && S.cards[0] !== victim);
+    check('delete marks the table out of date', d.getElementById('stale').style.display === 'block');
+    key(w,'ArrowUp'); d.getElementById('retry').click();
+    d.getElementById('train').click();
+    check('retrain clears the warning', d.getElementById('stale').style.display === 'none');
+    check('train button is inside the cards panel', d.getElementById('train').closest('.panel').textContent.indexOf('THE CARDS') >= 0 || d.getElementById('train').closest('.panel').querySelector('h2').textContent.toLowerCase().indexOf('cards') >= 0);
+    // goal sensor toggle gives 32 rows
+    d.getElementById('useGoal').click();
+    check('32 rows with goal sensor', d.querySelectorAll('#tbl tbody tr').length === 32);
+    d.getElementById('useGoal').click();
+    check('8 rows without', d.querySelectorAll('#tbl tbody tr').length === 8);
+    // switching rooms keeps the cards
+    const keep = S.cards.length;
+    const m = d.getElementById('map'); m.value = '1'; m.dispatchEvent(new w.Event('change'));
+    check('cards kept across rooms', S.cards.length === keep && keep > 0);
+    check('canvas resized to the classroom', d.getElementById('cv').width === 14 * 40);
+    // clear
+    w.confirm = () => true;
+    d.getElementById('clear').click();
+    check('clear empties cards', S.cards.length === 0);
+  } catch (e) { fails++; out.push('EXCEPTION ' + e.stack); }
+  document.getElementById('out').textContent = (fails ? 'FAILED ' + fails : 'ALL PASSED') + ' (' + n + ' checks)\n' + out.join('\n');
+};
+</script>

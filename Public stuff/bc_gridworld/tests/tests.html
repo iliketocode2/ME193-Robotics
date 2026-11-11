@@ -1,0 +1,76 @@
+<!doctype html><meta charset="utf-8"><title>tests</title><pre id="out">running</pre>
+<script src="../logic.js"></script>
+<script>
+const out = []; let fails = 0, n = 0;
+function check(name, cond) { n++; if (!cond) { fails++; out.push('FAIL ' + name); } }
+function eq(name, a, b) { check(name + ' (got ' + JSON.stringify(a) + ', want ' + JSON.stringify(b) + ')', JSON.stringify(a) === JSON.stringify(b)); }
+try {
+  const open = GW.MAPS[0];
+  // maps parse, have starts and a goal, and every start can reach the goal
+  GW.MAPS.forEach(m => {
+    check(m.name + ' has a goal', !!m.goal);
+    check(m.name + ' has starts', m.starts.length >= 1);
+    m.starts.forEach((s, i) => {
+      const ep = GW.newEpisode(m, i);
+      let guard = 0;
+      while (!ep.over && guard++ < 400) GW.advance(ep, m, GW.expertAction(m, ep.s));
+      check(m.name + ' start ' + i + ' scripted expert reaches goal', ep.outcome === 'goal');
+    });
+  });
+  // sensing: open room start (1,1) facing right: front free, left (up) wall, right (down) free
+  let s = { x: 1, y: 1, h: 1 };
+  eq('sense at start', GW.sense(open, s), { F: 0, L: 1, R: 0, G: 'A' });
+  // facing up at (1,1): front wall
+  eq('sense facing wall', GW.sense(open, { x: 1, y: 1, h: 0 }).F, 1);
+  // step: forward, bump, turn+step
+  eq('forward moves', GW.step(open, s, 'F').s, { x: 2, y: 1, h: 1 });
+  eq('bump keeps place', GW.step(open, { x: 1, y: 1, h: 0 }, 'F'), { s: { x: 1, y: 1, h: 0 }, bumped: true });
+  eq('turn right steps down', GW.step(open, s, 'R').s, { x: 1, y: 2, h: 2 });
+  eq('turn left into wall bumps but turns', GW.step(open, s, 'L'), { s: { x: 1, y: 1, h: 0 }, bumped: true });
+  // bearing: goal is at (8,5); from (1,1) facing right it is ahead; facing down it is to the left
+  eq('bearing ahead', GW.bearing(open, { x: 1, y: 1, h: 1 }), 'A');
+  eq('bearing left when facing down', GW.bearing(open, { x: 1, y: 1, h: 2 }), 'L');
+  eq('bearing behind', GW.bearing(open, { x: 5, y: 5, h: 3 }), 'B');
+  eq('bearing right when facing up', GW.bearing(open, { x: 1, y: 5, h: 0 }), 'R');
+  // key and enumeration
+  eq('key no goal', GW.key({ F: 1, L: 0, R: 1, G: 'B' }, false), 'F1 L0 R1');
+  eq('key goal', GW.key({ F: 1, L: 0, R: 1, G: 'B' }, true), 'F1 L0 R1 GB');
+  eq('8 readings', GW.allObs(false).length, 8);
+  eq('32 readings', GW.allObs(true).length, 32);
+  // table: majority, tie -> most recent, conflict flag
+  const o = { F: 1, L: 0, R: 0, G: 'A' };
+  let cards = [{ obs: o, action: 'L', src: 'expert' }, { obs: o, action: 'L', src: 'expert' }, { obs: o, action: 'R', src: 'expert' }];
+  let t = GW.buildTable(cards, false).get('F1 L0 R0');
+  eq('majority', t.action, 'L'); check('conflict flagged', t.conflict === true);
+  cards.push({ obs: o, action: 'R', src: 'dagger' });
+  t = GW.buildTable(cards, false).get('F1 L0 R0');
+  eq('tie goes to most recent', t.action, 'R');
+  eq('ink counts', t.ink.R, { expert: 1, dagger: 1 });
+  check('no conflict when unanimous', GW.buildTable([cards[0], cards[1]], false).get('F1 L0 R0').conflict === false);
+  // goal bearing splits a reading in two when it is part of the key
+  const t2 = GW.buildTable([{ obs: { F: 1, L: 0, R: 0, G: 'L' }, action: 'L', src: 'expert' }, { obs: { F: 1, L: 0, R: 0, G: 'R' }, action: 'R', src: 'expert' }], true);
+  eq('goal resolves the conflict', [t2.get('F1 L0 R0 GL').action, t2.get('F1 L0 R0 GR').action], ['L', 'R']);
+  // decide: known, unseen with nearest, unseen with forward, empty table
+  const pol = GW.makePolicy([{ obs: { F: 0, L: 0, R: 0, G: 'A' }, action: 'F', src: 'expert' }, { obs: { F: 1, L: 0, R: 0, G: 'A' }, action: 'R', src: 'expert' }], false, 'nearest');
+  eq('known reading', GW.decide(pol, { F: 1, L: 0, R: 0, G: 'A' }).action, 'R');
+  const u = GW.decide(pol, { F: 1, L: 1, R: 0, G: 'A' });
+  check('unseen is flagged', u.known === false); eq('nearest fallback copies the closest card', u.action, 'R');
+  eq('forward fallback', GW.decide(Object.assign({}, pol, { fallback: 'forward' }), { F: 1, L: 1, R: 1, G: 'A' }).action, 'F');
+  eq('empty table goes forward', GW.decide(GW.makePolicy([], false), { F: 1, L: 0, R: 0, G: 'A' }).action, 'F');
+  // loop and timeout detection
+  const ep = GW.newEpisode(open, 0);
+  for (let i = 0; i < 40 && !ep.over; i++) GW.advance(ep, open, 'F', { detectLoops: true });  // drives into the far wall and stays there
+  eq('pushing on a wall is called looping', ep.outcome, 'looping');
+  const ep2 = GW.newEpisode(open, 0);
+  for (let i = 0; i < 400 && !ep2.over; i++) GW.advance(ep2, open, 'F', { maxSteps: 5 });
+  check('a wall-hugging run ends', ep2.over);
+  // cloning end to end: demonstrations from every start of the open room, then run the clone
+  const demo = []; open.starts.forEach((_, i) => GW.expertCards(open, i).forEach(c => demo.push(c)));
+  check('expert cards recorded', demo.length > 5);
+  const clone = GW.makePolicy(demo, true, 'nearest');
+  open.starts.forEach((_, i) => { const r = GW.runPolicy(open, i, clone); check('clone finishes (ends) start ' + i + ': ' + r.outcome, r.over); });
+  const empty = GW.runPolicy(open, 0, GW.makePolicy([], false));
+  check('an untrained policy does not reach the goal', empty.outcome !== 'goal');
+} catch (e) { fails++; out.push('EXCEPTION ' + e.stack); }
+document.getElementById('out').textContent = (fails ? 'FAILED ' + fails : 'ALL PASSED') + ' (' + n + ' checks)\n' + out.join('\n');
+</script>
