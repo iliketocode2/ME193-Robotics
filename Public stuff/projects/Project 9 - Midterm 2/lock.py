@@ -5,8 +5,8 @@
     python lock.py --hide       hide the network's live reading, as on the real lock
 
 Keys: SPACE or b is the button, q or ESC quits.
-The three white dots are the digit LEDs and the large dot is the status LED (yellow listening, green open,
-red wrong or locked out). Every event is added to results/lock_log.csv with its time. The digits themselves are
+The dots along the bottom match the LEDs on the box: three yellow digit LEDs (the next one blinks while the lock
+is listening), then green for open and red for a wrong code (blinking during the lockout). Every event is added to results/lock_log.csv with its time. The digits themselves are
 never written down.
 """
 
@@ -44,20 +44,22 @@ def draw(frame, policy, count, conf, now, hide):
         text(view, "UNLOCKED", (w // 2 - 150, h // 2), 2.0, (255, 255, 255), 4)
 
     x, y, side = camera.crop_box(frame)
-    cv2.rectangle(view, (x, y), (x + side, y + side), BGR[leds["status"]] if leds["status"] != "off" else
-                  (200, 200, 200), 2)
+    listening = policy.state in (CLEAR, READ)
+    box_color = BGR["yellow"] if listening else BGR[leds["status"]] if leds["status"] != "off" else (200, 200, 200)
+    cv2.rectangle(view, (x, y), (x + side, y + side), box_color, 2)
 
-    # The LED panel along the bottom.
+    # The LED panel along the bottom, laid out like the front of the box.
     cv2.rectangle(view, (0, h - 70), (w, h), (30, 30, 30), -1)
     for i, lit in enumerate(leds["digits"]):
-        cv2.circle(view, (40 + i * 50, h - 35), 16, (255, 255, 255) if lit else (70, 70, 70), -1)
-    cv2.circle(view, (w - 45, h - 35), 24, BGR[leds["status"]], -1)
-    text(view, policy.message, (200, h - 28), 0.6)
+        cv2.circle(view, (30 + i * 40, h - 35), 13, BGR["yellow"] if lit else BGR["off"], -1)
+    cv2.circle(view, (w - 75, h - 35), 13, BGR["green"] if leds["status"] == "green" else BGR["off"], -1)
+    cv2.circle(view, (w - 40, h - 35), 13, BGR["red"] if leds["status"] == "red" else BGR["off"], -1)
+    text(view, policy.message, (155, h - 28), 0.6)
 
     # The hold bar shows how close the current reading is to being accepted.
-    if policy.state in (CLEAR, READ):
+    if listening:
         p = policy.progress(now)
-        cv2.rectangle(view, (200, h - 18), (200 + int(p * (w - 290)), h - 10), BGR["yellow"], -1)
+        cv2.rectangle(view, (155, h - 18), (155 + int(p * (w - 260)), h - 10), BGR["yellow"], -1)
 
     left = policy.time_left(now)
     if left is not None:

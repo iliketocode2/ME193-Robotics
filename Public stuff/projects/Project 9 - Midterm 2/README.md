@@ -9,9 +9,10 @@ the computer first, with a USB webcam, and then on the Arduino UNO Q.
 1. [Part 1: fitting the V data](#part-1-fitting-the-v-data)
 2. [Part 2: the finger-counting network](#part-2-the-finger-counting-network)
 3. [Part 3: the lock policy](#part-3-the-lock-policy)
-4. [Running it](#running-it)
-5. [Collecting good data](#collecting-good-data)
-6. [Files](#files)
+4. [Part 4: the box, latch and circuit](#part-4-the-box-latch-and-circuit)
+5. [Running it](#running-it)
+6. [Collecting good data](#collecting-good-data)
+7. [Files](#files)
 
 ## Part 1: fitting the V data
 
@@ -74,9 +75,68 @@ wrong. The right code opens the latch for 5 seconds and then it locks itself. A 
 Three wrong codes in a row start a 30 second lockout during which the button does nothing. Ten seconds without a
 new digit cancels the attempt, and pressing the button mid-attempt cancels it too.
 
-`lock.py` runs the policy with the webcam. SPACE stands in for the button, three white dots stand in for the digit
-LEDs and a large dot is the status LED. Each event goes into `results/lock_log.csv` with its time, which gives
+`lock.py` runs the policy with the webcam. SPACE stands in for the button, and the dots along the bottom match
+the LEDs on the box: three yellow digit LEDs (the next one blinks while the lock is listening), a green LED for
+open and a red one for a wrong code, which blinks during the lockout. Each event goes into `results/lock_log.csv` with its time, which gives
 the time taken to unlock. The digits are never logged.
+
+## Part 4: the box, latch and circuit
+
+`hardware/make_parts.py` writes every laser-cut part as a DXF in millimeters, for 3 mm plywood. The red CUT layer
+is cut through and the blue ENGRAVE layer is a light score line. `hardware/dxf/box_sheet_*.dxf` and
+`stand_sheet_*.dxf` have the parts packed onto 300 x 300 mm sheets, and `hardware/dxf/parts/` has each part on its
+own. All sizes are settings at the top of the script.
+
+The box is 127 x 127 mm (5 x 5 in) and 108 mm tall with the lid, with finger joints on every outside edge. The lid
+is the door, hinged along the back edge with two small hinges or a strip of cloth glued across the seam. Inside:
+
+- The front-right corner is a closed tower for the motor. The gearmotor hangs upside down from a shelf, with its
+  shaft poking up through the shelf.
+- A two-layer plywood arm on the shaft is the latch. A catch plate hangs from the lid with a window in it. When the
+  arm turns to point at the front, its tip goes through the window, and the lid can't lift. When it turns to point
+  left, the window is free.
+- Two small limit switches on the shelf tell the board when to stop the motor. The arm's tail presses one when it
+  is locked, and the arm presses the other when it is open. Glue each switch to its spacer where the engraved
+  outline is, after checking it clicks at the right spot with the arm in place.
+- The UNO Q, the motor driver and the USB-C hub sit on the floor under a removable false floor, which rests on
+  six small cleats 35 mm up. Above it is the storage space. The back panel of the motor tower is held only by its
+  floor tabs, so you can lift it out when the false floor is out.
+- The LEDs and the button go through the front face, inside the tower. Cables come in through a hole in the back
+  (power) and the left side (webcam).
+
+![Latch from above](hardware/preview/latch_top.png)
+
+The camera stand is a 200 x 220 mm base, a hollow 30 mm square column and an arm with a gusset. The webcam lens
+ends up 254 mm (10 in) above the base, looking straight down at the engraved cross. A plain background matters a
+lot, so cover the base with matte paper. The network was trained on photos from a different angle, so after the
+stand is built, collect a new set of photos from it and retrain.
+
+The circuit (`hardware/wiring.py` draws it):
+
+![Wiring](hardware/preview/wiring.png)
+
+| UNO Q pin | Goes to | Notes |
+| --- | --- | --- |
+| D9 (PWM) | HW-095 ENA | remove the ENA jumper; PWM sets the motor speed |
+| D7, D8 | HW-095 IN1, IN2 | one high and one low picks the direction; both low stops |
+| D2 | locked limit switch | switch between the pin and GND, internal pull-up |
+| D4 | open limit switch | same |
+| D12 | push button | same |
+| D3, D5, D6 | yellow digit LEDs | each through a 150 ohm resistor, short leg to GND |
+| D10, D11 | green and red LEDs | same |
+| GND | HW-095 GND | the UNO Q and the 12 V supply must share ground |
+
+The UNO Q's header pins run at 3.3 V. The L298N on the HW-095 counts anything above 2.3 V as high, so the pins
+can drive it directly. The 12 V supply goes to the HW-095's 12V and GND terminals, and the motor to OUT1 and OUT2.
+The driver loses about 2 V, so the motor gets about 10 V. Keep the HW-095's 5V-EN jumper on so it powers its own
+logic, and leave its 5V terminal unconnected, because its regulator cannot supply the UNO Q. The UNO Q gets power
+through a USB-C hub with power delivery, which also takes the webcam. The board code should stop the motor if a
+limit switch has not clicked within about 1.5 seconds, so a missed switch can't stall the motor against the stop.
+
+Before cutting, measure your motor and plywood with calipers, update the settings in `make_parts.py`, and run it
+again. The motor numbers are a best guess for a 37 mm gearmotor with an off-center shaft: gearbox length 70 mm
+or less, a 12 mm boss, a 6 mm D-shaft, and six M3 holes on a 31 mm circle. Cutting the shelf from cardboard
+first is a cheap way to check the screw holes line up.
 
 ## Running it
 
@@ -128,4 +188,6 @@ python lock.py --hide           # the lock without the live reading on screen
 | `live.py` | live finger count with probabilities and feature maps |
 | `lock_policy.py` | the lock's rules: digit acceptance, code check, timeout, lockout |
 | `lock.py` | the lock on the computer, with on-screen LEDs and an event log |
+| `hardware/make_parts.py` | writes the laser-cut DXFs and preview images for the box and camera stand |
+| `hardware/wiring.py` | draws the wiring diagram |
 | `v_fit/` | Part 1, the V-data gradient-descent spreadsheet |

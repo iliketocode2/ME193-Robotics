@@ -98,20 +98,20 @@ class LockPolicy:
     def leds(self, now):
         """What the lights should show.
 
-        digits: three booleans, one per accepted digit.
-        status: "off" (locked and idle), "yellow" (listening), "green" (open) or "red" (wrong code or lockout).
-        The red light blinks during the lockout.
+        These match the LEDs on the front of the box: three yellow digit LEDs, one green and one red.
+        digits: three booleans. While listening, the accepted digits are lit and the next one blinks.
+        status: "off", "green" (open) or "red" (wrong code; it blinks during the lockout).
         """
-        digits = [i < len(self.entered) for i in range(3)]
+        blink_on = int((now - self.state_since) * 4) % 2 == 0     # 2 blinks per second
         if self.state == OPEN:
             return {"digits": [True] * 3, "status": "green"}
         if self.state == WRONG:
             return {"digits": [True] * 3, "status": "red"}
         if self.state == LOCKOUT:
-            blink_on = int((now - self.state_since) * 2) % 2 == 0
             return {"digits": [False] * 3, "status": "red" if blink_on else "off"}
         if self.state in (CLEAR, READ):
-            return {"digits": digits, "status": "yellow"}
+            n = len(self.entered)
+            return {"digits": [i < n or (i == n and blink_on) for i in range(3)], "status": "off"}
         return {"digits": [False] * 3, "status": "off"}
 
     @property
