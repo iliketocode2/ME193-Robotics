@@ -10,9 +10,10 @@ the computer first, with a USB webcam, and then on the Arduino UNO Q.
 2. [Part 2: the finger-counting network](#part-2-the-finger-counting-network)
 3. [Part 3: the lock policy](#part-3-the-lock-policy)
 4. [Part 4: the box, latch and circuit](#part-4-the-box-latch-and-circuit)
-5. [Running it](#running-it)
-6. [Collecting good data](#collecting-good-data)
-7. [Files](#files)
+5. [Part 5: the code on the UNO Q](#part-5-the-code-on-the-uno-q)
+6. [Running it](#running-it)
+7. [Collecting good data](#collecting-good-data)
+8. [Files](#files)
 
 ## Part 1: fitting the V data
 
@@ -138,6 +139,30 @@ again. The motor numbers are a best guess for a 37 mm gearmotor with an off-cent
 or less, a 12 mm boss, a 6 mm D-shaft, and six M3 holes on a 31 mm circle. Cutting the shelf from cardboard
 first is a cheap way to check the screw holes line up.
 
+## Part 5: the code on the UNO Q
+
+The UNO Q has two processors. `uno_q/finger_lock/` is an Arduino App Lab app with a part for each:
+
+- `python/main.py` runs on the Linux side. It reads the webcam, runs the numpy network, and feeds the readings
+  and button presses to `lock_policy.py`, the same file the computer uses.
+- `sketch/sketch.ino` runs on the microcontroller. It reads the button, lights the LEDs it is told to, and drives
+  the motor until a limit switch clicks, stopping it if no switch clicks within 1.5 seconds.
+
+The two talk over the Bridge: the sketch sends `button` and `latch`, and Python calls `set_leds` and `set_latch`.
+`python uno_q/sync_app.py` copies the shared files and the trained weights into the app, and with
+`--host <board IP>` it also copies the app to the board over SSH and starts it.
+
+To see what the board sees, open `http://<board IP>:8000` in a browser on the same Wi-Fi. `python/viewer.py`
+streams the camera with the reading, the lock state, the latch position, the LEDs and the 64 x 64 image the
+network gets drawn on top. It only encodes frames while the page is open.
+
+On the box the latch stays open until the button is pressed, because locking with the lid still up would leave
+the arm in the catch's way. `RELOCK_AFTER_S` in `main.py` brings back the timed relock.
+
+The sketch has two checks that work without the Python side. Every LED lights in turn at power-up, and the yellow
+LEDs chase back and forth until Python starts talking. Holding the button while the board powers up opens the
+latch and locks it again. A fast red flicker means a limit switch did not click in time.
+
 ## Running it
 
 ```bash
@@ -190,4 +215,6 @@ python lock.py --hide           # the lock without the live reading on screen
 | `lock.py` | the lock on the computer, with on-screen LEDs and an event log |
 | `hardware/make_parts.py` | writes the laser-cut DXFs and preview images for the box and camera stand |
 | `hardware/wiring.py` | draws the wiring diagram |
+| `uno_q/finger_lock/` | the App Lab app for the UNO Q: `python/main.py` and `sketch/sketch.ino` |
+| `uno_q/sync_app.py` | copies the shared files and weights into the app, and can send it to the board |
 | `v_fit/` | Part 1, the V-data gradient-descent spreadsheet |

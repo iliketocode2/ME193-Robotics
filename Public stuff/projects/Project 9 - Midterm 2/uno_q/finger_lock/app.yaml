@@ -1,0 +1,5 @@
+name: Finger Lock
+icon: 🔒
+description: Shows three finger counts to the webcam to open the box. FingerNet runs in numpy on the Linux side, and the sketch drives the LEDs, the button and the latch motor.
+ports: [8000]
+bricks: []
