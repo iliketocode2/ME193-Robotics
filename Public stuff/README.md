@@ -2,7 +2,7 @@
 
 ### 👉 Click here to try it
 
-- [Q-Learning Visualizer](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/QLearn/) — train a robot with Q-learning
+- [Q-Learning Visualizer](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/QLearn/) — train a robot with Q-learning, in the browser or with the Python Q-table and neural-net dashboards
 - [Reward Lab](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/reward-lab/) — design a reward and watch where a robot gets stuck
 - [AnnaCode Builder](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/AnnaCode/) — neural networks on LEGO hardware
 - [Kernels](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/Kernels/) — explore image convolution
@@ -47,7 +47,9 @@ subset of the class repo that's meant to be shared.
 - [QLearn/](QLearn/) — a browser-based Q-learning visualizer (PyScript +
   Web Bluetooth): train a LEGO Education robot on Silly Walk, Line Follower
   and Maze Solver tasks while watching the Q-table update live. Needs
-  Chrome or Edge; no install.
+  Chrome or Edge; no install. The same page also offers two Python desktop
+  versions of the Silly Walk task, each with a live dashboard: a Q-table one
+  (`PascalQTable.py`) and a neural-network (DQN) one (`PascalNN.py`).
   [Open it online](https://chrisbuerginrogers.github.io/ME193-Robotics/Public%20stuff/QLearn/).
   Imported from
   [ceeoinnovations/FETLab-Summer-2026](https://github.com/ceeoinnovations/FETLab-Summer-2026/tree/main/QLearn-NewActivities-PyScript).

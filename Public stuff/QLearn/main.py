@@ -221,7 +221,7 @@ def _rebuild_direction_mapping():
 _rebuild_direction_mapping()
 
 # Names for each state, keyed by how many states are currently active (3 or 5).
-# Must mirror STATE_CONFIGS.names in index.html.
+# Must mirror STATE_CONFIGS.names in app.html.
 STATE_NAMES = {
     3: ['Drifted Left', 'Straight', 'Drifted Right'],
     5: ['Hard Left', 'Soft Left', 'Straight', 'Soft Right', 'Hard Right'],
@@ -370,7 +370,7 @@ def _on_manual_action_event(event):
         return
     asyncio.ensure_future(_manual_action_run(action_name))
 
-# Settings sliders take effect immediately: index.html fires 'settings-changed'
+# Settings sliders take effect immediately: app.html fires 'settings-changed'
 # on every input, and we re-read the settings of whichever tab is showing.
 def _on_settings_changed(event):
     if _is_maze_page_active():
