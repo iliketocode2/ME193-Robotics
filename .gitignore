@@ -1,4 +1,4 @@
-# This repo only syncs the "Public stuff" folder and the "CLAUDE.md" file and the ".claude" folder.
+# This repo only syncs the "Public stuff" and "Kat-Projects" folders, the "CLAUDE.md" file and the ".claude" folder.
 # Everything else in this working directory is ignored on purpose.
 *
 !.gitignore
@@ -8,6 +8,11 @@
 !.claude/
 !.claude/**
 !CLAUDE.md
+!Kat-Projects/
+!Kat-Projects/**
+
+# Local venv, ignored even inside "Kat-Projects"
+Kat-Projects/MQTT/
 
 # OS / editor junk files, ignored even inside "Public stuff"
 **/.DS_Store
@@ -23,3 +28,7 @@
 **/__pycache__/
 **/*.pyc
 **/*.pyo
+
+# Throwaway venv created by virtualTesting/setup_test_env.py, ignored even
+# inside "Public stuff"
+Public stuff/virtualTesting/test/

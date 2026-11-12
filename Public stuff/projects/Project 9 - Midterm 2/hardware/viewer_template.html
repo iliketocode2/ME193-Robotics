@@ -1,0 +1,734 @@
+<title>Finger Lock Box Assembly</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a workshop bench. The model fills the stage on the left, the build sheet runs down the right. */
+:root {
+  --bg: #eceff1;
+  --panel: #fbfcfc;
+  --ink: #1d2428;
+  --muted: #5b6870;
+  --line: #d3dade;
+  --accent: #c8461f;        /* the laser's CUT-layer red */
+  --accent-soft: #f6e2da;
+  --scene: #e2e7ea;
+  --grid: #c9d1d6;
+  --edge: #4a3520;
+  --ok: #2f7d4f;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121618; --panel: #1a2023; --ink: #e5eaed; --muted: #95a3ab; --line: #2a3338;
+    --accent: #ff7348; --accent-soft: #3a2219; --scene: #182024; --grid: #2a353b; --edge: #1a0f06;
+    --ok: #5fc48a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121618; --panel: #1a2023; --ink: #e5eaed; --muted: #95a3ab; --line: #2a3338;
+  --accent: #ff7348; --accent-soft: #3a2219; --scene: #182024; --grid: #2a353b; --edge: #1a0f06;
+  --ok: #5fc48a; color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.5; }
+.app {
+  height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px;
+  padding-block: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 20px; }
+.top h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.top p { margin: 2px 0 0; color: var(--muted); max-width: 62ch; }
+.views { display: flex; flex-wrap: wrap; gap: 6px; }
+button, .chip {
+  font: 500 13px/1 var(--sans); color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 11px; cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 12px; }
+.stage { position: relative; min-height: 0; border-radius: 10px; overflow: hidden; background: var(--scene); border: 1px solid var(--line); }
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 5px; padding: 4px 8px; font-size: 12px; white-space: nowrap; transform: translate(12px, 12px);
+}
+.hint { position: absolute; left: 12px; bottom: 10px; font-size: 12px; color: var(--muted); pointer-events: none; }
+.fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); }
+.panel { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.eyebrow { font: 500 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.card h2 { font-size: 17px; font-weight: 600; margin: 0; text-wrap: balance; }
+.card h3 { font-size: 15px; font-weight: 600; margin: 0; }
+.card p { margin: 0; }
+.nav { display: flex; align-items: center; gap: 8px; }
+.nav .count { font: 500 12px var(--mono); color: var(--muted); margin-right: auto; font-variant-numeric: tabular-nums; }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: s; }
+ol.steps button {
+  width: 100%; text-align: left; border: 0; background: transparent; padding: 6px 8px; border-radius: 5px;
+  display: grid; grid-template-columns: 26px 1fr; gap: 4px; font: 400 13px/1.35 var(--sans); color: var(--muted);
+}
+ol.steps button .n { font: 500 12px/1.35 var(--mono); font-variant-numeric: tabular-nums; }
+ol.steps button:hover { background: var(--bg); color: var(--ink); }
+ol.steps button.done { color: var(--ink); }
+ol.steps button.on { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
+ol.steps button.on .n { color: var(--accent); }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.row label { font-weight: 500; min-width: 64px; }
+.row input[type="range"] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+.row output { font: 500 12px var(--mono); color: var(--muted); min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; }
+.msg { font-size: 13px; color: var(--muted); min-height: 2.8em; }
+.msg.locked { color: var(--accent); }
+.msg.open { color: var(--ok); }
+dl.specs { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
+dl.specs dt { color: var(--muted); }
+dl.specs dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.tag { align-self: flex-start; font: 500 11px/1 var(--mono); letter-spacing: 0.05em; padding: 4px 7px; border-radius: 4px; background: var(--bg); color: var(--muted); }
+.tag.cut { background: var(--accent-soft); color: var(--accent); }
+@media (max-width: 880px) {
+  .app { height: auto; }
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .stage { height: min(64vh, 540px); }
+  .panel { overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Finger-count lock box</h1>
+      <p>Every laser-cut piece from <span style="font-family:var(--mono)">make_parts.py</span>, in 3 mm plywood, assembled in order. Drag to turn, scroll or pinch to zoom, click any part.</p>
+    </div>
+    <div class="views" role="group" aria-label="Camera views">
+      <button id="v-box">Whole box</button>
+      <button id="v-latch">Latch close-up</button>
+      <button id="v-front">Front</button>
+      <button id="v-stand">Camera stand</button>
+      <button id="v-all">Everything</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="stage" id="stage">
+      <canvas id="c" aria-label="3D model of the lock box"></canvas>
+      <div class="tip" id="tip" hidden></div>
+      <div class="hint" id="hint">Highlighted in red: the parts added in this step</div>
+    </div>
+
+    <aside class="panel">
+      <section class="card" aria-live="polite">
+        <div class="nav">
+          <span class="count" id="count">Step 13 of 13</span>
+          <button id="prev" aria-label="Previous step">Back</button>
+          <button id="next" class="primary" aria-label="Next step">Next</button>
+        </div>
+        <h2 id="stepTitle">Finished lock</h2>
+        <p id="stepText"></p>
+        <ol class="steps" id="steps"></ol>
+      </section>
+
+      <section class="card">
+        <span class="eyebrow">Try it</span>
+        <div class="row">
+          <button id="latch" class="primary">Unlock latch</button>
+          <label class="check"><input type="checkbox" id="xray"> See through the walls</label>
+        </div>
+        <div class="row">
+          <label for="lid">Lid</label>
+          <input type="range" id="lid" min="0" max="100" value="0">
+          <output id="lidOut" for="lid">closed</output>
+        </div>
+        <p class="msg locked" id="latchMsg"></p>
+        <div class="row">
+          <label for="explode">Explode</label>
+          <input type="range" id="explode" min="0" max="100" value="0">
+          <output id="explodeOut" for="explode">0%</output>
+        </div>
+        <label class="check"><input type="checkbox" id="buy" checked> Show bought parts (motor, switches, boards, LEDs)</label>
+      </section>
+
+      <section class="card" id="info">
+        <span class="eyebrow">Selected part</span>
+        <h3 id="infoName">Nothing selected</h3>
+        <span class="tag" id="infoTag" hidden></span>
+        <p id="infoRole">Click a part in the model to see what it does and how it joins the others.</p>
+        <dl class="specs" id="infoSpecs" hidden></dl>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const DATA = /*PART_DATA*/null;
+
+const STEPS = [
+  { title: "Floor", keys: ["box_floor"], view: "box",
+    text: "Start with the floor. Fingers run along all four edges, and the corners are cut away so the walls own them. The four slots in the middle are for the tower partition and the tower back." },
+  { title: "Front wall, LEDs and button", keys: ["box_front", "buy_leds", "buy_button"], view: "front",
+    text: "Push the three yellow digit LEDs, the green and red LEDs and the 12 mm button through the front wall before it goes on. Then glue its bottom fingers into the floor." },
+  { title: "Left wall", keys: ["box_left"], view: "box",
+    text: "Its bottom fingers go into the floor and its front edge interlocks with the front wall. The 20 mm hole near the back is for the webcam cable." },
+  { title: "Tower partition", keys: ["box_partition"], view: "box",
+    text: "Two tabs drop into floor slots and two into the front wall. It walls off the motor tower in the front-right corner. The two slots near its top take the shelf." },
+  { title: "Motor and shelf (off the box)", keys: ["box_shelf", "buy_motor", "box_spacer_locked", "box_spacer_open", "box_arm", "buy_switches"], view: "latch",
+    text: "On the bench, screw the gearmotor to the underside of the shelf so its shaft comes up through the big hole. Glue the two switch spacers on the engraved outlines. Glue the two arm layers together on the D-shaft. Glue the switches down last, once you have checked where they click." },
+  { title: "Right wall and shelf together", keys: ["box_right"], view: "box",
+    text: "Fit the shelf's left tabs into the partition and its right tabs into the right wall, then glue the right wall to the floor and the front. The shelf can't go in once the right wall is glued." },
+  { title: "Tower back", keys: ["box_tower_back"], view: "box",
+    text: "Wire the motor, switches, LEDs and button first and pass the wires through the hole near the bottom. The tower back stands in two floor slots with no glue, so you can lift it out later." },
+  { title: "Back wall", keys: ["box_back"], view: "box",
+    text: "Closes the box. Its 20 mm hole lets the 12 V and USB-C power cables in." },
+  { title: "Cleats and electronics", keys: ["box_cleat", "buy_unoq", "buy_driver", "buy_hub"], view: "box",
+    text: "Glue the six cleats so their tops are 38 mm above the bottom of the box: two on the left wall, two on the back wall, one on the partition and one on the tower back. The UNO Q, the HW-095 and the USB-C hub sit on the floor below them." },
+  { title: "False floor", keys: ["box_false_floor"], view: "box",
+    text: "Drops onto the cleats and covers the electronics. The space above it is the storage. Lift it out by the finger hole." },
+  { title: "Lid and catch", keys: ["box_lid", "box_catch", "buy_hinges"], view: "latch",
+    text: "Glue the catch's two tabs into the slots in the lid, then hinge the lid along the back edge. When the lid shuts, the catch hangs just in front of the arm with its window at the arm's height." },
+  { title: "Camera stand", keys: ["stand_base", "stand_col_front", "stand_col_back", "stand_col_left", "stand_col_right", "stand_cam_arm", "stand_gusset", "buy_webcam"], view: "stand",
+    text: "Glue the four column pieces into the base slots, set the arm on top with its slots over the column tabs, and glue the gusset under the arm. The webcam hangs under the arm, 254 mm above the engraved cross." },
+  { title: "Finished lock", keys: [], view: "all",
+    text: "Everything in place. Press Unlock and the arm swings out of the catch window, so the lid slider opens all the way. Lock it again and the lid stops after about 1.5 mm." },
+];
+
+const ROLES = {
+  box_floor: ["Floor", "Finger joints on all four edges. Two slots hold the partition's tabs and two hold the tower back."],
+  box_front: ["Front wall", "Holds the five LEDs and the push button. Two slots take the partition's tabs."],
+  box_back: ["Back wall", "The 20 mm hole lets the 12 V and USB-C power cables in."],
+  box_left: ["Left wall", "Faces the camera stand. The 20 mm hole is for the webcam cable."],
+  box_right: ["Right wall", "Two slots hold the motor shelf's right tabs."],
+  box_partition: ["Tower partition", "Closes the left side of the motor tower. Tabs go into the floor and the front wall, and two slots take the shelf."],
+  box_tower_back: ["Tower back", "Stands in two floor slots without glue so it lifts out for repairs. The hole passes the wires from the tower to the electronics."],
+  box_shelf: ["Motor shelf", "The gearmotor hangs under it on M3 screws with its shaft through the large hole. Tabs go into the partition and the right wall. Engraved outlines mark the switch spots."],
+  box_spacer_locked: ["Switch spacer, locked", "Lifts the locked limit switch to the arm's height. The square pockets clear the motor screw heads below."],
+  box_spacer_open: ["Switch spacer, open", "Lifts the open limit switch to the arm's height. The pocket clears a motor screw head."],
+  box_arm: ["Latch arm", "Two layers glued together on the motor's D-shaft. Its tip goes through the catch window to lock. Its short tail presses the locked switch, and its side presses the open switch."],
+  box_catch: ["Lid catch", "Glued into the lid. When the arm points at the front, its tip sits in this window, and the window's bottom edge can't lift past it."],
+  box_lid: ["Lid", "The door. Hinged along the back edge. Two slots hold the catch."],
+  box_false_floor: ["False floor", "Covers the electronics and rests on the cleats. The finger hole lifts it out."],
+  box_cleat: ["Cleat", "A 30 x 8 mm block glued to a wall. Six of them hold up the false floor."],
+  stand_base: ["Stand base", "The engraved cross marks the spot under the lens. Cover it with plain matte paper for a clean background."],
+  stand_col_front: ["Column front", "Part of the hollow 30 mm column. A slot holds the gusset's back tab."],
+  stand_col_back: ["Column back", "Part of the hollow 30 mm column."],
+  stand_col_left: ["Column side", "Part of the hollow 30 mm column."],
+  stand_col_right: ["Column side", "Part of the hollow 30 mm column."],
+  stand_cam_arm: ["Camera arm", "Holds the webcam over the cross. Use the 6.5 mm hole for a 1/4 in tripod screw, or the two slots for a zip tie."],
+  stand_gusset: ["Arm gusset", "Triangle brace glued under the arm and against the column, so the arm doesn't sag."],
+  buy_motor: ["Gearmotor", "Geartisan ZGB37RG, 12 V. Driven forward and back by the HW-095. Its output shaft is off-center from the gearbox."],
+  buy_switches: ["Limit switches", "Two small microswitches. They tell the UNO Q when the arm has reached locked or open, so it can stop the motor."],
+  buy_leds: ["LEDs", "Three yellow digit LEDs, a green one for open and a red one for a wrong code. Each has a 150 ohm resistor."],
+  buy_button: ["Push button", "12 mm panel-mount momentary button. It starts an attempt."],
+  buy_unoq: ["Arduino UNO Q", "Runs the camera, the numpy network and the lock rules, and drives the pins."],
+  buy_driver: ["HW-095 motor driver", "L298N H-bridge. Takes 12 V and lets 3.3 V pins run the motor both ways."],
+  buy_hub: ["USB-C hub", "Powers the UNO Q from a 5 V 3 A adapter and connects the webcam."],
+  buy_hinges: ["Hinges", "Two small hinges, or a strip of cloth glued across the seam."],
+  buy_webcam: ["USB webcam", "Looks straight down at the cross. Its lens is 10 in (254 mm) above the base."],
+};
+
+const XRAY_KEYS = new Set(["box_front", "box_back", "box_left", "box_right", "box_lid", "box_false_floor", "box_tower_back"]);
+const STAND_OFFSET = [-240, -30, 0];
+const tok = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const $ = (id) => document.getElementById(id);
+const stage = $("stage"), canvas = $("c");
+
+function webglOK() {
+  try { const c = document.createElement("canvas"); return !!(window.WebGLRenderingContext && (c.getContext("webgl") || c.getContext("experimental-webgl"))); }
+  catch (e) { return false; }
+}
+if (!window.THREE || !THREE.OrbitControls || !webglOK()) {
+  const f = document.createElement("div");
+  f.className = "fallback";
+  f.textContent = "This browser could not start 3D graphics (WebGL). Try another browser, or open the preview images in hardware/preview/.";
+  stage.appendChild(f);
+  throw new Error("WebGL unavailable");
+}
+
+// Scene ----------------------------------------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, 1, 2, 5000);
+camera.up.set(0, 0, 1);
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f94, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+sun.position.set(-200, -300, 500);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0xffffff, 0.25);
+fill.position.set(300, 200, 150);
+scene.add(fill);
+
+let grid = null;
+const edgeMat = new THREE.LineBasicMaterial({ color: 0x4a3520, transparent: true, opacity: 0.55 });
+function applyTheme() {
+  scene.background = new THREE.Color(tok("--scene"));
+  edgeMat.color.set(tok("--edge"));
+  if (grid) scene.remove(grid);
+  grid = new THREE.GridHelper(900, 45, new THREE.Color(tok("--grid")), new THREE.Color(tok("--grid")));
+  grid.rotation.x = Math.PI / 2;
+  grid.position.set(-80, 80, -0.2);
+  scene.add(grid);
+  ACCENT.set(tok("--accent"));
+  items.forEach(refreshItem);
+}
+const ACCENT = new THREE.Color(0xc8461f);
+
+// Geometry -------------------------------------------------------------------------------------------------------
+const AX = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
+function frameMatrix(origin, ua, va) {
+  const na = 3 - ua - va;
+  const m = new THREE.Matrix4().makeBasis(AX[ua], AX[va], AX[na]);
+  m.setPosition(origin[0], origin[1], origin[2]);
+  return m;
+}
+function flipWinding(g) {
+  if (g.index) {
+    const a = g.index.array;
+    for (let i = 0; i < a.length; i += 3) { const t = a[i + 1]; a[i + 1] = a[i + 2]; a[i + 2] = t; }
+    g.index.needsUpdate = true;
+    return;
+  }
+  for (const name of ["position", "normal", "uv"]) {
+    const at = g.getAttribute(name);
+    if (!at) continue;
+    const s = at.itemSize, arr = at.array;
+    for (let i = 0; i < at.count; i += 3) {
+      for (let k = 0; k < s; k++) {
+        const i1 = (i + 1) * s + k, i2 = (i + 2) * s + k, t = arr[i1];
+        arr[i1] = arr[i2]; arr[i2] = t;
+      }
+    }
+    at.needsUpdate = true;
+  }
+}
+const geoCache = new Map();
+function plateGeometry(part, frame) {
+  let base = geoCache.get(part.key);
+  if (!base) {
+    const shape = new THREE.Shape(part.outer.map((p) => new THREE.Vector2(p[0], p[1])));
+    part.holes.forEach((h) => shape.holes.push(new THREE.Path(h.map((p) => new THREE.Vector2(p[0], p[1])))));
+    part.circles.forEach(([x, y, d]) => { const p = new THREE.Path(); p.absarc(x, y, d / 2, 0, Math.PI * 2, true); shape.holes.push(p); });
+    base = new THREE.ExtrudeGeometry(shape, { depth: DATA.T, bevelEnabled: false, curveSegments: 28 });
+    geoCache.set(part.key, base);
+  }
+  const g = base.clone();
+  const m = frameMatrix(frame[0], frame[1], frame[2]);
+  g.applyMatrix4(m);
+  if (m.determinant() < 0) flipWinding(g);
+  g.computeVertexNormals();
+  return g;
+}
+
+// Items: everything that can be shown, highlighted, exploded and clicked --------------------------------------------
+const items = [];
+const itemByKey = new Map();
+const pickables = [];
+
+function addItem(key, meshes, opts) {
+  let it = itemByKey.get(key);
+  if (!it) {
+    it = { key, meshes: [], step: -1, buy: key.startsWith("buy_"), part: opts.part || null, group: opts.group || "box", center: new THREE.Vector3() };
+    items.push(it); itemByKey.set(key, it);
+  }
+  meshes.forEach((mesh) => {
+    mesh.userData.item = it;
+    it.meshes.push(mesh);
+    pickables.push(mesh);
+  });
+  return it;
+}
+function plyMaterial() {
+  return new THREE.MeshStandardMaterial({ color: 0xd8b98d, roughness: 0.82, metalness: 0.0, side: THREE.DoubleSide });
+}
+function plateMesh(part, frame, parent) {
+  const g = plateGeometry(part, frame);
+  const mesh = new THREE.Mesh(g, plyMaterial());
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), edgeMat);
+  mesh.add(edges);
+  mesh.userData.baseColor = new THREE.Color(0xd8b98d);
+  parent.add(mesh);
+  return mesh;
+}
+
+const boxRoot = new THREE.Group();
+scene.add(boxRoot);
+const standRoot = new THREE.Group();
+standRoot.position.set(...STAND_OFFSET);
+scene.add(standRoot);
+
+// Lid hinge along the back top edge; the catch rides with the lid.
+const lidPivot = new THREE.Group();
+lidPivot.position.set(0, DATA.D, DATA.H);
+const lidInner = new THREE.Group();
+lidInner.position.set(0, -DATA.D, -DATA.H);
+lidPivot.add(lidInner);
+boxRoot.add(lidPivot);
+
+// Arm pivot on the motor shaft.
+const L = DATA.latch;
+const armPivot = new THREE.Group();
+armPivot.position.set(L.shaft[0], L.shaft[1], 0);
+boxRoot.add(armPivot);
+
+const FF = DATA.falseFloorZ;
+const CLEAT_FRAMES = [
+  [[DATA.T, 20, FF - 8], 1, 2], [[DATA.T, 85, FF - 8], 1, 2],
+  [[20, DATA.D - 2 * DATA.T, FF - 8], 0, 2], [[85, DATA.D - 2 * DATA.T, FF - 8], 0, 2],
+  [[57 - DATA.T, 20, FF - 8], 1, 2], [[80, 62 + DATA.T, FF - 8], 0, 2],
+];
+
+DATA.parts.forEach((p) => {
+  if (p.group === "stand") {
+    addItem(p.key, [plateMesh(p, p.frame, standRoot)], { part: p, group: "stand" });
+  } else if (p.key === "box_cleat") {
+    addItem(p.key, CLEAT_FRAMES.map((f) => plateMesh(p, f, boxRoot)), { part: p });
+  } else if (p.key === "box_arm") {
+    const meshes = [0, 1].map((k) => plateMesh(p, [[0, 0, L.armZ + k * DATA.T], 0, 1], armPivot));
+    addItem(p.key, meshes, { part: p });
+  } else if (p.key === "box_lid" || p.key === "box_catch") {
+    addItem(p.key, [plateMesh(p, p.frame, lidInner)], { part: p });
+  } else {
+    addItem(p.key, [plateMesh(p, p.frame, boxRoot)], { part: p });
+  }
+});
+
+// Bought parts, drawn as simple blocks so the plywood reads as the main subject.
+function solid(color, opts = {}) {
+  return new THREE.MeshStandardMaterial({ color, roughness: opts.rough ?? 0.6, metalness: opts.metal ?? 0.1, emissive: opts.emissive ?? 0x000000, emissiveIntensity: opts.ei ?? 0 });
+}
+function box(x0, x1, y0, y1, z0, z1, mat, parent = boxRoot) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), mat);
+  m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  m.userData.baseColor = mat.color.clone();
+  parent.add(m);
+  return m;
+}
+function cyl(cx, cy, z0, z1, r, mat, axis = "z", parent = boxRoot, seg = 32) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, z1 - z0, seg), mat);
+  if (axis === "z") { m.rotation.x = Math.PI / 2; m.position.set(cx, cy, (z0 + z1) / 2); }
+  else { m.position.set(cx, (z0 + z1) / 2, cy); }   // axis "y": cx = x, cy = z, z0..z1 along y
+  m.userData.baseColor = mat.color.clone();
+  parent.add(m);
+  return m;
+}
+const T = DATA.T, S = L.shelfZ;
+const [gx, gy, gD, mLen] = L.gearbox;
+addItem("buy_motor", [
+  cyl(gx, gy, S - 26, S, gD / 2, solid(0x8d949b, { metal: 0.6, rough: 0.4 })),
+  cyl(gx, gy, S - mLen + 4, S - 26, gD / 2 - 1.5, solid(0xc3c8cc, { metal: 0.7, rough: 0.35 })),
+  box(gx - 6, gx + 6, gy - 3, gy + 3, S - mLen, S - mLen + 4, solid(0xb08d57, { metal: 0.5 })),
+  cyl(L.shaft[0], L.shaft[1], S, S + T + 2, 6, solid(0x9aa1a7, { metal: 0.6, rough: 0.4 })),
+  cyl(L.shaft[0], L.shaft[1], S + T + 2, S + T + 16, 3, solid(0xd0d4d7, { metal: 0.8, rough: 0.3 })),
+], {});
+const swMat = () => solid(0x26292c, { rough: 0.5 });
+const sL = L.switchLocked, sO = L.switchOpen, swZ = S + 2 * T;
+const swLocked = box(sL[0], sL[2], sL[1], sL[3], swZ, swZ + 6.4, swMat());
+const swOpen = box(sO[0], sO[2], sO[1], sO[3], swZ, swZ + 6.4, swMat());
+addItem("buy_switches", [
+  swLocked, swOpen,
+  box(sL[2], sL[2] + 0.6, sL[1] + 2, sL[3] - 3, swZ + 1, swZ + 5.5, solid(0xb9bec2, { metal: 0.8 })),
+  box(sO[0] + 2, sO[2] - 3, sO[1] - 0.6, sO[1], swZ + 1, swZ + 5.5, solid(0xb9bec2, { metal: 0.8 })),
+], {});
+const F = DATA.front;
+const ledColors = [0xf2c230, 0xf2c230, 0xf2c230, 0x2fb35a, 0xe23b2e];
+const ledXs = [...F.digitX, F.greenX, F.redX];
+addItem("buy_leds", ledXs.map((x, k) => cyl(x, F.ledZ, -4, 8, 2.5, solid(ledColors[k], { emissive: ledColors[k], ei: 0.25, rough: 0.3 }), "y")), {});
+addItem("buy_button", [
+  cyl(F.button[0], F.button[1], -4, 0, 5.5, solid(0xc8342a, { rough: 0.45 }), "y"),
+  cyl(F.button[0], F.button[1], T, T + 18, 7, solid(0x2b2e31), "y"),
+], {});
+const PB = T + 3;
+addItem("buy_unoq", [
+  box(8, 76.6, 66, 119.3, PB, PB + 1.6, solid(0x157a8c)),
+  box(30, 50, 82, 102, PB + 1.6, PB + 3, solid(0x1b1e21)),
+  box(8, 76.6, 116, 118.5, PB + 1.6, PB + 10, solid(0x1b1e21)),
+], {});
+addItem("buy_driver", [
+  box(80, 123, 72, 115, PB, PB + 1.6, solid(0xb2262b)),
+  box(92, 112, 80, 96, PB + 1.6, PB + 25, solid(0x1f2225, { metal: 0.4 })),
+  box(82, 95, 100, 112, PB + 1.6, PB + 11, solid(0x2a68c9)),
+], {});
+addItem("buy_hub", [box(8, 53, 12, 36, T, T + 12, solid(0x4b5157, { rough: 0.5 }))], {});
+const hingeMat = () => solid(0xb7a77a, { metal: 0.7, rough: 0.35 });
+addItem("buy_hinges", [
+  box(20, 40, DATA.D, DATA.D + 1.2, DATA.H - 14, DATA.H, hingeMat()),
+  box(87, 107, DATA.D, DATA.D + 1.2, DATA.H - 14, DATA.H, hingeMat()),
+  box(20, 40, DATA.D - 14, DATA.D, DATA.H + T, DATA.H + T + 1.2, hingeMat(), lidInner),
+  box(87, 107, DATA.D - 14, DATA.D, DATA.H + T, DATA.H + T + 1.2, hingeMat(), lidInner),
+], {});
+const st = DATA.stand, lensZ = T + st.camHeight, armZ = lensZ + st.camDrop;
+const [hx, hy] = st.hand;
+addItem("buy_webcam", [
+  box(hx - 35, hx + 35, hy - 12, hy + 12, lensZ + 4, armZ, solid(0x2b2f33), standRoot),
+  cyl(hx, hy, lensZ, lensZ + 4, 7, solid(0x101214, { rough: 0.2, metal: 0.3 }), "z", standRoot),
+], { group: "stand" });
+itemByKey.get("buy_webcam").group = "stand";
+
+// Steps, centers and explode directions ------------------------------------------------------------------------------
+STEPS.forEach((s, i) => s.keys.forEach((k) => { const it = itemByKey.get(k); if (it) it.step = i; }));
+items.forEach((it) => { if (it.step < 0) it.step = 0; });
+const BOX_C = new THREE.Vector3(63.5, 63.5, 45), STAND_C = new THREE.Vector3(100, 160, 120);
+items.forEach((it) => {
+  const bb = new THREE.Box3();
+  it.meshes.forEach((m) => { m.updateMatrixWorld(true); bb.expandByObject(m); });
+  bb.getCenter(it.center);
+  const local = it.group === "stand" ? it.center.clone().sub(new THREE.Vector3(...STAND_OFFSET)) : it.center.clone();
+  const c = it.group === "stand" ? STAND_C : BOX_C;
+  it.dir = local.sub(c).multiply(new THREE.Vector3(1.1, 1.1, 0.9));
+  it.dir.z += it.step * 7;
+});
+
+// State --------------------------------------------------------------------------------------------------------------
+const state = { step: STEPS.length - 1, explode: 0, lidReq: 0, lid: 0, alpha: 0, alphaTarget: 0, xray: false, buy: true, selected: null, hovered: null };
+
+function refreshItem(it) {
+  const visible = it.step <= state.step && (state.buy || !it.buy);
+  const current = state.step < STEPS.length - 1 && it.step === state.step;
+  const xr = state.xray && XRAY_KEYS.has(it.key);
+  it.meshes.forEach((m) => {
+    m.visible = visible;
+    const mat = m.material;
+    mat.transparent = xr;
+    mat.opacity = xr ? 0.16 : 1;
+    mat.depthWrite = !xr;
+    let em = 0;
+    if (state.selected === it) em = 0.55; else if (current) em = 0.32; else if (state.hovered === it) em = 0.16;
+    if (em > 0 || !it.buy) {
+      mat.emissive.copy(ACCENT); mat.emissiveIntensity = em;
+    } else if (m.userData.glow !== undefined) {      // LEDs keep a little of their own color
+      mat.emissive.set(m.userData.glow); mat.emissiveIntensity = 0.25;
+    } else {
+      mat.emissive.set(0x000000); mat.emissiveIntensity = 0;
+    }
+  });
+}
+itemByKey.get("buy_leds").meshes.forEach((m, k) => { m.userData.glow = ledColors[k]; });
+function isLit(it) { return state.selected === it || state.hovered === it || (it.step === state.step && state.step < STEPS.length - 1); }
+function refreshAll() { items.forEach(refreshItem); }
+
+function applyExplode() {
+  const f = state.explode;
+  items.forEach((it) => it.meshes.forEach((m) => {
+    if (m.userData.home === undefined) m.userData.home = m.position.clone();
+    m.position.copy(m.userData.home).addScaledVector(it.dir, f);
+  }));
+}
+
+// Latch and lid ------------------------------------------------------------------------------------------------------
+const LOCKED_LID_MAX = 0.7;   // degrees: about 1.5 mm at the front edge before the window's bottom edge meets the arm
+function locked() { return state.alpha < 80; }
+function updateLatchUI() {
+  const msg = $("latchMsg"), btn = $("latch");
+  const moving = Math.abs(state.alpha - state.alphaTarget) > 0.5;
+  btn.textContent = state.alphaTarget === 0 ? "Unlock latch" : "Lock latch";
+  btn.disabled = state.alphaTarget !== 0 && state.lid > 1.5;
+  const lidShown = state.step >= STEPS.findIndex((s) => s.keys.includes("box_lid"));
+  if (!lidShown) {
+    msg.className = "msg"; msg.textContent = "The lid goes on in step 11. Until then you can still swing the arm.";
+  } else if (btn.disabled) {
+    msg.className = "msg"; msg.textContent = "Close the lid before locking. With the lid up, the catch isn't there for the arm to swing into.";
+  } else if (moving) {
+    msg.className = "msg"; msg.textContent = state.alphaTarget === 0 ? "Locking: the tip swings through the catch window..." : "Unlocking: the arm swings left, out of the window...";
+  } else if (locked()) {
+    msg.className = "msg locked";
+    msg.textContent = state.lidReq > LOCKED_LID_MAX
+      ? "Locked. The window's bottom edge has hit the arm, so the lid stops after about 1.5 mm."
+      : "Locked. The arm points at the front and its tip sits in the catch window. The locked switch is pressed.";
+  } else {
+    msg.className = "msg open";
+    msg.textContent = "Open. The arm points left and presses the open switch. The window can lift past it, so the lid opens freely.";
+  }
+}
+function setLidOutput() { $("lidOut").textContent = state.lid < 0.05 ? "closed" : `${state.lid.toFixed(state.lid < 2 ? 1 : 0)}°`; }
+
+// Camera views ---------------------------------------------------------------------------------------------------------
+const VIEWS = {
+  box: { target: [63, 63, 48], pos: [-150, -250, 240] },
+  latch: { target: [95, 30, 86], pos: [190, -110, 230], xray: true },
+  front: { target: [63, 63, 52], pos: [63, -360, 85] },
+  stand: { target: [-140, 70, 135], pos: [-470, -430, 390] },
+  all: { target: [-60, 70, 85], pos: [-300, -560, 420] },
+};
+let camTween = null;
+function goView(name) {
+  const v = VIEWS[name];
+  if (!v) return;
+  if (v.xray !== undefined) { state.xray = v.xray; $("xray").checked = v.xray; refreshAll(); }
+  else if (name !== "latch" && state.xray) { /* leave the viewer's choice alone */ }
+  const to = { target: new THREE.Vector3(...v.target), pos: new THREE.Vector3(...v.pos) };
+  if (reduceMotion) { controls.target.copy(to.target); camera.position.copy(to.pos); return; }
+  camTween = { t: 0, from: { target: controls.target.clone(), pos: camera.position.clone() }, to };
+}
+
+// Steps UI -----------------------------------------------------------------------------------------------------------
+const stepsEl = $("steps");
+STEPS.forEach((s, i) => {
+  const li = document.createElement("li");
+  const b = document.createElement("button");
+  b.innerHTML = `<span class="n">${String(i + 1).padStart(2, "0")}</span><span></span>`;
+  b.lastChild.textContent = s.title;
+  b.addEventListener("click", () => setStep(i));
+  li.appendChild(b); stepsEl.appendChild(li);
+});
+function setStep(i, moveCamera = true) {
+  state.step = Math.max(0, Math.min(STEPS.length - 1, i));
+  const s = STEPS[state.step];
+  $("count").textContent = `Step ${state.step + 1} of ${STEPS.length}`;
+  $("stepTitle").textContent = s.title;
+  $("stepText").textContent = s.text;
+  $("prev").disabled = state.step === 0;
+  $("next").disabled = state.step === STEPS.length - 1;
+  $("hint").hidden = state.step === STEPS.length - 1;
+  [...stepsEl.querySelectorAll("button")].forEach((b, k) => {
+    b.classList.toggle("on", k === state.step);
+    b.classList.toggle("done", k < state.step);
+    b.setAttribute("aria-current", k === state.step ? "step" : "false");
+  });
+  refreshAll();
+  updateLatchUI();
+  if (moveCamera) goView(s.view);
+}
+$("prev").addEventListener("click", () => setStep(state.step - 1));
+$("next").addEventListener("click", () => setStep(state.step + 1));
+["box", "latch", "front", "stand", "all"].forEach((v) => $("v-" + v).addEventListener("click", () => goView(v)));
+
+$("latch").addEventListener("click", () => {
+  state.alphaTarget = state.alphaTarget === 0 ? 90 : 0;
+  if (reduceMotion) state.alpha = state.alphaTarget;
+  updateLatchUI();
+});
+$("lid").addEventListener("input", (e) => { state.lidReq = +e.target.value; updateLatchUI(); });
+$("explode").addEventListener("input", (e) => {
+  state.explode = +e.target.value / 100;
+  $("explodeOut").textContent = `${e.target.value}%`;
+  applyExplode();
+});
+$("xray").addEventListener("change", (e) => { state.xray = e.target.checked; refreshAll(); });
+$("buy").addEventListener("change", (e) => { state.buy = e.target.checked; refreshAll(); });
+
+// Picking ------------------------------------------------------------------------------------------------------------
+const ray = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+function shown(o) { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; }
+function pick(ev) {
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(pickables, false).filter((h) => shown(h.object) && !(h.object.material.transparent && h.object.material.opacity < 0.5));
+  return hits.length ? hits[0].object.userData.item : null;
+}
+const tip = $("tip");
+function nameOf(it) { return (ROLES[it.key] || [it.part ? it.part.name : it.key])[0]; }
+canvas.addEventListener("pointermove", (ev) => {
+  if (ev.pointerType !== "mouse") return;
+  const it = pick(ev);
+  if (it !== state.hovered) { const old = state.hovered; state.hovered = it; if (old) refreshItem(old); if (it) refreshItem(it); }
+  if (it) {
+    const r = stage.getBoundingClientRect();
+    tip.hidden = false; tip.textContent = nameOf(it);
+    tip.style.left = `${ev.clientX - r.left}px`; tip.style.top = `${ev.clientY - r.top}px`;
+    canvas.style.cursor = "pointer";
+  } else { tip.hidden = true; canvas.style.cursor = ""; }
+});
+canvas.addEventListener("pointerleave", () => { tip.hidden = true; if (state.hovered) { const o = state.hovered; state.hovered = null; refreshItem(o); } });
+let down = null;
+canvas.addEventListener("pointerdown", (ev) => { down = [ev.clientX, ev.clientY]; });
+canvas.addEventListener("pointerup", (ev) => {
+  if (!down || Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 5) return;
+  select(pick(ev));
+});
+
+function select(it) {
+  const old = state.selected;
+  state.selected = it;
+  if (old) refreshItem(old);
+  if (it) refreshItem(it);
+  const specs = $("infoSpecs"), tag = $("infoTag");
+  if (!it) {
+    $("infoName").textContent = "Nothing selected";
+    $("infoRole").textContent = "Click a part in the model to see what it does and how it joins the others.";
+    specs.hidden = true; tag.hidden = true; return;
+  }
+  const [name, role] = ROLES[it.key] || [it.part ? it.part.name : it.key, ""];
+  $("infoName").textContent = name;
+  $("infoRole").textContent = role;
+  tag.hidden = false;
+  specs.innerHTML = "";
+  const add = (k, v) => { const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; specs.append(dt, dd); };
+  if (it.part) {
+    tag.className = "tag cut"; tag.textContent = "LASER-CUT, 3 MM PLY";
+    add("Flat size", `${it.part.size[0].toFixed(1)} x ${it.part.size[1].toFixed(1)} mm`);
+    add("Cut", `${it.part.qty}`);
+    add("Sheet", `${it.group}_sheet_${it.part.sheet}.dxf`);
+    add("Part file", `parts/${it.key}.dxf`);
+  } else {
+    tag.className = "tag"; tag.textContent = "BOUGHT PART";
+  }
+  add("Goes in", `step ${it.step + 1}, ${STEPS[it.step].title.toLowerCase()}`);
+  specs.hidden = false;
+}
+
+// Loop ---------------------------------------------------------------------------------------------------------------
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage);
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.05); last = now;
+  // arm
+  if (state.alpha !== state.alphaTarget) {
+    const stepDeg = 110 * dt, d = state.alphaTarget - state.alpha;
+    state.alpha = Math.abs(d) <= stepDeg ? state.alphaTarget : state.alpha + Math.sign(d) * stepDeg;
+    if (state.alpha === state.alphaTarget) updateLatchUI();
+  }
+  armPivot.rotation.z = THREE.MathUtils.degToRad(-90 - state.alpha);
+  const sw = (m, on) => { m.material.emissive.set(on ? 0x2fb35a : 0x000000); m.material.emissiveIntensity = on ? 0.7 : 0; };
+  if (!isLit(itemByKey.get("buy_switches"))) { sw(swLocked, state.alpha < 1); sw(swOpen, state.alpha > 89); }
+  // lid: blocked while the arm is in the window
+  const want = locked() ? Math.min(state.lidReq, LOCKED_LID_MAX) : state.lidReq;
+  state.lid += (want - state.lid) * (reduceMotion ? 1 : Math.min(1, dt * 10));
+  lidPivot.rotation.x = -THREE.MathUtils.degToRad(state.lid);
+  setLidOutput();
+  // camera
+  if (camTween) {
+    camTween.t = Math.min(1, camTween.t + dt / 0.7);
+    const e = 1 - Math.pow(1 - camTween.t, 3);
+    controls.target.lerpVectors(camTween.from.target, camTween.to.target, e);
+    camera.position.lerpVectors(camTween.from.pos, camTween.to.pos, e);
+    if (camTween.t >= 1) camTween = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+applyTheme();
+const mq = window.matchMedia("(prefers-color-scheme: dark)");
+(mq.addEventListener ? mq.addEventListener.bind(mq, "change") : mq.addListener.bind(mq))(applyTheme);
+new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+camera.position.set(...VIEWS.all.pos);
+controls.target.set(...VIEWS.all.target);
+resize();
+setStep(STEPS.length - 1, false);
+requestAnimationFrame(frame);
+</script>

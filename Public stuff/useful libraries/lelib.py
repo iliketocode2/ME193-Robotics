@@ -72,12 +72,10 @@ class singleMotor(_CardReader, le.SingleMotor):
         self.motor_set_speed(speed)
 
     def run(self, speed=50):
-        if speed >= 0:
-            self.motor_set_speed(speed)
-            self.motor_run()
-        else:
-            self.motor_set_speed(-speed)
-            self.motor_run(direction=le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE)
+        # motor_run()'s speed accepts a signed value directly -- confirmed on
+        # hardware that a negative speed simply reverses whichever direction
+        # is passed (left at its CLOCKWISE default here).
+        self.motor_run(speed=speed)
 
 
 class doubleMotor(_CardReader, le.DoubleMotor):
@@ -91,12 +89,10 @@ class doubleMotor(_CardReader, le.DoubleMotor):
         self.movement_move_for_degrees(-180 * step)
 
     def run(self, speed=50):
-        if speed >= 0:
-            self.movement_set_speed(speed)
-            self.movement_move(direction=le.MOVEMENT_MOVE_DIRECTION_FORWARD)
-        else:
-            self.movement_set_speed(-speed)
-            self.movement_move(direction=le.MOVEMENT_MOVE_DIRECTION_BACKWARD)
+        # movement_move() takes the same signed-speed shortcut as motor_run()
+        # (see singleMotor.run() above); this specific method wasn't
+        # hardware-tested itself, but it's built the same way internally.
+        self.movement_move(speed=speed)
 
     def run_time(self, time=2000):
         self.movement_move_for_time(time)
@@ -173,7 +169,9 @@ class colorSensor(_CardReader, le.ColorSensor):
     def __init__(self):
         super().__init__()
 
-    def connect(self, card_serial, card_color=None):
+    def connect(self, card_serial=None, card_color=None):
+        """Connect to a Color Sensor. With no arguments, connects to the
+        first advertising Color Sensor found (no Connection Card needed)."""
         self._connect_with_retry('Color Sensor', card_serial, card_color)
 
     def reflection(self):

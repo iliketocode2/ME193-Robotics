@@ -1,4 +1,4 @@
-legoeducation==1.1.1      # lelib.py, main.py -- LEGO Education hub BLE protocol
+legoeducation>=1.2.0      # lelib.py, main.py -- LEGO Education hub BLE protocol
 opencv-python==5.0.0.93   # camlib.py -- camera enumeration/capture (NOT the -headless variant)
 numpy==2.5.3              # camlib.py -- frame arrays
 mediapipe==0.10.35        # arm_race_control.py -- hand-pose tracking
