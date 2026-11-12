@@ -12,7 +12,7 @@ CLASSES = [0, 1, 2, 3, 4, 5]  # fingers showing; 0 also covers a fist or an empt
 
 # Lock policy (lock_policy.py)
 LOCK_CODE = (3, 1, 5)       # the secret: three finger counts, each 1 to 5
-MIN_CONF = 0.85             # a reading counts only when the network is at least this sure
+MIN_CONF = 0.80            # a reading counts only when the network is at least this sure
 HOLD_S = 1.0                # ... and keeps giving the same count for this long
 CLEAR_S = 0.4               # the hand must be gone (count 0) this long between digits
 DIGIT_TIMEOUT_S = 10.0      # no digit within this time cancels the attempt

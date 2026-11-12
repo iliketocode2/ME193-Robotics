@@ -67,7 +67,7 @@ which LEDs to light and when the latch opens. The settings are in `config.py`.
 
 An attempt starts with the button. Before each digit the hand has to leave the view, so the network reads 0 for
 0.4 seconds. Then you show a count from 1 to 5 and hold it. The digit is accepted when the network gives the same
-count, at least 85% sure, for one full second without a break, and one digit LED lights. A single wrong frame
+count, at least 80% sure, for one full second without a break, and one digit LED lights. A single wrong frame
 restarts the second. Requiring the empty view between digits is what lets a code repeat a digit, such as 3, 3, 5,
 and it stops one long hold from being read as two digits.
 
