@@ -22,6 +22,12 @@ the computer first, with a USB webcam, and then on the Arduino UNO Q.
 spreadsheet formulas. The line can only flatten out through the middle of the V, one ReLU neuron fits one arm,
 and two ReLU neurons fit the whole V.
 
+`fit_v.py` trains the same three models in numpy with hand-written gradients, from the same starting weights, so
+its first five losses match the spreadsheet. It writes `v_fit.png` (the data and the fits) and `v_loss.png` (loss
+against iteration):
+
+    python v_fit/fit_v.py
+
 ## Part 2: the finger-counting network
 
 The camera looks down at the spot where you hold your hand. The program cuts out the center square of each frame,
@@ -148,13 +154,27 @@ The UNO Q has two processors. `uno_q/finger_lock/` is an Arduino App Lab app wit
 - `sketch/sketch.ino` runs on the microcontroller. It reads the button, lights the LEDs it is told to, and drives
   the motor until a limit switch clicks, stopping it if no switch clicks within 1.5 seconds.
 
-The two talk over the Bridge: the sketch sends `button` and `latch`, and Python calls `set_leds` and `set_latch`.
+The two talk over the Bridge. Python calls `set_leds` and `set_latch`, and every frame it calls `get_status`,
+which returns the button, both limit switches, the latch position and a count of button presses. Messages sent
+from the sketch to Python never arrived on my board, so the button goes through `get_status` instead.
 `python uno_q/sync_app.py` copies the shared files and the trained weights into the app, and with
 `--host <board IP>` it also copies the app to the board over SSH and starts it.
 
 To see what the board sees, open `http://<board IP>:8000` in a browser on the same Wi-Fi. `python/viewer.py`
-streams the camera with the reading, the lock state, the latch position, the LEDs and the 64 x 64 image the
-network gets drawn on top. It only encodes frames while the page is open.
+serves a page with three panels:
+
+- The camera, with the reading, the lock state, the latch position, the LEDs and the raw button and switch states
+  drawn on top.
+- Inside the network: the 64 x 64 input, the 8 learned conv1 filters, every feature map of all three layers, the
+  six probabilities against the threshold, and a heatmap of where the network found evidence for its answer.
+  Because the linear layer follows conv3 directly, a count's score is a sum of weight times activation over every
+  filter and spot, and adding that up over the filters but not the spots gives the heatmap.
+- The lock policy: the state machine with the current state lit, and a timeline of the last 15 seconds of
+  readings against the threshold.
+
+Pictures are only drawn while someone is watching, and the network panel updates at most 4 times a second.
+`python main.py` inside `uno_q/finger_lock/python` runs the same page on the computer at `http://localhost:8000`,
+with a button on the page standing in for the real one.
 
 On the box the latch stays open until the button is pressed, because locking with the lid still up would leave
 the arm in the catch's way. `RELOCK_AFTER_S` in `main.py` brings back the timed relock.
@@ -217,4 +237,5 @@ python lock.py --hide           # the lock without the live reading on screen
 | `hardware/wiring.py` | draws the wiring diagram |
 | `uno_q/finger_lock/` | the App Lab app for the UNO Q: `python/main.py` and `sketch/sketch.ino` |
 | `uno_q/sync_app.py` | copies the shared files and weights into the app, and can send it to the board |
-| `v_fit/` | Part 1, the V-data gradient-descent spreadsheet |
+| `movie/make_movie.py` | renders the stop-motion movie about the network (`movie/nn_movie.mp4`) and its voice-over script |
+| `v_fit/` | Part 1, the V-data gradient-descent spreadsheet and `fit_v.py`, the same fits in Python with plots |

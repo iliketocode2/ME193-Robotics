@@ -1,0 +1,68 @@
+[
+  {
+    "scene": "title",
+    "title": "Title",
+    "start_s": 0.0,
+    "end_s": 12.0
+  },
+  {
+    "scene": "input",
+    "title": "From camera to numbers",
+    "start_s": 12.0,
+    "end_s": 32.75
+  },
+  {
+    "scene": "conv",
+    "title": "Convolution",
+    "start_s": 32.75,
+    "end_s": 63.5
+  },
+  {
+    "scene": "relu",
+    "title": "Eight filters and ReLU",
+    "start_s": 63.5,
+    "end_s": 75.5
+  },
+  {
+    "scene": "pool",
+    "title": "Max pooling",
+    "start_s": 75.5,
+    "end_s": 93.125
+  },
+  {
+    "scene": "deeper",
+    "title": "Going deeper",
+    "start_s": 93.125,
+    "end_s": 109.875
+  },
+  {
+    "scene": "output",
+    "title": "From maps to an answer",
+    "start_s": 109.875,
+    "end_s": 130.75
+  },
+  {
+    "scene": "heat",
+    "title": "Where it looked",
+    "start_s": 130.75,
+    "end_s": 148.75
+  },
+  {
+    "scene": "train",
+    "title": "How it learned",
+    "start_s": 148.75,
+    "end_s": 184.75
+  },
+  {
+    "scene": "lock",
+    "title": "From counts to the lock",
+    "start_s": 184.75,
+    "end_s": 209.125
+  },
+  {
+    "scene": "end",
+    "title": "End card",
+    "start_s": 209.125,
+    "end_s": 213.125
+  }
+]
