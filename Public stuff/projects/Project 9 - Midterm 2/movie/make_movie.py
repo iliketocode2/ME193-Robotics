@@ -5,10 +5,13 @@
 
 Everything on screen comes from the real trained network (models/finger_cnn.npz) and real training photos,
 run through npnet.py exactly as the lock runs them. The video is silent, 1280 x 720 at 8 frames a second.
-Each step is drawn once and held for a few frames with a one-pixel wobble, which gives the stop-action look.
+Each step is drawn once and held for a few frames, which gives the stop-action look. The style is flat and
+spreadsheet-like: white background, gray gridlines, and the green-white-red color scale spreadsheets use for
+conditional formatting (green positive, red negative).
 
 The narration for each scene lives in NARRATION below. A scene is held long enough for its narration at
-140 words a minute, and the script's timestamps are written from the same frame counts, so they match.
+WORDS_PER_MIN, and the script's timestamps are written from the same frame counts, so they match. SPEED scales
+how long each picture is held.
 """
 
 import argparse
@@ -32,62 +35,63 @@ import npnet  # noqa: E402
 W, H = 1280, 720
 FPS = 8
 WORDS_PER_MIN = 150
+SPEED = 0.75                  # every hold is this fraction of its original length
 EXAMPLE_CODE = (2, 4, 1)      # shown in the last scene; the real code stays secret
 
-PAPER = (247, 243, 232)
-INK = (38, 38, 46)
-SOFT = (120, 118, 112)
-RED = (200, 58, 46)
-BLUE = (46, 96, 186)
-GREEN = (46, 150, 76)
-YELLOW = (232, 178, 30)
-DIM = (210, 205, 195)
+PAPER = (255, 255, 255)
+INK = (32, 33, 36)
+SOFT = (95, 99, 104)
+RED = (217, 48, 37)
+BLUE = (26, 115, 232)
+GREEN = (24, 128, 56)
+YELLOW = (251, 188, 4)
+DIM = (218, 220, 224)
+BORDER = (218, 220, 224)       # gridline gray
+HEADER = (248, 249, 250)       # header-row gray
+BLANK = (241, 243, 244)        # an empty cell
+SCALE_POS = (87, 187, 138)     # spreadsheet color scale: green for high values
+SCALE_NEG = (230, 124, 115)    # ... red for low values
+LIGHT_BLUE = (174, 203, 250)
 
 rng = np.random.default_rng(7)
 
 # Narration, one entry per scene, in the order the scenes play. First person, read by the student.
 NARRATION = {
     "title": (
-        "This is my finger-count lock. A webcam looks down at my hand, and a small neural network counts my "
-        "fingers, from zero to five. Here's how it works."),
+        "A small neural network in my lock counts fingers from zero to five. Here's how it works."),
     "input": (
-        "The program first keeps the center square, turns it gray and shrinks it to "
-        "64 by 64 pixels, so it's just a grid of numbers from 0 to 255. Then it subtracts the average "
-        "brightness and divides by the spread, so a bright room and a dim room look alike."),
+        "First, the program keeps the center square, turns it gray and shrinks it to 64 by 64, so it's just "
+        "numbers from 0 to 255. Then it subtracts the average brightness and divides by the spread."),
     "conv": (
-        "The first layer is a convolution. A filter is a 5 by 5 grid of weights the network learned. It "
-        "slides over the image, and at each spot it multiplies the 25 pixels by the 25 weights, adds them up "
-        "and adds a bias. A patch that matches the pattern gives a big positive number, in red, and the "
-        "opposite pattern gives a negative one, in blue. All the spots together make a feature map."),
+        "Convolution comes first. A filter is a 5 by 5 grid of learned weights. It slides over the image, "
+        "multiplies the 25 pixels by the 25 weights and adds them up, plus a bias. A matching patch gives a big "
+        "positive number, in green, and the opposite gives a negative one, in red. All of them make a feature "
+        "map."),
     "relu": (
-        "There are eight filters, so one photo becomes eight feature maps, each picking out something "
-        "different. Then ReLU keeps the positive numbers and turns every negative into zero."),
+        "Eight filters turn one photo into eight feature maps. Then ReLU keeps the positive numbers and turns "
+        "every negative into zero."),
     "pool": (
-        "Next comes max pooling. A 2 by 2 window steps across the map and keeps the biggest of each four "
-        "numbers. That halves the size to 32 by 32, keeps the strong responses, and makes small shifts of my "
-        "hand matter less."),
+        "Max pooling slides a 2 by 2 window across each map and keeps the biggest number. That halves the size "
+        "to 32 by 32 and makes small shifts of my hand matter less."),
     "deeper": (
-        "Convolution, ReLU and pooling happen three times. The second layer's 16 filters each look at all "
-        "eight maps before them, so they can combine edges into pieces of fingers. The third layer's 32 "
-        "filters tend to respond to whole fingers."),
+        "This repeats three times. A layer's width is its number of filters: 8, then 16, then 32. With the "
+        "output layer the network is four layers deep, and deeper filters combine edges into fingers."),
     "output": (
-        "Then the 32 small maps become one line of 2048 numbers. Each count has its own 2048 weights, and "
-        "multiplying and adding gives six scores. Softmax turns them into probabilities that add up to one. "
-        "The tallest bar is the answer, and its height is how sure the network is."),
+        "The 32 small maps become one line of 2048 numbers. Each count has 2048 weights, and multiplying and "
+        "adding gives six scores. Softmax turns them into probabilities. The tallest bar is the answer, and its "
+        "height is how sure it is."),
     "heat": (
-        "Since the last layer comes right after the third convolution, I can split each score back onto the "
-        "8 by 8 grid. Red shows what pushed the network toward its answer. Often that's the fingers, and "
-        "sometimes it's the empty space beside them."),
+        "Because that last step is just weights times values, I can split each score back onto an 8 by 8 grid. "
+        "Green shows what pushed the network toward its answer."),
     "train": (
-        "The weights start out random, so at first the network just guesses. The loss is minus the log of the probability it gave the right answer. Backpropagation uses the chain "
-        "rule, like my V-fit spreadsheet, to find how each of the 18,310 weights changes the loss, and "
-        "gradient descent nudges them all downhill. Each training photo is also randomly rotated, shifted, "
-        "zoomed, flipped and brightened. In the end it got 98 percent of the test photos right, though they came "
-        "from the same session as the training photos."),
+        "The weights start random. The loss is minus the log of the probability given to the right answer. "
+        "Backpropagation uses the chain rule, like my V-fit spreadsheet, to find each weight's slope, and "
+        "gradient descent steps all 18,310 weights downhill. Rotated, shifted and flipped copies of each photo "
+        "add more examples. In the end it got 98 percent of the test photos right."),
     "lock": (
-        "Finally, the lock. I press the button and take my hand away so it reads zero. Then I hold up a "
-        "count for a second at 80 percent or more, and a yellow LED lights. After three digits the whole code "
-        "is checked at once, and the right code turns on the green LED and swings the latch open."),
+        "Finally, the lock. I press the button and show an empty view, so it reads zero. Then I hold a count "
+        "for one second at 80 percent or more, and a yellow LED lights. After three digits, the right code "
+        "opens the latch."),
     "end": "",
 }
 
@@ -101,7 +105,7 @@ SCENE_TITLES = {
 # Drawing helpers ------------------------------------------------------------------------------------------------
 
 _fonts = {}
-FONT_FILES = {"hand": "segoepr.ttf", "handb": "segoeprb.ttf", "mono": "consola.ttf", "monob": "consolab.ttf",
+FONT_FILES = {"hand": "segoeui.ttf", "handb": "seguisb.ttf", "mono": "consola.ttf", "monob": "consolab.ttf",
               "sans": "segoeui.ttf"}
 
 
@@ -116,38 +120,34 @@ def font(size, kind="hand"):
 
 
 def make_paper():
-    noise = np.random.default_rng(1).normal(0, 2.5, (H, W, 1))
-    blotch = cv2.GaussianBlur(np.random.default_rng(2).normal(0, 1, (H, W)).astype(np.float32), (0, 0), 40)
-    blotch = blotch / (np.abs(blotch).max() + 1e-6) * 5
-    img = np.array(PAPER, np.float32)[None, None] + noise + blotch[..., None]
-    return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
+    return Image.new("RGB", (W, H), PAPER)
 
 
 PAPER_IMG = make_paper()
 
 
-def wline(d, p0, p1, fill=INK, width=3, wob=1.0):
-    (x0, y0), (x1, y1) = p0, p1
-    n = max(2, int(np.hypot(x1 - x0, y1 - y0) / 35))
-    pts = [(x0 + (x1 - x0) * t + rng.normal(0, wob), y0 + (y1 - y0) * t + rng.normal(0, wob))
-           for t in np.linspace(0, 1, n + 1)]
-    d.line(pts, fill=fill, width=width, joint="curve")
+def wline(d, p0, p1, fill=INK, width=3, wob=0.0):
+    d.line([tuple(p0), tuple(p1)], fill=fill, width=width)
 
 
 def wrect(d, box, outline=INK, width=3, fill=None):
-    x0, y0, x1, y1 = box
-    if fill is not None:
-        d.rectangle(box, fill=fill)
-    for a, b in (((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))):
-        wline(d, a, b, outline, width)
+    """A flat box. Plain ink outlines become thin gridline-gray borders; colored outlines (highlights) stay."""
+    if outline == INK:
+        outline, width = BORDER, 1
+    else:
+        width = max(2, width - 1)
+    d.rounded_rectangle(box, radius=4, outline=outline, width=width, fill=fill)
 
 
-def arrow(d, p0, p1, fill=INK, width=4):
+def arrow(d, p0, p1, fill=SOFT, width=3):
+    if fill == INK:
+        fill = SOFT
+    width = min(width, 3)
     wline(d, p0, p1, fill, width)
     (x0, y0), (x1, y1) = p0, p1
     ang = np.arctan2(y1 - y0, x1 - x0)
-    head = [(x1, y1), (x1 - 18 * np.cos(ang - 0.45), y1 - 18 * np.sin(ang - 0.45)),
-            (x1 - 18 * np.cos(ang + 0.45), y1 - 18 * np.sin(ang + 0.45))]
+    head = [(x1, y1), (x1 - 14 * np.cos(ang - 0.45), y1 - 14 * np.sin(ang - 0.45)),
+            (x1 - 14 * np.cos(ang + 0.45), y1 - 14 * np.sin(ang + 0.45))]
     d.polygon(head, fill=fill)
 
 
@@ -181,14 +181,19 @@ def page(title=None):
     img = PAPER_IMG.copy()
     d = ImageDraw.Draw(img)
     if title:
-        text(d, (56, 26), title, 46, INK, "handb")
-        tw = d.textlength(title, font=font(46, "handb"))
-        wline(d, (56, 92), (56 + tw + 20, 92), RED, 4, wob=1.5)
+        d.rectangle((0, 0, W, 96), fill=HEADER)
+        d.line([(0, 96), (W, 96)], fill=BORDER, width=1)
+        d.rectangle((0, 0, W, 5), fill=GREEN)
+        d.rounded_rectangle((40, 30, 76, 66), radius=6, fill=GREEN)
+        for k in (1, 2):            # a small grid icon
+            d.line([(40 + 12 * k, 38), (40 + 12 * k, 58)], fill=PAPER, width=2)
+            d.line([(48, 30 + 12 * k), (68, 30 + 12 * k)], fill=PAPER, width=2)
+        text(d, (94, 48), title, 34, INK, "handb", "lm")
     return img, d
 
 
 def caption(d, s, y=640, size=26):
-    para(d, (W // 2, y), s, size, 1150, INK, "hand", anchor_x="c")
+    para(d, (W // 2, y), s, size - 2, 1150, (60, 64, 67), "hand", anchor_x="c")
 
 
 # Colors for arrays
@@ -203,10 +208,10 @@ def gray_rgb(a, lo=None, hi=None):
 def div_rgb(a, m=None):
     m = np.abs(a).max() + 1e-9 if m is None else m
     t = np.clip(a / m, -1, 1)[..., None]
-    white = np.array([250, 248, 240], np.float32)
-    red = np.array([205, 55, 45], np.float32)
-    blue = np.array([45, 95, 190], np.float32)
-    out = np.where(t >= 0, white + (red - white) * t, white + (blue - white) * (-t))
+    white = np.array([255, 255, 255], np.float32)
+    pos = np.array(SCALE_POS, np.float32)
+    neg = np.array(SCALE_NEG, np.float32)
+    out = np.where(t >= 0, white + (pos - white) * t, white + (neg - white) * (-t))
     return out.astype(np.uint8)
 
 
@@ -219,7 +224,7 @@ def put(img, d, rgb, xy, size, border=True, width=3):
     pil = Image.fromarray(np.ascontiguousarray(rgb)).resize(size, Image.NEAREST)
     img.paste(pil, (int(xy[0]), int(xy[1])))
     if border:
-        wrect(d, (xy[0] - 2, xy[1] - 2, xy[0] + size[0] + 1, xy[1] + size[1] + 1), INK, width)
+        d.rectangle((xy[0] - 1, xy[1] - 1, xy[0] + size[0], xy[1] + size[1]), outline=BORDER, width=1)
 
 
 def number_grid(d, x, y, cell, arr, fmt, bg=None, size=14, kind="mono", lines=True):
@@ -231,24 +236,26 @@ def number_grid(d, x, y, cell, arr, fmt, bg=None, size=14, kind="mono", lines=Tr
             if fill is not None:
                 d.rectangle(box, fill=fill)
             if lines:
-                d.rectangle(box, outline=(150, 145, 135), width=1)
+                d.rectangle(box, outline=BORDER, width=1)
             lum = 0.3 * fill[0] + 0.59 * fill[1] + 0.11 * fill[2] if fill is not None else 255
             d.text((box[0] + cell / 2, box[1] + cell / 2), fmt(arr[i, j]), font=font(size, kind),
                    fill=(255, 255, 255) if lum < 120 else INK, anchor="mm")
-    wrect(d, (x, y, x + m * cell, y + n * cell), INK, 3)
+    d.rectangle((x, y, x + m * cell, y + n * cell), outline=(189, 193, 198), width=1)
 
 
-def bars(d, x, y, probs, w=300, h=200, frac=1.0, size=20, color=BLUE, best_color=RED):
+def bars(d, x, y, probs, w=300, h=200, frac=1.0, size=20, color=LIGHT_BLUE, best_color=BLUE):
     """Six bars for counts 0-5. (x, y) is the bottom left corner."""
     bw = w / 6
     best = int(np.argmax(probs))
-    d.line([(x - 6, y), (x + w + 6, y)], fill=INK, width=3)
+    for g in (0.25, 0.5, 0.75, 1.0):         # chart gridlines
+        d.line([(x - 6, y - h * g), (x + w + 6, y - h * g)], fill=BLANK, width=1)
+    d.line([(x - 6, y), (x + w + 6, y)], fill=(189, 193, 198), width=2)
     for k, p in enumerate(probs):
         ph = h * p * frac
         x0 = x + k * bw + 6
         c = best_color if k == best else color
         if ph > 1:
-            wrect(d, (x0, y - ph, x0 + bw - 12, y), c, 2, fill=c)
+            d.rectangle((x0, y - ph, x0 + bw - 12, y), fill=c)
         text(d, (x0 + (bw - 12) / 2, y + 6), str(k), size, INK, "hand", "ma")
         if frac >= 1 and p >= 0.01:
             text(d, (x0 + (bw - 12) / 2, y - ph - 6), f"{p:.0%}", size - 4, INK, "mono", "md")
@@ -287,11 +294,12 @@ class Movie:
         self.frames += 1
 
     def hold(self, img, seconds=None, frames=None, name=None):
-        n = frames if frames is not None else max(1, round(seconds * FPS))
-        arr = np.asarray(img.convert("RGB"))
+        n = frames if frames is not None else max(1, round(seconds * SPEED * FPS))
+        if frames is not None and frames > 2:
+            n = max(1, round(frames * SPEED))
+        arr = np.ascontiguousarray(np.asarray(img.convert("RGB")))
         for _ in range(n):
-            dx, dy = rng.integers(-1, 2, 2)
-            self._write(np.ascontiguousarray(np.roll(arr, (int(dy), int(dx)), axis=(0, 1))))
+            self._write(arr)
         self.last = img
         if self.preview_dir and name:
             self.step_n += 1
@@ -307,7 +315,7 @@ class Movie:
         if self.current is None:
             return
         words = len(NARRATION.get(self.current, "").split())
-        need = round((words / WORDS_PER_MIN * 60 + 0.8) * FPS) if words else 0
+        need = round((words / WORDS_PER_MIN * 60 + 0.5) * FPS) if words else 0
         if self.frames - self.start < need:
             self.hold(self.last, frames=need - (self.frames - self.start))
         self.scenes.append((self.current, self.start, self.frames))
@@ -369,15 +377,16 @@ def pick_examples():
 def scene_title(mv, ex):
     mv.scene("title")
     img, d = page()
-    text(d, (W // 2, 170), "How the finger-count lock sees", 64, INK, "handb", "mm")
-    wline(d, (250, 215), (1030, 215), RED, 5, 2)
+    d.rectangle((0, 0, W, 6), fill=GREEN)
+    text(d, (W // 2, 170), "How the finger-count lock sees", 56, INK, "handb", "mm")
+    wline(d, (560, 218), (720, 218), GREEN, 4)
     put(img, d, gray_rgb(ex[3]["saved"].astype(np.float32)), (200, 300), (220, 220))
     arrow(d, (460, 410), (560, 410))
-    wrect(d, (580, 330, 760, 490), INK, 4, fill=(236, 230, 214))
+    d.rounded_rectangle((580, 330, 760, 490), radius=12, fill=(232, 240, 254), outline=BLUE, width=2)
     text(d, (670, 385), "neural", 30, INK, "handb", "mm")
     text(d, (670, 425), "network", 30, INK, "handb", "mm")
     arrow(d, (780, 410), (880, 410))
-    text(d, (980, 410), "3", 120, RED, "handb", "mm")
+    text(d, (980, 410), "3", 120, GREEN, "handb", "mm")
     text(d, (980, 500), "fingers (0 to 5)", 26, SOFT, "hand", "mm")
     caption(d, "A photo goes in, a count from 0 to 5 comes out. Three counts in the right order open the box.",
             600, 28)
@@ -400,9 +409,9 @@ def scene_input(mv, ex):
     frame[py:py + side, px:px + side] = sq
     fx, fy = 60, 150
     put(img, d, gray_rgb(frame, 0, 255), (fx, fy), (fw, fh))
-    wrect(d, (fx + px, fy + py, fx + px + side, fy + py + side), RED, 4)
+    wrect(d, (fx + px, fy + py, fx + px + side, fy + py + side), BLUE, 4)
     text(d, (fx, fy + fh + 14), "camera frame, 640 x 480", 24, SOFT)
-    text(d, (fx + px + side - 4, fy + py + 8), "center square", 22, RED, "hand", "ra")
+    text(d, (fx + px + side - 4, fy + py + 8), "center square", 22, BLUE, "handb", "ra")
     caption(d, "Keep only the center square, where the hand goes.")
     mv.hold(img, 3, name="frame")
 
@@ -436,8 +445,8 @@ def scene_input(mv, ex):
     def zoom_page(values, fmt, colors, title_line, cap):
         im, dd = page("1. From camera to numbers")
         put(im, dd, gray_rgb(small, 0, 1), (60, 150), (384, 384))
-        wrect(dd, (60 + j0 * 6, 150 + i0 * 6, 60 + (j0 + 8) * 6, 150 + (i0 + 8) * 6), RED, 4)
-        arrow(dd, (60 + (j0 + 8) * 6 + 8, 150 + (i0 + 4) * 6), (520, 330), RED, 3)
+        wrect(dd, (60 + j0 * 6, 150 + i0 * 6, 60 + (j0 + 8) * 6, 150 + (i0 + 8) * 6), BLUE, 4)
+        arrow(dd, (60 + (j0 + 8) * 6 + 8, 150 + (i0 + 4) * 6), (520, 330), BLUE, 3)
         text(dd, (540, 125), title_line, 26, INK, "handb")
         number_grid(dd, 540, 170, 54, values, fmt, colors, 17)
         caption(dd, cap)
@@ -448,7 +457,7 @@ def scene_input(mv, ex):
     mv.hold(im, 4, name="raw")
     im = zoom_page(std, lambda v: f"{v:+.1f}", div_rgb(std, 2.5), "standardized: (pixel - mean) / spread",
                    f"This photo's mean is {mean:.0f} and its spread is {spread:.0f}. After standardizing, "
-                   "darker than average is negative (blue) and brighter is positive (red).")
+                   "darker than average is negative (red) and brighter is positive (green).")
     mv.hold(im, 4.5, name="std")
 
 
@@ -472,7 +481,7 @@ def scene_conv(mv, ex):
         dd.text((645, 120), "filter weights (5 x 5)", font=font(24, "handb"), fill=INK)
         number_grid(dd, 645, 160, 44, w, lambda v: f"{v:+.2f}", div_rgb(w), 13)
         if filled is not None:
-            shown = np.full((64, 64, 3), 232, np.uint8)
+            shown = np.full((64, 64, 3), BLANK, np.uint8)
             mask = np.zeros(64 * 64, bool)
             mask[:filled] = True
             mask = mask.reshape(64, 64)
@@ -486,7 +495,7 @@ def scene_conv(mv, ex):
             caption(dd, cap)
         return im, dd
 
-    im, dd = base(cap="A filter is 25 weights the network learned. Red weights like bright pixels, blue ones "
+    im, dd = base(cap="A filter is 25 weights the network learned. Green weights like bright pixels, red ones "
                       "like dark pixels.")
     mv.hold(im, 4, name="filter")
 
@@ -505,8 +514,8 @@ def scene_conv(mv, ex):
         val = total + b
         dd.text((385, 450), f"multiply each pair and add: {total:+.2f}", font=font(24, "mono"), fill=INK)
         dd.text((385, 485), f"plus the bias:              {b:+.2f}", font=font(24, "mono"), fill=INK)
-        dd.text((385, 525), f"= {val:+.2f}", font=font(34, "monob"), fill=RED if val > 0 else BLUE)
-        text(dd, (385, 570), word, 24, RED if val > 0 else BLUE, "hand")
+        dd.text((385, 525), f"= {val:+.2f}", font=font(34, "monob"), fill=GREEN if val > 0 else RED)
+        text(dd, (385, 570), word, 24, GREEN if val > 0 else RED, "handb")
         assert abs(val - fmap[i, j]) < 1e-3
         mv.hold(im, 4.5, name=f"step_{'pos' if val > 0 else 'neg'}")
 
@@ -518,7 +527,7 @@ def scene_conv(mv, ex):
         im, dd = base(filled=n, win=(last // 64, last % 64),
                       cap="Slide to every position and write each answer down: that builds the feature map.")
         mv.hold(im, frames=1 if n > 64 else 2)
-    im, dd = base(filled=4096, cap="Red where the filter's pattern shows up, blue where the opposite does.")
+    im, dd = base(filled=4096, cap="Green where the filter's pattern shows up, red where the opposite does.")
     mv.hold(im, 3, name="map")
 
 
@@ -535,10 +544,10 @@ def scene_relu(mv, ex):
             put(im, dd, div_rgb(WTS["conv1_w"][k, 0]), (x + 29, 130), (70, 70), width=2)
             maps = r1[k] if after else pre1[k]
             put(im, dd, div_rgb(maps, m), (x, 240), (128, 128), width=2)
-        text(dd, (40, 160), "filters", 20, SOFT, "hand", "ra")
+        text(dd, (8, 156), "filters", 20, SOFT, "hand", "la")
         if after:
             text(dd, (W // 2, 420), "ReLU:  max(0, x)", 40, INK, "handb", "mm")
-            caption(dd, "ReLU keeps the positive numbers and turns every negative (blue) into 0.", 470)
+            caption(dd, "ReLU keeps the positive numbers and turns every negative (red) into 0.", 470)
         else:
             caption(dd, "8 filters give 8 feature maps from the same photo, each one picking out something "
                         "different.", 420)
@@ -582,7 +591,7 @@ def scene_pool(mv, ex):
         wrect(dd, (40 + j0 * 4, 160 + i0 * 4, 40 + (j0 + 8) * 4, 160 + (i0 + 8) * 4), INK, 3)
         text(dd, (168, 430), "after ReLU", 22, SOFT, "hand", "ma")
         number_grid(dd, GX, GY, C, patch, pool_fmt, heat_rgb(patch, m), 15)
-        shown = np.full((4, 4, 3), 232, np.uint8)
+        shown = np.full((4, 4, 3), BLANK, np.uint8)
         vals = np.full((4, 4), np.nan)
         for q in range(k):
             a, bb = divmod(q, 4)
@@ -592,16 +601,16 @@ def scene_pool(mv, ex):
         for q in range(k, 16):     # blank the cells not filled yet
             a, bb = divmod(q, 4)
             dd.rectangle((OX + bb * OC + 1, OY + a * OC + 1, OX + (bb + 1) * OC - 1, OY + (a + 1) * OC - 1),
-                         fill=(232, 228, 218))
+                         fill=BLANK)
         if 0 < k <= 16:
             a, bb = divmod(k - 1, 4)
-            wrect(dd, (GX + 2 * bb * C, GY + 2 * a * C, GX + 2 * (bb + 1) * C, GY + 2 * (a + 1) * C), RED, 5)
+            wrect(dd, (GX + 2 * bb * C, GY + 2 * a * C, GX + 2 * (bb + 1) * C, GY + 2 * (a + 1) * C), BLUE, 5)
             blk = patch[2 * a:2 * a + 2, 2 * bb:2 * bb + 2]
             ii, jj = np.unravel_index(np.argmax(blk), blk.shape)
             cx, cy = GX + (2 * bb + jj + 0.5) * C, GY + (2 * a + ii + 0.5) * C
             d_el = 24
-            dd.ellipse((cx - d_el, cy - d_el, cx + d_el, cy + d_el), outline=RED, width=3)
-            arrow(dd, (GX + 8 * C + 10, GY + (2 * a + 1) * C), (OX - 10, OY + (a + 0.5) * OC), RED, 3)
+            dd.ellipse((cx - d_el, cy - d_el, cx + d_el, cy + d_el), outline=BLUE, width=3)
+            arrow(dd, (GX + 8 * C + 10, GY + (2 * a + 1) * C), (OX - 10, OY + (a + 0.5) * OC), BLUE, 3)
         text(dd, (OX + 2 * OC, OY + 4 * OC + 16), "4 x 4", 24, SOFT, "hand", "ma")
         caption(dd, cap, 610)
         return im
@@ -630,7 +639,7 @@ def stack(d, img, x, y, n, s, label, sub, front=None):
     for k in range(min(n, 32) - 1, -1, -1):
         dx, dy = k * off, -k * off
         box = (x + dx, y + dy, x + dx + s, y + dy + s)
-        d.rectangle(box, fill=(236, 230, 214), outline=INK, width=2)
+        d.rectangle(box, fill=BLANK, outline=(189, 193, 198), width=1)
     if front is not None:
         put(img, d, front, (x, y), (s, s), width=2)
     text(d, (x + s / 2, y + s + 18), label, 26, INK, "handb", "ma")
@@ -697,7 +706,7 @@ def scene_output(mv, ex):
         text(dd, (110, y + 18), f"count {c}", 22, INK, "hand", "rm")
         put(im, dd, div_rgb(fc[c]).reshape(1, 2048, 3), (128, y), (820, 36), width=2)
         s = net["logits"][c]
-        dd.text((990, y + 18), f"score {s:+6.1f}", font=font(24, "mono"), fill=RED if c == 3 else INK,
+        dd.text((990, y + 18), f"score {s:+6.1f}", font=font(24, "mono"), fill=BLUE if c == 3 else INK,
                 anchor="lm")
     caption(dd, "Multiply each number by its weight and add them up: one score per count.", 610)
     mv.hold(im, 5, name="scores")
@@ -713,7 +722,7 @@ def scene_output(mv, ex):
             bars(dd, 600, 520, probs, 480, 300, frac, 24)
             text(dd, (840, 560), "count", 22, SOFT, "hand", "ma")
             if frac == 1.0:
-                text(dd, (300, 530), f"answer: {int(np.argmax(probs))}  ({probs.max():.0%} sure)", 30, RED,
+                text(dd, (300, 530), f"answer: {int(np.argmax(probs))}  ({probs.max():.0%} sure)", 30, BLUE,
                      "handb", "ma")
             mv.hold(im, frames=1 if frac < 1 else 16, name=f"bars{c}" if frac == 1 else None)
 
@@ -728,8 +737,8 @@ def overlay(saved, cmap_8, size):
     heat = cv2.resize(np.clip(cmap_8, 0, None), (size, size), interpolation=cv2.INTER_CUBIC)
     heat = np.clip(heat / (heat.max() + 1e-9), 0, 1)[..., None]
     base = np.repeat(photo[..., None], 3, axis=2) * 255
-    red = np.array([230, 40, 30], np.float32)
-    out = base * (1 - 0.65 * heat) + red * 0.65 * heat
+    green = np.array([52, 168, 83], np.float32)
+    out = base * (1 - 0.7 * heat) + green * 0.7 * heat
     return out.astype(np.uint8)
 
 
@@ -745,7 +754,7 @@ def scene_heat(mv, ex):
     arrow(dd, (780, 300), (840, 300))
     put(im, dd, overlay(ph["saved"], cm, 300), (860, 150), (300, 300))
     text(dd, (610, 470), f"score for {c}, split over the 8 x 8 grid", 22, SOFT, "hand", "ma")
-    caption(dd, "Weights times layer-3 values, added up over the 32 maps at each spot. Red pushed the "
+    caption(dd, "Weights times layer-3 values, added up over the 32 maps at each spot. Green pushed the "
                 "network toward its answer.", 560)
     mv.hold(im, 6, name="one")
 
@@ -755,7 +764,7 @@ def scene_heat(mv, ex):
         pc = int(np.argmax(e["net"]["probs"]))
         put(im, dd, overlay(e["saved"], contrib_map(e["net"], pc), 210), (55 + k * 240, 200), (210, 210))
         text(dd, (160 + k * 240, 430), f"read as {pc}", 26, INK, "handb", "ma")
-    caption(dd, "Often the red is on the fingers. Sometimes it's the empty space beside them, since a gap "
+    caption(dd, "Often the green is on the fingers. Sometimes it's the empty space beside them, since a gap "
                 "where a finger isn't is evidence too.", 540)
     mv.hold(im, 5, name="all")
 
@@ -803,11 +812,11 @@ def scene_train(mv, ex):
     # the loss as a bowl over one weight, and a ball stepping down it
     def to_xy(xv):
         return 380 + 230 * xv, 520 - 220 * xv * xv
-    dd.line([to_xy(xv) for xv in np.linspace(-1, 1, 60)], fill=INK, width=3)
+    dd.line([to_xy(xv) for xv in np.linspace(-1, 1, 60)], fill=GREEN, width=3)
     steps = (0.9, 0.62, 0.4, 0.22, 0.1)
     for k, xv in enumerate(steps):
         px, py = to_xy(xv)
-        dd.ellipse((px - 10, py - 18, px + 10, py + 2), fill=RED if k == 0 else (232, 150, 130))
+        dd.ellipse((px - 10, py - 18, px + 10, py + 2), fill=BLUE if k == 0 else LIGHT_BLUE)
         if k + 1 < len(steps):
             arrow(dd, (px - 8, py - 26), (to_xy(steps[k + 1])[0] + 8, to_xy(steps[k + 1])[1] - 26), SOFT, 2)
     text(dd, (380, 545), "one weight", 22, SOFT, "hand", "ma")
@@ -860,14 +869,14 @@ def draw_lock(view, reading, conf, progress, digits, blink_next, status, msg, ar
     text(dd, (210, 570), "hold for 1 s", 18, SOFT, "hand", "ma")
 
     # front panel
-    wrect(dd, (420, 160, 860, 420), INK, 4, fill=(226, 205, 168))
+    dd.rounded_rectangle((420, 160, 860, 420), radius=10, fill=(241, 227, 198), outline=(205, 180, 135), width=2)
     text(dd, (630, 175), "front of the box", 22, INK, "hand", "ma")
     for k in range(3):
         on = digits > k or (blink_next and k == digits)
         cx = 500 + k * 70
-        dd.ellipse((cx - 22, 260, cx + 22, 304), fill=YELLOW if on else (120, 112, 96), outline=INK, width=2)
-    dd.ellipse((718, 260, 762, 304), fill=GREEN if status == "green" else (120, 112, 96), outline=INK, width=2)
-    dd.ellipse((778, 260, 822, 304), fill=RED if status == "red" else (120, 112, 96), outline=INK, width=2)
+        dd.ellipse((cx - 22, 260, cx + 22, 304), fill=YELLOW if on else (189, 193, 198))
+    dd.ellipse((718, 260, 762, 304), fill=GREEN if status == "green" else (189, 193, 198))
+    dd.ellipse((778, 260, 822, 304), fill=RED if status == "red" else (189, 193, 198))
     text(dd, (570, 320), "digits", 20, INK, "hand", "ma")
     text(dd, (770, 320), "open   wrong", 20, INK, "hand", "ma")
 
@@ -879,7 +888,7 @@ def draw_lock(view, reading, conf, progress, digits, blink_next, status, msg, ar
     text(dd, (1050, 408), "catch", 18, SOFT, "hand", "ma")
     a = np.radians(arm_deg)
     tip = (cx + 95 * np.cos(a), cy + 95 * np.sin(a))
-    dd.line([(cx, cy), tip], fill=(160, 110, 60), width=22)
+    dd.line([(cx, cy), tip], fill=(176, 133, 80), width=22)
     dd.ellipse((cx - 14, cy - 14, cx + 14, cy + 14), fill=INK)
     caption(dd, msg, 610)
     return im
@@ -913,12 +922,13 @@ def scene_lock(mv, ex):
 def scene_end(mv):
     mv.scene("end")
     im, dd = page()
-    text(dd, (W // 2, 250), "Finger-count lock", 64, INK, "handb", "mm")
-    wline(dd, (380, 295), (900, 295), RED, 5, 2)
+    dd.rectangle((0, 0, W, 6), fill=GREEN)
+    text(dd, (W // 2, 250), "Finger-count lock", 60, INK, "handb", "mm")
+    wline(dd, (560, 300), (720, 300), GREEN, 4)
     text(dd, (W // 2, 370), "ME193 Midterm 2", 34, INK, "hand", "mm")
     text(dd, (W // 2, 430), "PyTorch to train, numpy on the Arduino UNO Q", 28, SOFT, "hand", "mm")
     text(dd, (W // 2, 490), "github.com/iliketocode2/ME193-Robotics", 26, SOFT, "mono", "mm")
-    mv.hold(im, 4, name="end")
+    mv.hold(im, 5, name="end")
 
 
 # Script ---------------------------------------------------------------------------------------------------------

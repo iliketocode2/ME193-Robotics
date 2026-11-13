@@ -1,6 +1,6 @@
 # Voice-over script for the stop-action movie
 
-The video `nn_movie.mp4` is 3:33.1 long, silent, at 8 frames a second. Each scene below gives its start and end time and the words to read over it. Every scene is long enough to read its part at about 150 words a minute, with a short pause at the end.
+The video `nn_movie.mp4` is 2:29.9 long, silent, at 8 frames a second. Each scene below gives its start and end time and the words to read over it. Every scene is long enough to read its part at about 150 words a minute, with a short pause at the end.
 
 ## Recording tips
 
@@ -16,46 +16,46 @@ ffmpeg -i nn_movie.mp4 -i voiceover.m4a -map 0:v -map 1:a -c:v copy -c:a aac -sh
 
 ## Script
 
-### 0:00.0 to 0:12.0: Title
+### 0:00.0 to 0:06.2: Title
 
-This is my finger-count lock. A webcam looks down at my hand, and a small neural network counts my fingers, from zero to five. Here's how it works.
+A small neural network in my lock counts fingers from zero to five. Here's how it works.
 
-### 0:12.0 to 0:32.8: From camera to numbers
+### 0:06.2 to 0:20.2: From camera to numbers
 
-The program first keeps the center square, turns it gray and shrinks it to 64 by 64 pixels, so it's just a grid of numbers from 0 to 255. Then it subtracts the average brightness and divides by the spread, so a bright room and a dim room look alike.
+First, the program keeps the center square, turns it gray and shrinks it to 64 by 64, so it's just numbers from 0 to 255. Then it subtracts the average brightness and divides by the spread.
 
-### 0:32.8 to 1:03.5: Convolution
+### 0:20.2 to 0:42.8: Convolution
 
-The first layer is a convolution. A filter is a 5 by 5 grid of weights the network learned. It slides over the image, and at each spot it multiplies the 25 pixels by the 25 weights, adds them up and adds a bias. A patch that matches the pattern gives a big positive number, in red, and the opposite pattern gives a negative one, in blue. All the spots together make a feature map.
+Convolution comes first. A filter is a 5 by 5 grid of learned weights. It slides over the image, multiplies the 25 pixels by the 25 weights and adds them up, plus a bias. A matching patch gives a big positive number, in green, and the opposite gives a negative one, in red. All of them make a feature map.
 
-### 1:03.5 to 1:15.5: Eight filters and ReLU
+### 0:42.8 to 0:51.2: Eight filters and ReLU
 
-There are eight filters, so one photo becomes eight feature maps, each picking out something different. Then ReLU keeps the positive numbers and turns every negative into zero.
+Eight filters turn one photo into eight feature maps. Then ReLU keeps the positive numbers and turns every negative into zero.
 
-### 1:15.5 to 1:33.1: Max pooling
+### 0:51.2 to 1:04.5: Max pooling
 
-Next comes max pooling. A 2 by 2 window steps across the map and keeps the biggest of each four numbers. That halves the size to 32 by 32, keeps the strong responses, and makes small shifts of my hand matter less.
+Max pooling slides a 2 by 2 window across each map and keeps the biggest number. That halves the size to 32 by 32 and makes small shifts of my hand matter less.
 
-### 1:33.1 to 1:49.9: Going deeper
+### 1:04.5 to 1:17.4: Going deeper
 
-Convolution, ReLU and pooling happen three times. The second layer's 16 filters each look at all eight maps before them, so they can combine edges into pieces of fingers. The third layer's 32 filters tend to respond to whole fingers.
+This repeats three times. A layer's width is its number of filters: 8, then 16, then 32. With the output layer the network is four layers deep, and deeper filters combine edges into fingers.
 
-### 1:49.9 to 2:10.8: From maps to an answer
+### 1:17.4 to 1:34.0: From maps to an answer
 
-Then the 32 small maps become one line of 2048 numbers. Each count has its own 2048 weights, and multiplying and adding gives six scores. Softmax turns them into probabilities that add up to one. The tallest bar is the answer, and its height is how sure the network is.
+The 32 small maps become one line of 2048 numbers. Each count has 2048 weights, and multiplying and adding gives six scores. Softmax turns them into probabilities. The tallest bar is the answer, and its height is how sure it is.
 
-### 2:10.8 to 2:28.8: Where it looked
+### 1:34.0 to 1:45.5: Where it looked
 
-Since the last layer comes right after the third convolution, I can split each score back onto the 8 by 8 grid. Red shows what pushed the network toward its answer. Often that's the fingers, and sometimes it's the empty space beside them.
+Because that last step is just weights times values, I can split each score back onto an 8 by 8 grid. Green shows what pushed the network toward its answer.
 
-### 2:28.8 to 3:04.8: How it learned
+### 1:45.5 to 2:09.8: How it learned
 
-The weights start out random, so at first the network just guesses. The loss is minus the log of the probability it gave the right answer. Backpropagation uses the chain rule, like my V-fit spreadsheet, to find how each of the 18,310 weights changes the loss, and gradient descent nudges them all downhill. Each training photo is also randomly rotated, shifted, zoomed, flipped and brightened. In the end it got 98 percent of the test photos right, though they came from the same session as the training photos.
+The weights start random. The loss is minus the log of the probability given to the right answer. Backpropagation uses the chain rule, like my V-fit spreadsheet, to find each weight's slope, and gradient descent steps all 18,310 weights downhill. Rotated, shifted and flipped copies of each photo add more examples. In the end it got 98 percent of the test photos right.
 
-### 3:04.8 to 3:29.1: From counts to the lock
+### 2:09.8 to 2:26.1: From counts to the lock
 
-Finally, the lock. I press the button and take my hand away so it reads zero. Then I hold up a count for a second at 80 percent or more, and a yellow LED lights. After three digits the whole code is checked at once, and the right code turns on the green LED and swings the latch open.
+Finally, the lock. I press the button and show an empty view, so it reads zero. Then I hold a count for one second at 80 percent or more, and a yellow LED lights. After three digits, the right code opens the latch.
 
-### 3:29.1 to 3:33.1: End card
+### 2:26.1 to 2:29.9: End card
 
 (no narration, let the end card play)
