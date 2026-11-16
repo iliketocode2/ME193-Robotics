@@ -24,7 +24,7 @@ see state.py, activations.py, network_model.py, templates.py, arrows.py,
 sync.py, bindings.py, activation_editor.py, network_actions.py, zoom.py,
 and Device.py for the actual implementation.
 """
-from pyscript import document, when
+from pyscript import document, window, when
 
 import state
 import Device
@@ -36,6 +36,9 @@ import transfer_plot
 import help_system
 import presets
 import training
+import virtual_devices
+import teleop
+import power
 import asyncio
 
 # ── Static wiring ──────────────────────────────────────────────────────────────
@@ -127,7 +130,8 @@ def _on_randomize(evt):
     training.randomize_weights()
 
 FITTING_STATUS = "Pick an example curve, then change the weights, biases and activations until the green line follows the dots."
-TRAINING_STATUS = "Pick a device and a value for each input and output, press Record, and push the robot through its paces."
+TRAINING_STATUS = ("Pick a device and a value for each input and output. With the neural network not running, give it examples by clicking the Record button, "
+                   "selecting \"Drive with controller\", and driving with the controller (or push the robot through its paces by hand).")
 
 def _place_example_select(in_input_box: bool):
     """Fitting has no sensor, so the example picker takes the sensor dropdown's place in the input box."""
@@ -159,6 +163,11 @@ def set_mode(mode: str):
     wrap.classList.toggle("fitting", mode == "fitting")
     wrap.classList.toggle("show-act", show_act)
     update_activation_toggle()
+    if mode != "training" and state.teleop_armed:      # the controller bar only exists in Training
+        box = state.get_id("teleop-enable")
+        if box:
+            box.checked = False
+        teleop.disarm()
     for m in ("beginner", "advanced", "fitting", "training"):
         state.get_id(f"mode-{m}-btn").classList.toggle("active", m == mode)
     if previous != mode and "fitting" in (previous, mode):
@@ -247,6 +256,33 @@ async def _on_load_file(evt):
         training.load_dataset(await file.text())
     evt.target.value = ""   # so the same file can be loaded again
 
+@when("change", "#add-virtual-select")
+def on_virtual_choice(evt):
+    # Choosing only selects; the Add button confirms.
+    state.get_id("add-virtual-btn").disabled = not evt.target.value
+
+@when("click", "#add-virtual-btn")
+def on_add_virtual_device(evt):
+    select = state.get_id("add-virtual-select")
+    kind = select.value
+    if not kind:
+        return
+    dev = virtual_devices.add(kind)
+    select.value = ""                                   # back to the prompt, ready for another
+    state.get_id("add-virtual-btn").disabled = True
+    virtual_devices.announce(f"Added {dev.name}" if dev else "Could not add that device")
+
+@when("change", "#save-power")
+def on_save_power_toggle(evt):
+    asyncio.ensure_future(power.reconcile())
+
+@when("change", "#teleop-enable")
+def on_teleop_toggle(evt):
+    if evt.target.checked:
+        teleop.arm()
+    else:
+        teleop.disarm()
+
 @when("click", "#step-btn")
 async def _on_step(evt):
     await training.train(1)
@@ -269,7 +305,9 @@ def boot():
     presets.populate_select(state.get_id("preset-select"))
     training.populate_examples(state.get_id("example-select"))
     help_system.setup()
-    set_mode(state.mode)
+    wanted = str(window.location.search) + str(window.location.hash)      # trainer.html sends people to ?mode=training
+    set_mode("training" if "mode=training" in wanted or "#training" in wanted else state.mode)
+    power.start()
     asyncio.ensure_future(transfer_plot.run_loop())
     zoom.apply_zoom()
     zoom.setup_resize_observer()

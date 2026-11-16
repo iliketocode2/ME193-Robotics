@@ -1,0 +1,67 @@
+/* Table Cloner page. Variables (--blue, --green, ...) come from the main styles.css. */
+body.cloner .page-wrap { max-width: 900px; margin: 0 auto; padding: 16px; flex-direction: column; gap: 14px; }
+/* Every card gets the Devices card's padding (the shared .card has none). */
+body.cloner .card { padding: 22px 28px; }
+body.cloner .card > .connect-title { display: block; margin-bottom: 14px; }
+body.cloner select, body.cloner input[type=number] {
+    font: inherit; font-size: 0.95rem; padding: 7px 10px; border: 1.5px solid var(--border-mid);
+    border-radius: 10px; background: var(--card-bg); color: var(--text-primary);
+}
+body.cloner input[type=checkbox] { width: 18px; height: 18px; }
+.cl-header h1 { margin: 0 0 4px; color: var(--text-primary); }
+.cl-header p, .cl-hint { color: var(--text-secondary); margin: 6px 0 0; font-size: 0.9rem; }
+.cl-warn { color: var(--red); margin: 6px 0 0; font-size: 0.9rem; min-height: 1.2em; }
+.cl-banner { background: var(--amber-light); border: 1px solid var(--amber-mid); padding: 10px 14px; border-radius: 10px; }
+.cl-banner.hidden, .hidden { display: none; }
+.cl-banner button { float: right; background: none; border: 0; font-size: 1.2rem; cursor: pointer; }
+
+.cl-assign, .cl-settings { display: flex; flex-wrap: wrap; gap: 14px 24px; margin-top: 14px; }
+.cl-assign label, .cl-settings label { display: flex; flex-direction: column; gap: 3px; font-size: 0.85rem; color: var(--text-secondary); }
+.cl-settings label { flex-direction: row; align-items: center; gap: 8px; font-size: 0.95rem; }
+.cl-settings input[type=number] { width: 5em; }
+
+.cl-sensors { display: flex; gap: 14px; margin: 4px 0 18px; }
+.sense { flex: 1; text-align: center; padding: 18px 10px; border-radius: 12px; border: 2px solid var(--border);
+         background: var(--card-bg); transition: background .1s, border-color .1s; }
+.sense .sl { display: block; font-size: 0.8rem; color: var(--text-muted); }
+.sense b { font-size: 2rem; }
+.sense.on { background: var(--amber-light); border-color: var(--amber); }
+.sense.missing { opacity: 0.5; border-style: dashed; }
+.cl-live { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0; }
+.cl-live dt { color: var(--text-muted); }
+.cl-live dd { margin: 0; font-weight: 700; }
+
+.cl-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }
+.cl-btn { font: inherit; font-weight: 700; padding: 10px 22px; border-radius: 99px; border: 0; cursor: pointer; color: #fff; }
+.cl-btn.record { background: var(--red); }
+.cl-btn.run { background: var(--green); }
+.cl-btn.active { outline: 3px solid var(--text-primary); }
+.cl-btn.ghost { background: var(--border); color: var(--text-primary); }
+.cl-mode { color: var(--text-secondary); font-size: 0.9rem; flex: 1 1 200px; }
+.cl-total { color: var(--text-muted); font-size: 0.85rem; }
+
+.cl-table { width: 100%; border-collapse: collapse; }
+.cl-table th { text-align: center; font-size: 0.8rem; color: var(--text-muted); padding: 4px; }
+.cl-table th:first-child { text-align: left; }
+.cl-table td { padding: 6px 4px; border-top: 1px solid var(--border); text-align: center; vertical-align: middle; }
+.cl-table tr.current td { background: var(--blue-light); }
+.cl-table tr.current td:first-child { box-shadow: inset 4px 0 0 var(--blue-bright); }
+.cl-table td.pat { text-align: left; white-space: nowrap; }
+.dots { display: inline-flex; gap: 3px; margin-right: 8px; vertical-align: middle; }
+.dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-mid); }
+.dot.on { background: var(--amber); border-color: var(--amber); }
+.pname { font-size: 0.85rem; color: var(--text-secondary); }
+.cnt .bar { height: 34px; width: 18px; margin: 0 auto; background: var(--page-bg); border-radius: 4px;
+            display: flex; align-items: flex-end; overflow: hidden; }
+.cnt .fill { width: 100%; transition: height .15s; }
+.cnt .num { font-size: 0.75rem; color: var(--text-muted); }
+.a-Forward { background: var(--green); } .a-Left { background: var(--blue-bright); }
+.a-Right { background: var(--purple); } .a-Back { background: var(--amber); }
+.chip { display: inline-block; padding: 2px 10px; border-radius: 99px; color: #fff; font-weight: 700; font-size: 0.85rem; }
+.conf { margin-left: 6px; font-size: 0.75rem; color: var(--text-muted); }
+.none { color: var(--text-muted); font-size: 0.85rem; }
+@media (max-width: 600px) { .pname { display: none; } .cl-sensors { gap: 6px; } }
+
+.cl-subhead { font-weight: 700; color: var(--text-primary); margin-top: 2px; }
+.cl-subhead + .cl-settings { margin-top: 8px; }
+.cl-settings + .cl-settings { margin-top: 12px; }

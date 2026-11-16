@@ -1,0 +1,21 @@
+name = "table-cloner"
+packages = [ "legoeducation==1.2.0" ]
+
+# The hub / Bluetooth / joystick / Save power code is shared with the main page (Device.py, network/, misc_ui/).
+# state.py and sync.py are the Cloner's own small versions of the modules Device.py expects.
+[files]
+"./Device.py" = "./Device.py"
+"./plot.py" = "./plot.py"
+"./network/link_logic.py" = "./link_logic.py"
+"./network/teleop_logic.py" = "./teleop_logic.py"
+"./network/power_logic.py" = "./power_logic.py"
+"./misc_ui/power.py" = "./power.py"
+"../QLearn/webhub.py" = "./webhub.py"
+"./cloner/main.py" = "./main.py"
+"./cloner/state.py" = "./state.py"
+"./cloner/sync.py" = "./sync.py"
+"./cloner/table_logic.py" = "./table_logic.py"
+
+[js_modules.main]
+"./JS/ble.js" = "ble"
+"./JS/plotly.js" = "Plotly"

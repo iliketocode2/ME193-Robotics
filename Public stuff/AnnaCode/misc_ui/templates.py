@@ -7,6 +7,7 @@ append_multi_html DOM-insertion helpers shared by every "add_*" action.
 from pyscript import document
 import state
 import Device
+from number_format import fmt_coeff
 
 def append_html(container_id: str, html: str):
     container = state.get_id(container_id)
@@ -66,13 +67,13 @@ def make_neuron_eq_inner_html(n: dict, labels: list[str]) -> str:
         if i > 0:
             parts += '<span class="eq-op">+</span>'
         parts += (
-            f'<input type="number" step="any" value="{coeff_val:.2f}"'
+            f'<input type="number" step="any" value="{fmt_coeff(coeff_val)}"'
             f' class="eq-num-input" id="coeff-{nid}-{i}" data-neuron="{nid}" data-idx="{i}" />'
             f'<span class="eq-var" id="var-label-{nid}-{i}">{label}</span>'
         )
     parts += (
         f'<span class="eq-op">+</span>'
-        f'<input type="number" step="any" value="{n["bias"]:.2f}"'
+        f'<input type="number" step="any" value="{fmt_coeff(n["bias"])}"'
         f' class="eq-bias-input" id="bias-{nid}" data-neuron="{nid}" />'
     )
     return parts

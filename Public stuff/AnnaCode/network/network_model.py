@@ -136,9 +136,12 @@ def preview_forward():
         n = last[idx] if idx < len(last) else None
         state.output_values[out["id"]] = state.neuron_post_values.get(n["id"], 0.0) if n else 0.0
 
-def forward():
+def forward(override=None):
+    """One Run tick. `override` ({output id: value}) replaces what is sent to those outputs while a human
+    pushes a joystick (state.output_values still holds what the network wanted, for the plots)."""
     read_inputs()
     propagate()
+    state.run_tick += 1
 
     # 3. Route each output from the last layer's neuron at the same position
     last_layer_neurons = state.layers[-1]["neurons"] if state.layers else []
@@ -153,6 +156,8 @@ def forward():
             print(f"Output {oid} jumped {prev} -> {result}; inputs={dict(state.input_values)} "
                   f"pre={[round(state.neuron_pre_values.get(n['id'], 0), 2) for n in last_layer_neurons]}")
         _last_result[oid] = result
+        if override and oid in override:
+            result = override[oid]
         dev_el  = state.get_id(f"dev-out-{oid}")
         chan_el = state.get_id(f"chan-out-{oid}")
         dev_name = dev_el.value if dev_el else ""

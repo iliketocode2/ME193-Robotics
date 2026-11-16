@@ -11,6 +11,11 @@ packages = [ "legoeducation==1.2.0","numpy"]
 "./network/network_model.py" = "./network_model.py"
 "./network/presets.py" = "./presets.py"
 "./network/training.py" = "./training.py"
+"./network/teleop_logic.py" = "./teleop_logic.py"
+"./network/virtual_logic.py" = "./virtual_logic.py"
+"./network/link_logic.py" = "./link_logic.py"
+"./network/power_logic.py" = "./power_logic.py"
+"./network/number_format.py" = "./number_format.py"
 "./Device.py" = "./Device.py"
 "../QLearn/webhub.py" = "./webhub.py"
 "./plot.py" = "./plot.py"
@@ -21,6 +26,9 @@ packages = [ "legoeducation==1.2.0","numpy"]
 "./misc_ui/transfer_plot.py" = "./transfer_plot.py"
 "./misc_ui/help_system.py" = "./help_system.py"
 "./misc_ui/training_plot.py" = "./training_plot.py"
+"./misc_ui/teleop.py" = "./teleop.py"
+"./misc_ui/virtual_devices.py" = "./virtual_devices.py"
+"./misc_ui/power.py" = "./power.py"
 
 [js_modules.main]
 "./JS/ble.js" = "ble"

@@ -6,6 +6,7 @@ via templates, wire via bindings, refresh via sync, redraw via arrows), plus
 the Play/Stop run loop that drives network_model.forward().
 """
 import asyncio
+import time
 from pyscript import document, window
 from pyscript.ffi import create_proxy
 
@@ -18,6 +19,9 @@ import sync
 import arrows
 import activation_editor
 import plot
+import teleop
+import power
+import training
 
 # ── CRUD: inputs ────────────────────────────────────────────────────────────────
 
@@ -245,6 +249,7 @@ def play_network(evt=None):
     if not network_model.alert_unchosen("press Run"):
         return
     state.is_running = True
+    state.run_tick = 0
     state.get_id("play-btn").setAttribute("disabled", "")
     state.get_id("stop-btn").removeAttribute("disabled")
     document.body.classList.add("running")
@@ -257,6 +262,8 @@ def play_network(evt=None):
 
 def stop_network(evt=None):
     state.is_running = False
+    teleop.reset_send_cache()
+    asyncio.ensure_future(power.reconcile())        # the sensor light can go off again
     state.get_id("stop-btn").setAttribute("disabled", "")
     state.get_id("play-btn").removeAttribute("disabled")
     document.body.classList.remove("running")
@@ -274,9 +281,24 @@ def stop_network(evt=None):
     arrows.redraw_arrows()
 
 async def loop_network():
+    teleop.reset_send_cache()
+    await power.ensure_ready()         # with Save power on, wake the sensor and wait for fresh readings
     while state.is_running:
+        lost = Device.dropped_devices_in_use()
+        if lost:
+            # A frozen sensor reading would keep the network driving on stale data.
+            print("Stopping: lost Bluetooth connection to " + ", ".join(lost))
+            stop_network()
+            break
         Device.drop_stale_commands()
-        network_model.forward()
+        # A stick push (with "Drive with controller" on) takes over from the network.
+        override = teleop.current_override()
+        network_model.forward(override)
+        if override and teleop.settings()["log"] and state.run_tick % 2 == 0:
+            # DAgger: keep the human's correction as a training point at this sensor reading.
+            xs = {inp["id"]: state.input_values.get(inp["id"], 0.0) for inp in state.inputs}
+            ys = {out["id"]: override.get(out["id"], state.output_values.get(out["id"], 0.0)) for out in state.outputs}
+            training.add_point(xs, teleop.snap_labels(ys), time.monotonic())
         if state.debug_mode:
             arrows.redraw_arrows()
         await asyncio.sleep(0.05)

@@ -23,6 +23,8 @@ import Device
 import sync
 import activations
 import network_model
+import teleop
+import power
 
 SAMPLE_PERIOD = 0.1   # seconds between recorded samples
 EPOCH_PAUSE = 0.03    # lets the plots repaint between epochs
@@ -248,9 +250,26 @@ def save_dataset(evt=None):
     set_status(f"Saved {len(state.training_data)} points (a TSV you can open in Excel).")
 
 async def _record_loop():
+    await power.ensure_ready()         # with Save power on, wake the sensor and wait for fresh readings
     while state.is_recording:
+        lost = Device.dropped_devices_in_use()
+        if lost:
+            # A dead sensor just repeats its last reading; recording it would pollute the data.
+            print("Recording stopped: lost Bluetooth connection to " + ", ".join(lost))
+            stop_recording()
+            set_status("Recording stopped: lost the Bluetooth connection to " + ", ".join(lost) + f". {len(state.training_data)} points recorded.")
+            break
+        if state.teleop_armed and state.is_running:
+            # The Run loop logs the human's corrections itself; recording here too would add the
+            # network's own driving as if it were a demonstration.
+            await asyncio.sleep(SAMPLE_PERIOD)
+            continue
         xs = {i["id"]: _read("in", i["id"]) for i in state.inputs}
-        ys = {o["id"]: _read("out", o["id"]) for o in state.outputs}
+        # With "Drive with controller" on, the label is what the human commanded. Otherwise (or for
+        # outputs the sticks don't drive) it is the measured value, as before.
+        human = teleop.labels_for_record()
+        ys = {o["id"]: human[o["id"]] if o["id"] in human else _read("out", o["id"]) for o in state.outputs}
+        ys = teleop.snap_labels(ys)         # optionally simplify the speeds to five levels
         if None not in xs.values() and None not in ys.values():
             add_point(xs, ys, time.monotonic())
         await asyncio.sleep(SAMPLE_PERIOD)
@@ -268,6 +287,7 @@ def start_recording():
 
 def stop_recording():
     state.is_recording = False
+    asyncio.ensure_future(power.reconcile())        # the sensor light can go off again
     btn = state.get_id("record-btn")
     if btn:
         btn.textContent = "Record"

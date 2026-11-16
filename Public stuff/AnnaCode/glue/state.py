@@ -44,6 +44,13 @@ example_key = None   # which example curve filled the plot (None for recorded da
 is_recording = False
 is_training = False
 
+# Controller teleoperation (see misc_ui/teleop.py): while armed, a LEGO Controller's joysticks drive the
+# motor outputs. Record stores the commanded values as the labels, and during Run a stick push overrides
+# the network and logs the human's command as a new point.
+teleop_armed = False
+teleop_sent: dict = {}   # (device name, channel) -> (last value sent, ticks since sent)
+run_tick = 0             # counts forward() calls while the network runs
+
 # Zoom only affects the network diagram's spacing/box sizes (via the CSS
 # --zoom variable) -- never font sizes or arrow stroke widths, UNTIL zoom
 # drops below TEXT_ZOOM_THRESHOLD, at which point text also starts

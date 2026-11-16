@@ -38,8 +38,22 @@
 
         <!-- ── Connection card ───────────────────────────────────── -->
         <div class="card connect-card">
-            <div class="connect-header">
+            <div class="connect-header devices-header">
                 <span class="connect-title">Devices</span>
+                <div class="add-virtual" title="No kit with you? Add a pretend device and use it like the real one.">
+                    <select class="add-virtual-select" id="add-virtual-select" aria-label="Virtual device to add">
+                        <option value="">Choose a virtual device…</option>
+                        <option value="controller">Controller (sliders and keyboard)</option>
+                        <option value="double_motor">Double Motor</option>
+                        <option value="single_motor">Single Motor</option>
+                        <option value="color_sensor">Color Sensor</option>
+                    </select>
+                    <button class="btn-add-virtual" id="add-virtual-btn" disabled>Add</button>
+                    <span class="add-virtual-status" id="add-virtual-status" role="status" aria-live="polite"></span>
+                </div>
+                <label class="save-power" title="The color sensor's light uses a lot of battery. With this ticked the light is off except while you are recording data or running the network, so the sensor's live reading is blank the rest of the time. Untick it to watch the sensor live.">
+                    <input type="checkbox" id="save-power" checked /> Save power: sensor light off unless recording or running
+                </label>
             </div>
             <div class="device-list" id="device-list">
                 <button class="btn-add-device" id="add-device-btn">
@@ -50,6 +64,9 @@
                     Connect device
                 </button>
             </div>
+
+            <!-- ── Virtual devices added with the dropdown above (misc_ui/virtual_devices.py) ── -->
+            <div class="virtual-devices" id="virtual-devices"></div>
         </div>
 
         <!-- ── Network card ──────────────────────────────────────── -->
@@ -166,6 +183,25 @@
                     <span class="train-group"><button class="train-btn" id="load-data-btn" data-tip="load">Load</button></span>
                     <input type="file" id="load-file" accept=".tsv,.txt,text/tab-separated-values,text/plain" hidden />
                 </div>
+                <!-- ── Controller demonstrations (see misc_ui/teleop.py) ── -->
+                <div class="teleop-bar" id="teleop-bar">
+                    <label class="teleop-check" title="The controller's joysticks drive the motors. While this is on, Record stores what you commanded as the answer for each sensor reading.">
+                        <input type="checkbox" id="teleop-enable" /> Drive with controller
+                    </label>
+                    <label class="teleop-field" title="Motor speed when a stick is pushed all the way">Max speed
+                        <input type="number" id="teleop-max" value="50" min="5" max="100" step="5" /> %
+                    </label>
+                    <label class="teleop-check" title="Instead of recording the exact motor speed, record the nearest of five levels: 0, half or full of Max speed, forward or backward. Fewer choices can be easier to learn. Applies to what is recorded from now on, including corrections while running.">
+                        <input type="checkbox" id="teleop-snap" /> Snap speeds to 5 levels (0, &plusmn;&frac12;, &plusmn;1 of Max speed)
+                    </label>
+                    <label class="teleop-check" title="Tick this if the other end of your car is its front. Forward and back swap, and the sticks switch wheels so left still turns left and right still turns right.">
+                        <input type="checkbox" id="teleop-reverse" /> Reverse
+                    </label>
+                    <label class="teleop-check" title="While the network is running, push a stick to take over. Your correction is added to the training data.">
+                        <input type="checkbox" id="teleop-log" checked /> Add my corrections while running
+                    </label>
+                    <span class="teleop-status" id="teleop-status"></span>
+                </div>
                 <div class="training-bar">
                     <span class="train-group"><button class="train-btn" id="randomize-btn" data-tip="randomize">Randomize weights</button></span>
                     <span class="train-group"><button class="train-btn train-accent" id="step-btn" data-tip="step">Step</button></span>
@@ -175,7 +211,7 @@
                     <span class="train-group"><label class="train-lr" data-tip="live"><input type="checkbox" id="live-dot-toggle" checked /> Show live reading</label></span>
                     <span class="train-count" id="train-count">0 points</span>
                 </div>
-                <div class="train-status"><span id="train-status">Pick a device and a value for each input and output, press Record, and push the robot through its paces.</span>
+                <div class="train-status"><span id="train-status">Pick a device and a value for each input and output. With the neural network <em>not</em> running, give it examples by clicking the Record button, selecting "Drive with controller", and driving with the controller (or push the robot through its paces by hand).</span>
                     <button class="help-btn inline" data-help="dataplot" title="Help">?</button></div>
                 <div class="train-hint hidden" id="train-hint">
                     <span id="train-hint-text"></span>

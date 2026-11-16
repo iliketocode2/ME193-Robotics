@@ -1193,3 +1193,89 @@ body.running #adv-plot { opacity: 1; filter: none; }
 .fitting .save-icon-btn { display: inline-flex; align-items: center; }
 .fitting .input-node .node-header { display: flex; align-items: center; gap: 4px; }
 .fitting .input-node .node-header .train-select { flex: 1; }
+
+/* ═══ Teaching features: controller demonstrations, virtual devices, link status, Save power ═══ */
+/* ── Controller demonstrations (dataset card) ─────────────────────────── */
+.teleop-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+    margin: 0 0 8px; padding: 6px 8px;
+    border: 1px dashed var(--border-mid); border-radius: 8px;
+    font-size: 12px;
+}
+.teleop-check, .teleop-field { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.teleop-field input[type="number"] { width: 52px; }
+.teleop-status { flex-basis: 100%; color: #64748b; min-height: 1em; }
+.teleop-status.teleop-warn { color: #b45309; font-weight: 600; }
+
+/* ── Virtual devices (Devices card) ───────────────────────────────────── */
+.devices-header { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.add-virtual-select {
+    padding: 6px 12px;
+    border: 1.5px dashed var(--border-mid);
+    border-radius: 99px;
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.virtual-devices { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px; margin-top: 14px; }
+.virtual-devices:empty { display: none; }
+.vdev-card {
+    padding: 10px 16px 12px;
+    background: #f8f9fc;
+    border: 1.5px solid var(--border-mid);
+    border-radius: 14px;
+    animation: row-in 0.18s ease;
+}
+.vdev-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 8px; }
+.vdev-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+.vdev-remove {
+    border: none; background: none; cursor: pointer;
+    color: var(--text-muted); font-size: 18px; line-height: 1; padding: 0 2px;
+}
+.vdev-remove:hover { color: var(--text-primary); }
+.vdev-body { display: flex; align-items: center; gap: 20px; }
+.vdev-wheels { display: flex; gap: 16px; }
+.vdev-help { margin: 0; max-width: 210px; font-size: 11px; line-height: 1.5; color: var(--text-secondary); }
+.vdev-help-faint { font-size: 11px; color: var(--text-muted); }
+.vdev-sensor { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.vdev-swatch { width: 100%; height: 22px; border: 1px solid var(--border-mid); border-radius: 6px; }
+.vdev-hslider { width: 160px; accent-color: var(--blue-bright); }
+
+/* ── "Add virtual device" row: dropdown + Add button + confirmation ───── */
+.add-virtual { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn-add-virtual {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 99px;
+    background: var(--blue-bright);
+    color: #fff;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+}
+.btn-add-virtual:hover:not(:disabled)  { opacity: 0.88; }
+.btn-add-virtual:active:not(:disabled) { transform: scale(0.97); }
+.btn-add-virtual:disabled { opacity: 0.35; cursor: not-allowed; }
+.add-virtual-status { font-size: 12px; font-weight: 600; color: var(--green); min-height: 1em; }
+
+/* ── Lost Bluetooth connection (Device chips) ─────────────────────────── */
+.device-status { display: none; font-size: 11px; font-weight: 700; color: var(--red); }
+.device-row.lost { border-color: var(--red); background: #fdf2f2; max-width: none; }
+.device-row.lost .device-status { display: inline; }
+.device-row.lost .device-indicator { background: var(--red); animation: none; }
+.device-row.lost .device-battery { opacity: 0.45; }
+
+.device-battery-age { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+.device-row.lost .device-battery-age { opacity: 0.45; }
+
+
+/* ── Save power (Devices card) and the "light off" note on a sensor's chip ─ */
+.save-power { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.device-note { display: none; font-size: 11px; font-weight: 700; color: var(--text-muted); white-space: nowrap; }
+.device-note:not(:empty) { display: inline; }
+.fitting .teleop-bar { display: none; }   /* Fitting uses example curves, not the robot */

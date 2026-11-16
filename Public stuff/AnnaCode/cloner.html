@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>AnnaCode Table Cloner</title>
+    <link rel="stylesheet" href="https://pyscript.net/releases/2026.3.1/core.css">
+    <script type="module" src="https://pyscript.net/releases/2026.3.1/core.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- styles.css gives the shared look (cards, device chips); cloner/cloner.css is this page's own. -->
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="cloner/cloner.css" />
+    <py-config src="./cloner.toml"></py-config>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body class="cloner">
+    <div id="loading-splash" class="loading-splash">
+        <div class="loading-orb"></div>
+        <span class="loading-label">Starting up…</span>
+    </div>
+
+    <div class="page-wrap" id="page-wrap" style="display:none">
+        <header class="cl-header">
+            <h1>Table Cloner</h1>
+            <p>Teach a car with three color sensors by driving it. It tallies what you did for each
+               pattern of "object here / not here", then drives itself from the table.</p>
+        </header>
+
+        <div class="cl-banner hidden" id="ble-warning-banner" role="alert">
+            Connecting to hardware needs Chrome or Edge (Web Bluetooth). This browser can't connect.
+            <button id="close-ble-warning-btn" aria-label="Dismiss">×</button>
+        </div>
+
+        <!-- ── Devices ── -->
+        <div class="card connect-card">
+            <div class="connect-header devices-header">
+                <span class="connect-title">Devices</span>
+            </div>
+            <div class="device-list" id="device-list">
+                <button class="btn-add-device" id="add-device-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                    Connect device
+                </button>
+            </div>
+            <p class="cl-hint">Connect one at a time: three Color Sensors, the Double Motor, and a Controller.
+               Each hub is its own Bluetooth device.</p>
+
+            <div class="cl-assign">
+                <label>Left sensor <select id="dev-in-left" class="device-pick"></select></label>
+                <label>Front sensor <select id="dev-in-front" class="device-pick"></select></label>
+                <label>Right sensor <select id="dev-in-right" class="device-pick"></select></label>
+                <label>Motor <select id="motor-select" class="device-pick"></select></label>
+            </div>
+            <p class="cl-warn" id="setup-note" role="status"></p>
+        </div>
+
+        <!-- ── Settings ── -->
+        <div class="card">
+            <div class="connect-title">Settings</div>
+            <div class="cl-subhead">Sensor thresholds</div>
+            <div class="cl-settings">
+                <label>An object is
+                    <select id="object-is"><option value="bright">brighter than</option><option value="dark">darker than</option></select>
+                    <input id="threshold" type="number" min="0" max="100" value="40" title="Reflection value (0 to 100) that counts as an object"> reflection</label>
+            </div>
+            <div class="cl-settings">
+                <label title="The joystick gives whole moves instead of continuous driving: the left stick drives forward or back one car length, and the right stick turns 90 degrees (push it forward to turn right, pull it back to turn left). Each push is one example for the table, and Run table makes the same moves one at a time.">
+                    <input id="step-mode" type="checkbox"> Step mode: left stick = forward/back, right stick = 90° right/left</label>
+                <label title="How far the wheels turn for one car length. Try 360 (one wheel rotation), drive forward once, and adjust until it moves one car length.">
+                    One car length = <input id="car-length" type="number" min="10" max="3600" value="360"> wheel degrees</label>
+            </div>
+            <div class="cl-settings">
+                <label>Driving speed while running table <input id="speed" type="number" min="5" max="100" value="40"></label>
+            </div>
+            <div class="cl-settings">
+                <label><input id="add-corrections" type="checkbox" checked> Add my corrections while running</label>
+                <label><input id="reverse" type="checkbox"> Reverse (if forward drives backward)</label>
+            </div>
+            <div class="cl-settings">
+                <label title="The color sensor's light uses a lot of battery. With this ticked the three sensors' lights are off except while you are recording or running the table, so the live readings above are blank the rest of the time. Leave it unticked while you set the thresholds."><input id="save-power" type="checkbox"> Save power: turn off color sensor lights when idle</label>
+            </div>
+        </div>
+
+        <!-- ── Live view ── -->
+        <div class="card">
+            <div class="connect-title">What the car sees</div>
+            <div class="cl-sensors">
+                <div class="sense" id="sense-left"><span class="sl">Left</span><b id="read-left">-</b></div>
+                <div class="sense" id="sense-front"><span class="sl">Front</span><b id="read-front">-</b></div>
+                <div class="sense" id="sense-right"><span class="sl">Right</span><b id="read-right">-</b></div>
+            </div>
+            <dl class="cl-live">
+                <dt>Pattern</dt><dd id="live-pattern">Clear</dd>
+                <dt>You would</dt><dd id="live-human">not driving</dd>
+                <dt>Table would</dt><dd id="live-table">Stop (table is empty)</dd>
+            </dl>
+        </div>
+
+        <!-- ── Controls + table ── -->
+        <div class="card">
+            <div class="cl-controls">
+                <button id="record-btn" class="cl-btn record">Record</button>
+                <button id="run-btn" class="cl-btn run">Run table</button>
+                <button id="clear-btn" class="cl-btn ghost">Clear table</button>
+                <span class="cl-mode" id="mode-label" role="status"></span>
+                <span class="cl-total" id="live-total">0 examples</span>
+            </div>
+            <table class="cl-table">
+                <thead>
+                    <tr><th>Sensors see</th><th>Forward</th><th>Left</th><th>Right</th><th>Back</th><th>Table does</th></tr>
+                </thead>
+                <tbody id="table-body"></tbody>
+            </table>
+            <p class="cl-hint">Each column counts how often you chose that action for that pattern. The highlighted row is what the
+               sensors see right now. A pattern you never taught borrows from the most similar one you did.
+               The table is saved in this browser.</p>
+        </div>
+    </div>
+
+    <script type="py" src="./cloner/main.py"></script>
+</body>
+</html>
