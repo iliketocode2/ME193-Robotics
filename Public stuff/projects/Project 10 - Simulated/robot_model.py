@@ -22,7 +22,7 @@ TOTAL_MASS = None           # kg; weigh the LEGO car and put it here (None keeps
 BEAM_FRICTION = 1.0         # grip of the beam ends on the floor
 SLIDE_FRICTION = 0.05       # chassis and front sphere: they slide (the sphere stands in for a ball caster)
 # LEGO Education double motor. Placeholders until you measure yours:
-MAX_BEAM_SPEED = 12.0       # rad/s at full power (about 115 rpm); the speed of a 135 degree step
+MAX_BEAM_SPEED = 6.0        # rad/s (about 57 rpm): the speed of a 135 degree step (0.4 s). Halved from 12 to match the real car
 BEAM_TORQUE_LIMIT = 0.15    # N*m stall torque
 # The motor works like LEGO's run_for_degrees(135) followed by "hold": it turns its leg forward 135 degrees at
 # MAX_BEAM_SPEED, then holds that angle until it is told to step again.

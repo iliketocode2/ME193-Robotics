@@ -14,7 +14,7 @@ GitHub: <https://github.com/iliketocode2/ME193-Robotics/tree/Project-10-Simulate
 2. [The MuJoCo video](#the-mujoco-video)
 3. [The reward system](#the-reward-system)
 4. [The policy](#the-policy)
-5. [Training results](#training-results)
+5. [Training results](#training-results) and [simulation vs reality](#simulation-vs-reality)
 6. [Running it](#running-it)
 7. [Watching the training](#watching-the-training)
 8. [Running it on the LEGO car](#running-it-on-the-lego-car)
@@ -46,25 +46,25 @@ beams 5 g each (they have no material in Onshape), and sets the friction. Only t
 chassis and sphere slide. (If the mates are missing, `robot_model.py` adds the hinges itself.)
 
 **The motor.** Each leg's motor works like LEGO's `run_for_degrees(135)` followed by "hold": when told to step, it
-turns its leg forward 135 degrees at `MAX_BEAM_SPEED` (12 rad/s, so a step takes about 0.2 s), then holds that angle
+turns its leg forward 135 degrees at `MAX_BEAM_SPEED` (6 rad/s, so a step takes about 0.4 s; halved from 12 rad/s because the real car steps about that much slower), then holds that angle
 until the next step. Legs only move forward. In the simulation this is a position servo,
 `torque = BEAM_KP * (target angle - angle) - BEAM_KD * speed`, capped at `BEAM_TORQUE_LIMIT`, whose target angle moves
-135 degrees forward at 12 rad/s for each step (`StepMotor` in `robot_model.py`, `LegStepAction` in `beam_task.py`). The
-numbers (12 rad/s, 0.15 N*m, `BEAM_KP` 2, `BEAM_KD` 0.05) are estimates for the double motor, in `robot_model.py`.
+135 degrees forward at 6 rad/s for each step (`StepMotor` in `robot_model.py`, `LegStepAction` in `beam_task.py`). The
+numbers (6 rad/s, 0.15 N*m, `BEAM_KP` 2, `BEAM_KD` 0.05) are estimates for the double motor, in `robot_model.py`.
 
 **Without any learning** (`check_model.py`, fixed stepping patterns):
 
 | Time | Steps | x (m) | y (m) | Heading |
 |---|---|---|---|---|
-| 1 to 6 s | both legs step nonstop (about 5 steps a second each) | 0 to 1.06 | drifts to +0.38 | drifts left to +35 degrees |
-| 6 to 9 s | only the left leg steps | 1.06 to 1.17 | about +0.4 | turns right, past -160 degrees |
+| 1 to 6 s | both legs step nonstop (about 2.6 steps a second each) | 0 to 0.38 | drifts to +0.15 | drifts left to +40 degrees |
+| 6 to 9 s | only the left leg steps | 0.38 to 0.40 | about +0.18 | turns right slowly, to +35 degrees |
 | 9 to 12 s | the legs take turns | | | turns slowly |
 | 12 to 15 s | both legs, one step every 0.5 s | | | barely moves |
 
-Stepping both legs nonstop gives the top speed, 0.21 m/s, but the robot does not drive straight: it drifts to the left,
-35 degrees off and 0.38 m sideways after 5 seconds. A leg pushes in bursts, and small differences between the two sides
-(where each leg touches down, the body rocking) add up. Stepping only one leg turns the robot hard, so the timing of
-the steps is enough to steer. That is the job for the learned policy: start turned away from the line, and decide when
+Stepping both legs nonstop gives the top speed, 0.078 m/s, but the robot does not drive straight: it drifts to the left,
+40 degrees off and 0.15 m sideways after 5 seconds. A leg pushes in bursts, and small differences between the two sides
+(where each leg touches down, the body rocking) add up. Stepping only one leg turns the robot, so the timing of
+the steps can steer it (more gently than at full speed: slow steps carry less momentum). That is the job for the learned policy: start turned away from the line, and decide when
 each leg steps so that the robot still drives straight.
 
 ## The MuJoCo video
@@ -88,7 +88,7 @@ policy so the total over a 10-second run is as large as possible.
 | Term | Weight | Formula | Why |
 |---|---|---|---|
 | `alive` | +0.5 | 1 every step | Without it, a robot that is not yet moving scores below zero every step (only penalties), so tipping over early looked better than surviving: the first training runs learned to flip. With it, surviving always pays. |
-| `forward_speed` | +1.0 | `1 - ((vx - 0.15) / 0.15)^2`, at least -1 | Pays most for driving forward at 0.15 m/s. It slopes all the way down to standing still, so a robot that is not moving yet still learns which way is better. |
+| `forward_speed` | +1.0 | `1 - ((vx - 0.06) / 0.06)^2`, at least -1 | Pays most for driving forward at 0.06 m/s. It slopes all the way down to standing still, so a robot that is not moving yet still learns which way is better. |
 | `stay_on_line` | +0.5 | `exp(-(y / 5 cm)^2) * moving` | 1 on the line y = 0, 0.37 at 5 cm off, almost 0 beyond 10 cm. |
 | `face_forward` | +0.5 | `exp(-(heading / 0.15 rad)^2) * moving` | 1 facing +x, 0.37 at 9 degrees off. It turns the robot back first: it must face the line before it can stay on it. |
 | `bounce` | -1.0 | `vz^2 + 0.01 (roll rate^2 + pitch rate^2)` | Less throwing the body around. |
@@ -98,7 +98,7 @@ with the distance (`-(y / 10 cm)^2`): 0.5 m off cost 12 points per step, far mor
 drifted did better by leaving the line quickly and ending its run. A bonus can only be lost, never owed, so staying
 on the line is always worth more.
 
-Both are multiplied by `moving = clamp(vx / 0.15 m/s, 0, 1)`: 0 when standing still, 1 at the target speed. Without
+Both are multiplied by `moving = clamp(vx / 0.06 m/s, 0, 1)`: 0 when standing still, 1 at the target speed. Without
 it, a robot standing still on the line and facing forward collected both bonuses in full, and over training the policy
 walked less and less (the `forward_speed` term fell by half between iterations 100 and 1500).
 
@@ -140,9 +140,9 @@ actions were better than expected.
 
 ## Training results
 
-Trained on the Tufts cluster (one GPU, 4096 robots, 1500 iterations, about 8 minutes). This is the final policy: it
-sees only what the LEGO car can measure (heading, turn rate, leg angles and speeds, step state), and it is the one in
-`lego/policy.npz`.
+Trained on the Tufts cluster (one GPU, 4096 robots, 1500 iterations, about 8 minutes), with the legs stepping at
+6 rad/s to match the real car. This is the final policy: it sees only what the LEGO car can measure (heading, turn
+rate, leg angles and speeds, step state), and it is the one in `lego/policy.npz`.
 
 ![Training curves](media/training_curves.png)
 
@@ -150,13 +150,39 @@ sees only what the LEGO car can measure (heading, turn rate, leg angles and spee
 
 | | Forward in 10 s | Sideways (y) | Heading |
 |---|---|---|---|
-| No learning, both legs stepping nonstop (`check_model.py`) | 1.06 m in 5 s | drifts to 0.38 m in 5 s | drifts to +35 degrees in 5 s |
-| Final policy (`make_video.py`, starting 17 degrees off) | 1.58 m (0.16 m/s), 45 steps per leg | ends 17.5 cm to the left (at most 18.4 cm) | 7.4 degrees off on average, at most 22 |
+| No learning, both legs stepping nonstop (`check_model.py`) | 0.38 m in 5 s | drifts to 0.15 m in 5 s | drifts to +40 degrees in 5 s |
+| Final policy (`make_video.py`, starting 17 degrees off) | 0.55 m (0.055 m/s), 22 to 23 steps per leg | at most 3.8 cm, ends 0.6 cm off | 5.6 degrees off on average, at most 18 |
 
-The policy walks steadily, about 4.5 steps per second on each leg, and keeps its heading near straight. Because it
-cannot see the line, small heading errors add up to a slow sideways drift (17.5 cm over 1.6 m): it drives *straight*,
-but it cannot steer back onto the line. Earlier versions that could see their speed and line offset stayed within
-3.4 cm, but they could not run on the car.
+The policy walks steadily, about 2.3 steps per second on each leg, and holds the line within 4 cm even though it
+cannot see the line: with slow steps, keeping the heading straight is enough.
+
+## Simulation vs reality
+
+The real car (`lego/lego_drive.py`, logs in `lego/lego_run_*.csv`):
+
+| | Simulation | LEGO car |
+|---|---|---|
+| One 135-degree step | 0.39 s (6 rad/s) | 0.51 s at 70% motor speed (about 4.5 rad/s, including the Bluetooth round trip); now run at 88% |
+| **No policy (both legs stepping nonstop), 5 s: forward** | **0.38 m** | **0.38 m (15 in)** |
+| **No policy, 5 s: sideways** | **15 cm left, heading 40 degrees off** | **2.5 cm (1 in) left, heading 1.6 degrees off** |
+| No policy, 5 s: steps | 13 per leg | 11 per leg |
+| **Trained policy, 10 s: forward** | **0.55 m** | **0.70 m (2.3 ft)** |
+| **Trained policy, 10 s: sideways** | **ends 0.6 cm off the line (at most 3.8 cm)** | **about 1.3 cm (0.5 in)** |
+| Trained policy, 10 s: heading | 5.6 degrees off on average, at most 18 | 3.2 degrees off on average, at most 7 |
+| Trained policy, 10 s: steps | 22 to 23 per leg | 21 per leg |
+| Decisions per second | 50 | 43 (Bluetooth) |
+
+The same network drives the real car straight: 0.70 m forward with about 1 cm of sideways drift, against 0.55 m and
+0.6 cm in the simulation. Forward speed matches well: without the policy both go exactly 0.38 m in 5 s. The biggest difference is how straight
+the car is on its own: the model drifts 40 degrees in 5 s, the real car only 1.6 degrees, so the simulated robot is
+much more lopsided than the real one (its contacts, or the slightly different left and right beam positions in the
+export). Even so, the policy helps on the real car: drift per metre fell from about 6.6% (2.5 cm over 0.38 m)
+without it to about 1.9% (1.3 cm over 0.70 m) with it. With the policy, the real car went about 25% further, probably because the 88% motor speed makes its steps a
+little faster than the simulation's, and because the real floor and LEGO feet grip differently from the model.
+
+The first version stepped twice as fast as the real car (12 rad/s), so I halved the motor speed in the model and
+retrained. The real car's heading comes from the Double Motor's gyro: `lego_drive.py` adds up the turn rate around
+the vertical (the Double Motor's own yaw angle jumps when it is mounted on its end, as on this car).
 
 **How the policy got here** (each version trained the same way, about 8 minutes):
 
@@ -166,7 +192,8 @@ but it cannot steer back onto the line. Earlier versions that could see their sp
 | 2. 135-degree steps, line/heading penalties | Robots that drifted left the line on purpose to end the run (penalties grew faster than `alive` paid) | Line and heading became bonuses between 0 and 1 |
 | 3. Bonuses | Stayed within 3.4 cm of the line, but used speed and line offset, which the car cannot measure | Policy sees only gyro and encoder readings |
 | 4. Real-car inputs | Walked less and less; in a dry run of `lego_drive.py` it stopped after 3 steps and never restarted | Bonuses only while moving forward; removed the policy's own last output from its inputs |
-| 5. Final | Walks steadily, 1.58 m in 10 s, heading near straight, drifts 17.5 cm sideways | |
+| 5. Real-car inputs, fixed | Walked steadily (1.58 m in 10 s) but at twice the real car's step speed | Halved the leg speed to 6 rad/s |
+| 6. Final | 0.55 m in 10 s, within 3.8 cm of the line; on the real car 0.70 m with about 1.3 cm of drift | |
 
 ## Running it
 
@@ -224,7 +251,7 @@ Copy the results you want in the write-up into `media/`: `cad.png`, `policy.mp4`
 ### Tuning (in `beam_task.py` and `robot_model.py`)
 
 - **Match the real car first**: weigh it (`TOTAL_MASS`), and measure its top speed with both motors at full power. If the
-  real car is slower than the 0.21 m/s here (both legs stepping nonstop), lower `MAX_BEAM_SPEED`; then set `TARGET_SPEED` a bit below the top speed.
+  real car is slower than the 0.078 m/s here (both legs stepping nonstop), lower `MAX_BEAM_SPEED`; then set `TARGET_SPEED` a bit below the top speed.
 - **Wobbles along the line**: raise the `face_forward` or `stay_on_line` weights, or narrow `LINE_WIDTH` / `HEADING_WIDTH`.
 - **Crawls or stops**: `TARGET_SPEED` is too high for the motor, or `bounce` is too strong (it can pay to stand still).
 - **Flips**: lower `BEAM_TORQUE_LIMIT`.
@@ -267,7 +294,7 @@ is not already stepping, moves that leg's target 135 degrees further forward (`m
 the motor set to hold between steps). Each run is logged to `lego_run_<mode>.csv`.
 
 Settings at the top of `lego_drive.py`: `FORWARD_SIGN` (which way each motor counts forward; `test` tells you),
-`STEP_SPEED` (motor speed for a step; the simulation assumes 12 rad/s, a 135-degree step in 0.2 s, and `test` measures
+`STEP_SPEED` (motor speed for a step; the simulation assumes 6 rad/s, a 135-degree step in 0.4 s, and `test` measures
 yours), and `CARD_SERIAL` / `CARD_COLOR` if several Double Motors are nearby.
 
 What can differ from the simulation: the real step speed and how fast Bluetooth delivers readings and commands (the

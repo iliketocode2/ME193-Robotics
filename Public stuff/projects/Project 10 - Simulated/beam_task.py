@@ -4,7 +4,7 @@ The robot is the Onshape design (onshape/), built by robot_model.py: a chassis, 
 two 60 mm beams (the legs), each turned about its centre by one output of the LEGO double motor. A leg moves only
 in steps: forward 135 degrees at full speed, then hold (like LEGO's run_for_degrees(135)). The policy decides, 50 times a
 second and for each leg, whether that leg starts its next step now. Stepping both legs at the same rate does not drive
-straight (check_model.py: the robot drifts 35 degrees left in 5 s), so the policy must learn when to step each leg.
+straight (check_model.py: the robot drifts 40 degrees left in 5 s), so the policy must learn when to step each leg.
 
 The robot starts at the origin pointing a little off +x and must drive forward at TARGET_SPEED while staying on the
 line y = 0 and facing +x. Importing this file registers the task (see train.py, make_video.py).
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
 # ---- constants you may want to change ----------------------------------------------------------------
 # (the motor and mass constants are in robot_model.py, shared with check_model.py)
-TARGET_SPEED = 0.15         # m/s; check_model.py measured 0.21 m/s with both legs stepping nonstop
+TARGET_SPEED = 0.06         # m/s; check_model.py measured 0.078 m/s with both legs stepping nonstop (at 6 rad/s)
 START_YAW = 0.4             # rad; the robot starts pointing up to this far off +x
 START_BEAM_ANGLE = 0.3      # rad; each beam starts up to this far from flat (so the beams start a little out of step)
 MAX_OFF_LINE = 0.5          # m; the episode ends if the robot wanders this far from y = 0
