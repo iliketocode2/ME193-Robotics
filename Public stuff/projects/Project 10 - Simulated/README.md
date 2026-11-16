@@ -140,25 +140,33 @@ actions were better than expected.
 
 ## Training results
 
-Trained on the Tufts cluster (one GPU, 4096 robots, 1500 iterations, 8.5 minutes). The robot learned to survive and
-stay near the line within the first 100 iterations; the rest of the training mostly improved how well it holds the line
-and its heading.
+Trained on the Tufts cluster (one GPU, 4096 robots, 1500 iterations, about 8 minutes). This is the final policy: it
+sees only what the LEGO car can measure (heading, turn rate, leg angles and speeds, step state), and it is the one in
+`lego/policy.npz`.
 
 ![Training curves](media/training_curves.png)
 
 ![Path of the trained robot](media/trajectory.png)
 
-| | Mean reward per run | Forward in 10 s | Sideways (y) | Heading |
-|---|---|---|---|---|
-| No learning, both legs stepping nonstop (`check_model.py`) | | 1.06 m in 5 s, then off the line | drifts to 0.38 m in 5 s | drifts to +35 degrees in 5 s |
-| Trained, iteration 100 | 12.1 | | | |
-| Trained, iteration 1499 (`make_video.py`, starting 17 degrees off) | 14.4 | 0.99 m (0.10 m/s) | within 3.4 cm, 1.1 cm on average | swings up to about 19 degrees each way, 5.7 degrees on average |
+| | Forward in 10 s | Sideways (y) | Heading |
+|---|---|---|---|
+| No learning, both legs stepping nonstop (`check_model.py`) | 1.06 m in 5 s | drifts to 0.38 m in 5 s | drifts to +35 degrees in 5 s |
+| Final policy (`make_video.py`, starting 17 degrees off) | 1.58 m (0.16 m/s), 45 steps per leg | ends 17.5 cm to the left (at most 18.4 cm) | 7.4 degrees off on average, at most 22 |
 
-In 10 seconds the trained robot took 39 steps with its left leg and 40 with its right: almost the same number, so it
-steers mostly by *when* each leg steps, not how often. It corrects its heading in swings: each step jerks the body a
-little to one side, and the next steps turn it back. The `forward_speed` term stays around 0.22 (out of 1 at the
-target 0.15 m/s): the robot gives up some speed to stay on the line, and its speed comes in bursts (up to 0.38 m/s
-during a step, 0 between steps).
+The policy walks steadily, about 4.5 steps per second on each leg, and keeps its heading near straight. Because it
+cannot see the line, small heading errors add up to a slow sideways drift (17.5 cm over 1.6 m): it drives *straight*,
+but it cannot steer back onto the line. Earlier versions that could see their speed and line offset stayed within
+3.4 cm, but they could not run on the car.
+
+**How the policy got here** (each version trained the same way, about 8 minutes):
+
+| Version | What happened | What I changed |
+|---|---|---|
+| 1. Legs as free-speed motors | Rocked both legs back and forth 13 times a second and shuffled forward (reward hacking) | Legs only step forward 135 degrees at a time |
+| 2. 135-degree steps, line/heading penalties | Robots that drifted left the line on purpose to end the run (penalties grew faster than `alive` paid) | Line and heading became bonuses between 0 and 1 |
+| 3. Bonuses | Stayed within 3.4 cm of the line, but used speed and line offset, which the car cannot measure | Policy sees only gyro and encoder readings |
+| 4. Real-car inputs | Walked less and less; in a dry run of `lego_drive.py` it stopped after 3 steps and never restarted | Bonuses only while moving forward; removed the policy's own last output from its inputs |
+| 5. Final | Walks steadily, 1.58 m in 10 s, heading near straight, drifts 17.5 cm sideways | |
 
 ## Running it
 
