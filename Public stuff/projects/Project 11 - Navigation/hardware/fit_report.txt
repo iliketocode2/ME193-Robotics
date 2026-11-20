@@ -1,0 +1,10 @@
+tray: 100.0 x 60.7 mm with lugs (76.0 x 60.7 body), 13.2 mm tall; lid top at 14.0 mm
+tray volume 21.8 cm^3, genus 2, status NoError
+overlap lid/tray   0.000 mm^3  (should be 0)
+overlap board/tray 0.000 mm^3  (should be 0: board rests on the standoffs)
+overlap board/lid  0.000 mm^3  (should be 0)
+overlap IMU/tray   0.000 mm^3  (should be 0)
+overlap IMU/board  0.000 mm^3  (should be 0)
+lid rim rests at z = 7.40 on the ledge at z = 7.40
+gap from IMU top to board bottom: 3.6 mm
+wall left outside the cable channel: 1.00 mm; gap beside the board edge for the wires: 2.7 mm

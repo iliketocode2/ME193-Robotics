@@ -12,11 +12,12 @@ has run on the board or on a real walk yet.
 
 1. [How it works](#how-it-works)
 2. [Sensing: steps, heading, stairs](#sensing-steps-heading-stairs)
-3. [Running it](#running-it)
-4. [Field workflow for the shared day](#field-workflow-for-the-shared-day)
-5. [The policy](#the-policy)
-6. [Files and data formats](#files-and-data-formats)
-7. [Known limits](#known-limits)
+3. [Hardware: the shoe case](#hardware-the-shoe-case)
+4. [Running it](#running-it)
+5. [Field workflow for the shared day](#field-workflow-for-the-shared-day)
+6. [The policy](#the-policy)
+7. [Files and data formats](#files-and-data-formats)
+8. [Known limits](#known-limits)
 
 ## How it works
 
@@ -140,6 +141,44 @@ and not loose on a strap.
 
 `python tools/test_sensing.py` checks the tracker, network and stairs against simulated truth and
 Project 8's counts. `python tools/test_pipeline.py` checks that the navigator still works on top.
+
+## Hardware: the shoe case
+
+Two printed parts: the existing lid (`case_top_embossed.stl`, unchanged) and a bottom tray
+(`hardware/case_tray.stl`) built by `hardware/make_case.py` (`pip install manifold3d`). Every dimension
+is a named constant at the top of the script. Running it rewrites the STL, `preview_top.png`,
+`preview_3d.png` and `fit_report.txt`, which checks that the lid, board and IMU don't collide.
+
+![The tray, exploded and assembled](hardware/preview_3d.png)
+
+From the shoe up: a 2.4 mm floor with a pocket for the MPU-6050 breakout sunk into it, standoffs at
+the four Uno mounting holes, the UNO Q 5 mm above the floor, and the lid. The lid's rim surrounds the
+board and rests on a ledge inside the tray, and the tray walls come up around it with 0.8 mm left to
+grab. The USB-C side has an opening sized for a plug body. The other short side has a channel, at the
+lid's second gap, that carries the IMU wires from under the board up to its top surface. A groove in
+the floor leads there from the IMU pocket. Overall 100 × 61 mm including the loops, 14 mm tall.
+
+**Strap loops**: both short ends, at shoe level. Each one flares out of the wall with curved fillets and
+arcs down to a 3 mm bar, with a 26 × 4 mm slot whose edges are softened. It fits a 20–24 mm watch band or
+1-inch masking tape. Thread one band down through a slot, under the sole, up through the other slot and
+back over the lid: that holds the lid on too.
+
+**Printing**: tray floor-down, no supports (the slots are vertical). The lid prints plate-down as it
+comes.
+
+**Assembly**:
+
+1. Glue the IMU breakout into its pocket (hot glue or double-sided foam tape). It must not move.
+   The pocket is sized for a GY-521 (21.2 × 16.4 mm) with no header pins; solder wires directly or
+   change `IMU_L`/`IMU_W` for another board.
+2. Run its wires along the groove and up the channel.
+3. Screw the UNO Q onto the standoffs with four M3 self-tapping screws, 6–8 mm long (2.6 mm pilot
+   holes).
+4. Press the lid on.
+
+**Check before printing**: the standoff positions are the standard Uno R3 holes. Hold the board over
+`preview_top.png` (or measure with calipers) to confirm the UNO Q matches. Also make sure nothing on the
+board's underside is taller than about 3.5 mm where the IMU sits.
 
 ## Running it
 
