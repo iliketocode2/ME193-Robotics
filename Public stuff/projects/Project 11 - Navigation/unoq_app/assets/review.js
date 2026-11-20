@@ -28,7 +28,7 @@ board.on_message('walks', (d) => {
       : '—';
     return `<tr data-id="${escapeHtml(w.id)}" class="${walk && walk.id === w.id ? 'selected' : ''}">
       <td>${when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-      <td>${escapeHtml(w.walker)}</td><td><span class="tag ${w.kind}">${w.kind}</span></td>
+      <td>${escapeHtml(w.walker)}</td><td><span class="tag ${w.kind}">${w.kind}${w.activity ? ': ' + escapeHtml(w.activity) : ''}</span></td>
       <td>${w.meters} m · ${w.steps} steps</td><td>${w.maneuvers}</td>
       <td>${w.reviewed ? '✓' : ''}</td><td>${training}</td></tr>`;
   }).join('');
@@ -370,6 +370,10 @@ $('#reprocess').addEventListener('click', () => {
 $('#export').addEventListener('click', () => {
   board.send_message('export', {});
   toast('Preparing export…');
+});
+$('#export-imu').addEventListener('click', () => {
+  board.send_message('export', { imu: true });
+  toast('Preparing export with raw IMU (can take a few seconds)…');
 });
 
 board.on_message('export', (d) => {

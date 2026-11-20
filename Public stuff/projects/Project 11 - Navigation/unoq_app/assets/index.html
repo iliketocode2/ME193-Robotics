@@ -135,6 +135,24 @@
           </div>
         </div>
         <div class="card">
+          <h2>Sensor data</h2>
+          <p class="muted" style="margin-top: 0">Training recordings for the step counter and the stairs classifier. Do only the one activity for the whole recording (30–60 s; for stairs, a full flight). These never count toward the 10 navigation walks.</p>
+          <div class="row">
+            <label class="field">Activity
+              <select id="sensor-activity">
+                <option value="walk">Walking (flat, straight)</option>
+                <option value="stairs">Stairs (up or down)</option>
+                <option value="turn">Walking with turns</option>
+                <option value="still">Standing / fidgeting</option>
+              </select>
+            </label>
+          </div>
+          <div class="row" style="margin-top: 10px">
+            <button class="btn primary" data-start="sensor">Start</button>
+            <button class="btn danger" data-stop>Stop</button>
+          </div>
+        </div>
+        <div class="card">
           <h2>Phone setup</h2>
           <ul class="muted" style="margin: 0; padding-left: 18px">
             <li>Set screen auto-lock to <b>Never</b> while walking (the page can't keep the screen on over http).</li>

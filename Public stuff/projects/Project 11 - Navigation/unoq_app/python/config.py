@@ -48,7 +48,8 @@ CONFIRM_STEPS = 2       # a cue has to win this many steps in a row before it is
 DEFAULT_ROUTE = "nolop"
 DEFAULT_METERS_PER_STEP = 1.4   # one shoe = one count per stride (two footsteps)
 WALK_BUDGET = 10                # course limit: demos + DAgger walks used for training
-WALK_KINDS = ["demo", "dagger", "test", "calibrate"]
+WALK_KINDS = ["demo", "dagger", "test", "calibrate", "sensor"]
+SENSOR_ACTIVITIES = ["walk", "stairs", "turn", "still"]   # "sensor" sessions: training data for sensing
 TRAINING_KINDS = ["demo", "dagger"]
 
 APP_DIR = Path(__file__).resolve().parent.parent

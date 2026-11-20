@@ -84,7 +84,9 @@ $$('[data-start]').forEach((b) =>
     renderTaps();
     lastCue = null;
     renderCue(null);
-    board.send_message('start', { mode: b.dataset.start, test: $('#save-test').checked });
+    board.send_message('start', {
+      mode: b.dataset.start, test: $('#save-test').checked, activity: $('#sensor-activity').value,
+    });
   }),
 );
 $$('[data-stop]').forEach((b) => b.addEventListener('click', () => board.send_message('stop', {})));
@@ -182,16 +184,14 @@ board.on_message('step', (d) => {
 // ---------- status ----------
 
 board.on_message('status', (s) => {
-  const firstStatus = status === null;
   status = s;
   clockOffset = s.board_time - Date.now() / 1000;
   showImu(s.imu);
   renderWalkers(s);
 
   if (s.walk) {
-    if (firstStatus || TABS.includes(s.mode)) {
-      if (tab !== s.mode && TABS.includes(s.mode)) showTab(s.mode);
-    }
+    const modeTab = s.mode === 'sensor' ? 'calibrate' : s.mode;
+    if (tab !== modeTab && TABS.includes(modeTab)) showTab(modeTab);
     $('#s-time').textContent = fmtTime(s.walk.seconds);
     // drop queued taps from an older walk
     const before = taps.length;

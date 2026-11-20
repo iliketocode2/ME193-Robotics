@@ -5,13 +5,13 @@ tracks heading from its IMU, and a policy learned by behavior cloning from our o
 say "left turn coming up" and "turn left". The phone is only the screen and the speaker; all sensing,
 recording, training and inference run on the board.
 
-Status: the UI, recording, label cleanup, training and live policy are done and tested on synthetic walks.
-`sensing.py` is a simple placeholder for the real step counter and heading (Partner A's part).
+Status: both halves are built and tested on simulated walks and on Project 8's real recordings. Nothing
+has run on the board or on a real walk yet.
 
 ## Contents
 
 1. [How it works](#how-it-works)
-2. [Partner A: plugging in sensing](#partner-a-plugging-in-sensing)
+2. [Sensing: steps, heading, stairs](#sensing-steps-heading-stairs)
 3. [Running it](#running-it)
 4. [Field workflow for the shared day](#field-workflow-for-the-shared-day)
 5. [The policy](#the-policy)
@@ -22,14 +22,17 @@ Status: the UI, recording, label cleanup, training and live policy are done and 
 
 ```txt
 MPU-6050 ─I²C 100 Hz─▶ sketch.ino ─Bridge─▶ main.py ─▶ NavCore (nav_core.py)
-                                                     ├─ sensing.py   raw IMU → steps + heading   (Partner A)
+                                                     ├─ sensing.py   raw IMU → steps, heading, stairs
+                                                     │    ├─ foot_ins.py     foot tracking, stance phases
+                                                     │    ├─ stepnet_np.py   the retrained step network
+                                                     │    └─ stairs.py       stairs classifier
                                                      ├─ walks.py     saves every walk to data/walks/
                                                      ├─ features.py  steps → the state the policy sees
                                                      └─ policy.py    state → cue (k-NN), spoken on the phone
 phone browser ◀──── web_ui brick, port 7000 ────▶ assets/ (index.html: walk, review.html: label + train)
 ```
 
-The phone page has four modes:
+The phone page has four walking modes, plus sensor recordings on the Calibrate tab:
 
 - **Calibrate**: walk a known distance so step counts can be turned into meters. Both partners and the
   test person calibrate once, which lets everyone's walks line up even though our strides differ.
@@ -40,53 +43,103 @@ The phone page has four modes:
 - **DAgger**: the policy speaks cues while you walk the correct route anyway. You tap what you actually
   do, plus **Wrong cue** whenever it says something wrong. These walks cover states the demos never
   reached, which is the point of DAgger.
+- **Sensor data** (on the Calibrate tab): a recording of one activity (walking, stairs, turns, standing)
+  for retraining the step counter and stairs classifier. Never counted against the 10 walks.
 
 The **Review** page (works best on a laptop browser pointed at the board) shows each walk as heading
 against time, with the taps, the detected turns and, for DAgger walks, the cues the policy gave. Taps
 mid-walk are always late, so **Snap turns to heading** moves each Left/Right to where the heading
 actually started to bend. Lines can be dragged, added and deleted. Then **Train policy**.
 
-## Partner A: plugging in sensing
+## Sensing: steps, heading, stairs
 
-Replace `unoq_app/python/sensing.py`, keeping this interface:
+`sensing.py` turns 100 Hz IMU samples into steps for the policy. Each step carries a heading and a stairs
+flag. **One step is one stride of the foot wearing the board** (two footsteps); calibration converts it
+to meters, so consistency matters more than the convention. The navigator needs, in order: turns of
+about 90° to read as about 90°, a consistent step count, and only then slow heading drift (the policy
+mostly uses distance since the last turn and the number of turns).
 
-```python
-class Sensing:
-    VERSION = "your-version-1"     # change it whenever the output changes
-    def reset(self) -> None        # called at the start of every walk
-    def feed(self, t, rows) -> list[Step]
-        # t     board time.time() of the LAST row in the batch
-        # rows  [[ax, ay, az, gx, gy, gz], ...] in g and deg/s, 100 Hz, usually 10 rows
-        # return the steps detected in this batch (usually none, sometimes one)
+### Foot tracking (`foot_ins.py`)
 
-@dataclass
-class Step:
-    t: float            # time of the step, board seconds
-    n: int              # 1, 2, 3... since reset()
-    heading_deg: float  # heading since reset(), unwrapped (can pass 360); + = turned LEFT
-    stairs: int         # 1 on stairs, 0 not, -1 if you don't detect stairs
-```
+A shoe stops completely on every stride. For a few tenths of a second the foot is flat on the ground
+(the stance phase). The tracker follows the board's full 3D orientation from the gyro, and at every
+stance it uses that stillness three ways:
 
-What the rest of the system needs from it, in order of importance:
+- velocity must be zero, which wipes out the drift built up during the swing
+- the accelerometer reads pure gravity, which levels the orientation estimate
+- the gyro should read zero, so whatever it reads is its offset, and that gets re-measured
 
-1. **Turns of about 90° showing up as about 90°**, within a few steps. Turn detection is "heading moved
-   60° within 4 m of walking" (`TURN_DEG`, `TURN_SPAN_M` in `config.py`).
-2. **A step count that is consistent**, more than one that is exact. Calibration absorbs a constant
-   bias (counting every footfall vs. every stride doesn't matter), but random misses don't cancel out.
-3. Slow heading drift matters less. The policy mostly uses distance since the last turn and how many
-   turns have happened so far.
+A stance counts as a new stride only if the foot swung (rotated faster than 150°/s) since the last one.
+The jolt when the *other* foot lands briefly breaks a stance but doesn't swing this foot, so it isn't
+counted.
 
-The baseline is a hysteresis peak detector on |a| for steps. For heading, it takes the gyro along the
-gravity direction (so mounting orientation doesn't matter), re-measures the gyro offset whenever the
-foot is still during stance, and integrates. The PyTorch CNN from Project 8 can't run on the board as
-is: no PyTorch there. Port its forward pass to numpy the way Project 9's `npnet.py` did for FingerNet.
+At each stride it reports heading (+ = left, measured from the start of the walk, since there's no
+compass), horizontal length and height change. None of this depends on how the board is mounted. It
+also produces four mount-independent signals for the step network: vertical and horizontal
+acceleration, and vertical and horizontal rotation rate.
 
-Every walk saves its raw IMU (`imu.csv`), so recorded walks don't have to be redone. Once the new
-`sensing.py` is in, press **Reprocess walks** on the Review page to rerun it over all of them, check the
-labels still sit on the turns, and retrain.
+On six held-out simulated walks with random mountings, it found every stride, held heading within 3°,
+measured distance within 1.5% and stair heights within 0.07 m.
 
-Test it without the board: `python tools/test_pipeline.py` must still pass, and `python
-tools/fake_walk.py` prints the step count and heading your sensing gets on a synthetic walk.
+### Step network (`stepnet_np.py`, trained by `tools/train_stepnet.py`)
+
+This is Project 8's CNN architecture, retrained. Project 8's labels mixed two conventions: some sessions
+were marked every footstep, others every stride. Run on its own recordings, the old network counted
+0.56 s apart on some walks and 1.36 s apart on others. Now every recording is labeled the same way by
+the foot tracker (one label at the start of each stance after a real swing). The input is the tracker's
+four mount-independent channels instead of raw axes, so a new housing doesn't invalidate the model. It
+trains in PyTorch on a laptop, batch norm is folded into the weights, and the board runs a numpy copy
+that matches PyTorch to about 1e-7. Project 8's debouncer turns its output into steps, with a 0.6 s
+minimum gap.
+
+Results (`results/stepnet.md`, `tools/test_sensing.py`):
+
+| Recording | Network | Tracker alone | Truth |
+| --- | --- | --- | --- |
+| 4 held-out simulated walks (stairs, turns, 4 stride lengths) | exact on all 4 | exact | known |
+| Project 8 50-step trial (real, held out) | 29–30 strides | 26 | ~25 (50 footsteps) |
+| Project 8 turning session (real, trained on) | 24 | 24 | ~23 (46 footsteps) |
+
+On the only real held-out recording the tracker alone (+4%) beats the network (+16–20%). That recording
+is from Project 8's mount, which wobbled (see below), so retrain on the new mount before choosing.
+`STEP_SOURCE` at the top of `sensing.py` switches between `"net"` and `"tracker"`, and **Reprocess
+walks** reruns either one over every recorded walk, so the choice can wait.
+
+### Stairs (`stairs.py`, trained by `tools/train_stairs.py`)
+
+On stairs, the instrumented foot rises or falls about two stairs (~0.34 m) per stride and moves less far
+forward. A logistic regression on height change, stride length, stride time and swing time decides each
+stride. It's trained on simulated strides for now (99–100% on held-out strides) and should be retrained
+on real **Sensor data** stairs sessions. If the tracker's median stride is shorter than 0.4 m, the board
+isn't tracking the foot properly, so the flag reports −1 (unknown) instead of guessing.
+
+### Mounting the board (this matters for the housing)
+
+Everything above assumes the board is **rigid on the foot**: on top of the shoe over the laces or
+midfoot, strapped so it can't rock or slide. Project 8's recordings show what happens otherwise. During
+stance that sensor kept turning at 20–60°/s and its swing barely registered, so the tracker measured
+strides of 3 cm. Step counting still worked, but stride length and stairs did not. So: not on the ankle,
+and not loose on a strap.
+
+### Retraining on the new mount (before or on the shared day)
+
+1. Record **Sensor data** sessions on the board: 2–3 × walking (60 s), 2 × stairs up and down a full
+   flight, 1 × turns, 1 × standing and fidgeting.
+2. Review → **Export with raw IMU**, and save the JSON next to this README.
+3. On a laptop (the step network needs PyTorch: `tools/requirements-train.txt`, already in `my_env_cpu`):
+
+   ```
+   my_env_cpu/Scripts/python tools/train_stepnet.py --data p8 sim export.json --plots
+   python tools/train_stairs.py --data sim export.json
+   ```
+
+   Check `results/label_checks/*.png`: the green lines (labels) should sit at the start of each still
+   period after a swing.
+4. Copy `unoq_app/` to the board again, then Review → **Reprocess walks** if any walks were already
+   recorded.
+
+`python tools/test_sensing.py` checks the tracker, network and stairs against simulated truth and
+Project 8's counts. `python tools/test_pipeline.py` checks that the navigator still works on top.
 
 ## Running it
 
@@ -106,17 +159,21 @@ pip install -r tools/requirements-dev.txt
 python tools/dev_board.py --speed 4          # fake walks of a 5-maneuver route, 4x speed
 python tools/dev_board.py --replay <walk>/imu.csv   # replay a real recorded walk instead
 python tools/test_pipeline.py                # end-to-end test: calibrate, demos, review, train, navigate, DAgger
+python tools/test_sensing.py                 # foot tracker, step network, stairs vs simulated truth + Project 8
 ```
 
 `dev_board.py` serves the same pages at `http://localhost:7000` and runs the real NavCore. When you
 press Start, a fake walk plays and notices say when each true maneuver happens, so you can practice
-tapping. Its data goes to `dev_data/` (git-ignored).
+tapping. Fake walks come from `tools/foot_sim.py`, which moves a simulated foot through space (stance,
+swing, pitch, turns, stair rises, board at a random angle) and derives what the IMU would read. Its data
+goes to `dev_data/` (git-ignored).
 
 ## Field workflow for the shared day
 
 The course allows **at most 10 walks** for training, demos and DAgger together. The page counts them
 per route ("Training walks used: n/10"). Excluded walks and test walks don't count.
 
+0. Before the day, on the final housing: record the Sensor data sessions and retrain (see above).
 1. Both partners calibrate (40 m or more between two landmarks).
 2. **3 demos each** (6 walks). After each one, review it: Snap turns, check every maneuver is there
    once, Save.
@@ -145,9 +202,9 @@ which leg of the route you're on.
 **Cues**: a new cue has to be predicted for 2 steps in a row before it is spoken (one step for "now"
 right after "soon"), and each maneuver is announced once as soon and once as now.
 
-On synthetic walks (3 demos per walker, two different strides, a test walker with a third stride), the
-held-out score was 29/30 maneuvers cued with a mean timing error of 2.8 m. Every maneuver got a heads-up
-and nothing fired falsely. Real walks will be worse; the report on the Review page measures that.
+On simulated walks (3 demos per walker, two different strides, a test walker with a third stride, all
+through the real sensing), the held-out score was 30/30 maneuvers cued with a mean timing error of
+2.5 m. Every maneuver got a heads-up and nothing fired falsely. Real walks will be worse; the report on the Review page measures that.
 
 ## Files and data formats
 
@@ -157,7 +214,11 @@ unoq_app/
   sketch/                  MPU-6050 at 100 Hz, batches of 10 (unchanged from Projects 7/8)
   python/main.py           Bridge + WebUI glue; everything else is in NavCore
   python/nav_core.py       modes, recording, page messages, live policy
-  python/sensing.py        raw IMU → steps + heading (Partner A replaces)
+  python/sensing.py        raw IMU → steps, heading, stairs (STEP_SOURCE switch at the top)
+  python/foot_ins.py       foot tracking: orientation, stance phases, stride length/height/heading
+  python/stepnet_np.py     the step network in numpy + Project 8's debouncer
+  python/stairs.py         stairs classifier on stride features
+  python/models/           stepnet.npz, stairs.json (from the training scripts)
   python/features.py       state per step, labels from maneuvers, turn detection and snapping
   python/policy.py         k-NN, cue filter, training, leave-one-walk-out report
   python/walks.py          walk storage, walkers, reprocessing
@@ -166,8 +227,15 @@ unoq_app/
   data/                    created on the board: walks/, walkers.json, policy/<route>/
 tools/
   dev_board.py             laptop stand-in for the board
-  fake_walk.py             synthetic shoe-IMU walks
-  test_pipeline.py         end-to-end test
+  foot_sim.py              physically consistent foot-IMU simulator with known truth
+  fake_walk.py             foot_sim walks split into batches, with late taps, for the tests and dev board
+  sensor_data.py           loads Project 8 sessions, board walks, exports and simulations; tracker labels
+  train_stepnet.py         retrains the step network (PyTorch), exports and checks the numpy copy
+  train_stairs.py          trains the stairs classifier
+  test_pipeline.py         end-to-end navigator test
+  test_sensing.py          sensing tests
+training_data/p8/          Project 8's five recorded sessions
+results/                   stepnet.md, stepnet_training.png (label_checks/ is git-ignored)
 ```
 
 Each walk folder `data/walks/<time>_<walker>_<kind>/` holds:
@@ -181,10 +249,13 @@ Each walk folder `data/walks/<time>_<walker>_<kind>/` holds:
 
 ## Known limits
 
-- Everything has been tested on synthetic IMU data and in a browser against the laptop stand-in. Nothing
-  has run on the board or on a real walk yet.
+- Everything has been tested on simulated walks, Project 8's five real recordings, and in a browser
+  against the laptop stand-in. Nothing has run on the board or on a real walk yet.
+- The step network and stairs classifier have only seen Project 8's wobbly mount and simulated feet.
+  Retrain them on the new housing before trusting them.
+- Sensing costs about 25–80 ms of laptop CPU per second of walking. The board's ARM cores are slower;
+  check that the page stays responsive during a walk.
 - The route is learned as "after this many meters and turns, do this". If a walker misses a turn, the
   turn count is off for the rest of the walk. DAgger walks that include a recovery are the fix.
 - Leg lengths vary a few percent between walks, so on long legs "now" often fires just as the turn
   begins rather than before it. The "soon" cue covers that.
-- `stairs` is only learned from position until sensing reports a stairs flag.

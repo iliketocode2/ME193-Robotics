@@ -12,7 +12,7 @@ before the board is ready. Data goes to dev_data/, not the board's data folder.
 Open http://localhost:7000 (or http://<laptop IP>:7000 on a phone).
 
 When you press Start, a fake walk of the default route begins (calibration: a
-straight 20 m). Notices tell you when each true maneuver happens, so you can
+straight 40 m; sensor sessions: the chosen activity). Notices tell you when each true maneuver happens, so you can
 practice tapping. Between walks the fake shoe stands still.
 """
 
@@ -102,6 +102,11 @@ def main():
     loop.run_until_complete(start())
 
 
+SENSOR_ROUTES = {"walk": [("walk", 50)], "stairs": [("walk", 3), ("stairs", 16, 1), ("walk", 3)],
+                 "turn": [("walk", 10), ("left",), ("walk", 10), ("right",), ("walk", 10), ("left",), ("walk", 5)],
+                 "still": [("still", 30)]}
+
+
 def walker_stride(name):
     """A stable fake stride per walker name, 1.2-1.7 m per step."""
     h = int(hashlib.md5((name or "").encode()).hexdigest(), 16)
@@ -119,7 +124,9 @@ def feeder(core, clock, args):
         data = np.loadtxt(args.replay, delimiter=",", skiprows=1, ndmin=2)[:, 1:]
         replay_batches = [data[i:i + 10].tolist() for i in range(0, len(data), 10)]
     while True:
-        mode = core.mode
+        with core.lock:                 # mode and recorder change together in on_start
+            mode = core.mode
+            activity = core.recorder.meta.get("activity") if core.recorder else None
         if mode != mode_seen:
             mode_seen = mode
             if mode == "idle":
@@ -129,7 +136,8 @@ def feeder(core, clock, args):
                 if args.replay:
                     walk = {"batches": replay_batches, "maneuvers": [], "i": 0}
                 else:
-                    route = [("walk", 20)] if mode == "calibrate" else None
+                    route = ([("walk", 40)] if mode == "calibrate" else
+                             SENSOR_ROUTES.get(activity) if mode == "sensor" else None)
                     sim = fw.simulate(route=route, meters_per_step=walker_stride(core.walker), seed=seed,
                                       start_t=0.0, length_jitter=0 if route else 0.05)
                     walk = {"batches": [rows for _, rows in sim["batches"]], "i": 0,

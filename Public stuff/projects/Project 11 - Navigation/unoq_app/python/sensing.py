@@ -1,8 +1,6 @@
-"""Turns raw IMU samples into steps. PARTNER A REPLACES THIS FILE.
+"""Raw IMU samples -> steps with heading and a stairs flag (Partner A's half).
 
-This is a simple baseline so the rest of the navigator runs end to end. Keep
-the interface below and everything else (recording, review, training, live
-navigation) works unchanged with your better version:
+Interface used by the rest of the navigator (nav_core.py, walks.py):
 
     s = Sensing()
     s.reset()                         # at the start of every walk
@@ -14,26 +12,42 @@ navigation) works unchanged with your better version:
     Step.t            time of the step (board seconds)
     Step.n            1, 2, 3... since reset()
     Step.heading_deg  heading since reset(), unwrapped, + = turned left (counterclockwise from above)
-    Step.stairs       1 on stairs, 0 not, -1 if this sensing can't tell
+    Step.stairs       1 on stairs, 0 not, -1 if it can't tell
+
+One "step" is one stride of the foot wearing the board (two footsteps).
+Calibration turns that into meters, so only consistency matters.
+
+How it works, every sample:
+  1. foot_ins.FootTracker follows the foot's 3D orientation, finds the stance
+     phases (foot planted and still), and at each one reports the stride just
+     finished: heading, length, height change.
+  2. The step network (stepnet_np.py, Project 8's CNN retrained on consistent
+     labels) looks at the last second of the tracker's four mount-independent
+     channels every 4 samples and says whether a stride just ended; Project 8's
+     debouncer turns that into step events. If the network file is missing, or
+     STEP_SOURCE = "tracker", the tracker's strides are the steps instead.
+  3. The stairs classifier (stairs.py) labels each stride. If the tracker's
+     strides are implausibly short (board not rigid on the foot), stairs = -1.
 
 Change VERSION whenever the output changes, so walks recorded with older
-sensing can be found and reprocessed (review page -> "Reprocess walks").
-
-Baseline method:
-  steps    peak of the smoothed acceleration magnitude above a threshold, with a
-           minimum gap; one count per footfall of the shoe wearing the board
-  heading  the rotation rate around the vertical, where "vertical" is the slowly
-           averaged accelerometer direction (gravity), so it works however the
-           board is mounted; the gyro's zero offset is re-measured whenever the
-           foot is still, then integrated
+sensing can be reprocessed (review page -> "Reprocess walks").
 """
 
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
 
-SAMPLE_HZ = 100
-DT = 1.0 / SAMPLE_HZ
+import foot_ins
+import stairs as stairs_mod
+import stepnet_np
+
+STEP_SOURCE = "net"         # "net" (the trained step counter) or "tracker" (stance phases)
+HOP = 4                     # network evaluated every 4 samples (25 times a second)
+STAIRS_MATCH_S = 0.6        # a step takes the stairs label of a stride that ended this close to it
+HOLD_S = 1.0                # a step with no stride that close yet waits up to this long for one (on the
+                            # way downstairs the network can fire before the tracker confirms the stride)
+MIN_PLAUSIBLE_STRIDE_M = 0.4    # median stride shorter than this = tracking unreliable, stairs unknown
 
 
 @dataclass
@@ -45,76 +59,71 @@ class Step:
 
 
 class Sensing:
-    VERSION = "baseline-1"
-
-    STEP_HIGH_G = 0.45      # smoothed |a| - 1 g must pass this to start a step
-    STEP_LOW_G = 0.15       # ...and fall below this before the next one can start
-    MIN_GAP_S = 0.45        # never two steps closer than this
-    GRAVITY_ALPHA = 0.02    # gravity direction: ~0.5 s average
-    MAG_ALPHA = 0.25        # light smoothing of |a| before peak picking
-    STILL_WINDOW = 20       # samples (0.2 s) checked for stillness: shorter than a stance phase
-    STILL_ACC_STD_G = 0.03
-    STILL_GYRO_DPS = 6.0
-    BIAS_ALPHA = 0.2
-
-    def __init__(self):
+    def __init__(self, step_source=STEP_SOURCE):
+        self.net = stepnet_np.load() if step_source == "net" else None
+        self.stairs = stairs_mod.StairsClassifier()
+        self.VERSION = ("stepnet" if self.net else "tracker") + "-ins-1"
         self.reset()
 
     def reset(self):
+        self.tracker = foot_ins.FootTracker()
+        window = self.net.window if self.net else 1
+        self.chans = deque(maxlen=window)
+        self.times = deque(maxlen=window)
+        self.detector = stepnet_np.StepDetector(self.net.threshold, self.net.min_gap) if self.net else None
+        self.samples = 0
         self.n = 0
-        self.heading = 0.0
-        self.gravity = None
-        self.mag = 1.0
-        self.armed = True
-        self.last_step_t = -1e9
-        self.bias = np.zeros(3)
-        self.recent = []            # last STILL_WINDOW rows, for the bias check
-        self.since_still_check = 0
+        self.lengths = []
+        self.last_stride = None         # (time, stairs flag)
+        self.pending = []               # network step times waiting for their stride
 
     def feed(self, t, rows):
-        steps = []
+        out = []
         count = len(rows)
         for i, row in enumerate(rows):
-            ts = t - (count - 1 - i) * DT
-            step = self._sample(ts, np.asarray(row, dtype=float))
-            if step is not None:
-                steps.append(step)
-        return steps
+            ts = t - (count - 1 - i) * foot_ins.DT
+            stride = self.tracker.update(ts, row)
+            if stride is not None:
+                flag = self._stairs(stride)
+                self.last_stride = (stride.t, flag)
+                if self.net is None:
+                    out.append(self._step(stride.t, flag))
+                else:
+                    out += self._release(ts, stride_arrived=True)
+            if self.net is not None:
+                self.chans.append(self.tracker.channels)
+                self.times.append(ts)
+                self.samples += 1
+                if len(self.chans) == self.net.window and self.samples % HOP == 0:
+                    p = self.net.prob(np.array(self.chans))
+                    step_t = self.detector.update(self.times[self.net.center], p)
+                    if step_t is not None:
+                        self.pending.append(step_t)
+                out += self._release(ts)
+        return out
 
-    def _sample(self, ts, row):
-        acc, gyro = row[:3], row[3:]
+    def _release(self, now, stride_arrived=False):
+        """Emit held network steps once their stride is known, or once they've waited HOLD_S."""
+        out = []
+        while self.pending:
+            step_t = self.pending[0]
+            near = self.last_stride and abs(self.last_stride[0] - step_t) <= STAIRS_MATCH_S
+            if near:
+                flag = self.last_stride[1]
+            elif now - step_t >= HOLD_S:
+                flag = -1 if self.last_stride and self.last_stride[1] == -1 else 0
+            else:
+                break
+            self.pending.pop(0)
+            out.append(self._step(step_t, flag))
+        return out
 
-        # gravity direction (points up: a resting accelerometer reads +1 g upward)
-        if self.gravity is None:
-            self.gravity = acc.copy()
-        else:
-            self.gravity += self.GRAVITY_ALPHA * (acc - self.gravity)
-        norm = np.linalg.norm(self.gravity)
-        up = self.gravity / norm if norm > 1e-6 else np.array([0.0, 0.0, 1.0])
+    def _stairs(self, stride):
+        self.lengths.append(stride.length)
+        if len(self.lengths) >= 4 and np.median(self.lengths[-20:]) < MIN_PLAUSIBLE_STRIDE_M:
+            return -1
+        return self.stairs.classify(stride)
 
-        # gyro zero offset, re-measured while the foot is planted
-        self.recent.append(row)
-        if len(self.recent) > self.STILL_WINDOW:
-            self.recent.pop(0)
-        self.since_still_check += 1
-        if self.since_still_check >= self.STILL_WINDOW // 2 and len(self.recent) == self.STILL_WINDOW:
-            self.since_still_check = 0
-            block = np.array(self.recent)
-            mags = np.linalg.norm(block[:, :3], axis=1)
-            if mags.std() < self.STILL_ACC_STD_G and np.abs(block[:, 3:]).max() < self.STILL_GYRO_DPS:
-                self.bias += self.BIAS_ALPHA * (block[:, 3:].mean(axis=0) - self.bias)
-
-        # heading: rotation about the vertical
-        self.heading += float(np.dot(gyro - self.bias, up)) * DT
-
-        # steps: hysteresis peak picking on smoothed |a|
-        self.mag += self.MAG_ALPHA * (np.linalg.norm(acc) - self.mag)
-        excess = self.mag - 1.0
-        if self.armed and excess > self.STEP_HIGH_G and ts - self.last_step_t >= self.MIN_GAP_S:
-            self.armed = False
-            self.last_step_t = ts
-            self.n += 1
-            return Step(t=ts, n=self.n, heading_deg=self.heading, stairs=-1)
-        if not self.armed and excess < self.STEP_LOW_G:
-            self.armed = True
-        return None
+    def _step(self, t, flag):
+        self.n += 1
+        return Step(t=float(t), n=self.n, heading_deg=float(self.tracker.heading), stairs=int(flag))

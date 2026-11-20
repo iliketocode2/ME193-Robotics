@@ -82,10 +82,10 @@ def main():
     print("calibration")
     for name, mps in walkers.items():
         b.msg("set_walker", {"name": name})
-        sim = fw.simulate(route=[("walk", 20)], meters_per_step=mps, seed=99, start_t=b.t + 2, length_jitter=0)
+        sim = fw.simulate(route=[("walk", 40)], meters_per_step=mps, seed=99, start_t=b.t + 2, length_jitter=0)
         b.msg("start", {"mode": "calibrate"})
         b.walk(sim)
-        b.msg("stop", {"distance_m": 20})
+        b.msg("stop", {"distance_m": 40})
         got = b.core.walkers.get(name, {}).get("meters_per_step")
         check(got is not None and abs(got - mps) / mps < 0.1, f"{name}: {got} m/step (true {mps})")
 
@@ -148,10 +148,10 @@ def main():
 
     print("navigate (new walker, new walk)")
     b.msg("set_walker", {"name": "tester"})
-    sim = fw.simulate(route=[("walk", 20)], meters_per_step=1.4, seed=98, start_t=b.t + 2, length_jitter=0)
+    sim = fw.simulate(route=[("walk", 40)], meters_per_step=1.4, seed=98, start_t=b.t + 2, length_jitter=0)
     b.msg("start", {"mode": "calibrate"})
     b.walk(sim)
-    b.msg("stop", {"distance_m": 20})
+    b.msg("stop", {"distance_m": 40})
     n_before = len(b.sent)
     sim = sim_walk(b, "tester", "navigate", 77, 1.4, tap=False)
     cues = [d for e, d in b.sent[n_before:] if e == "cue"]

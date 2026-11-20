@@ -29,7 +29,7 @@ def safe_name(name):
 
 
 class WalkRecorder:
-    def __init__(self, walker, kind, route, meters_per_step, sensing_version, now=None):
+    def __init__(self, walker, kind, route, meters_per_step, sensing_version, now=None, activity=None):
         now = time.time() if now is None else now
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
         self.id = f"{stamp}_{safe_name(walker)}_{kind}"
@@ -42,7 +42,8 @@ class WalkRecorder:
         self.folder.mkdir(parents=True)
         self.meta = {"walker": walker, "kind": kind, "route": route,
                      "meters_per_step": float(meters_per_step), "sensing": sensing_version,
-                     "start": now, "end": None, "reviewed": False, "include": True, "maneuvers": []}
+                     "start": now, "end": None, "reviewed": False, "include": True, "maneuvers": [],
+                     "activity": activity}
         self._write_meta()
         self.imu = open(self.folder / "imu.csv", "w")
         self.imu.write("t,ax,ay,az,gx,gy,gz\n")
@@ -142,7 +143,7 @@ def list_walks():
         steps = read_steps(folder)
         out.append({"id": folder.name, **{k: meta[k] for k in
                     ("walker", "kind", "route", "reviewed", "include", "sensing", "start", "end")},
-                    "steps": len(steps), "maneuvers": len(meta["maneuvers"]),
+                    "steps": len(steps), "maneuvers": len(meta["maneuvers"]), "activity": meta.get("activity"),
                     "meters": round(len(steps) * meta["meters_per_step"], 1)})
     return out
 
@@ -151,6 +152,14 @@ def load_walk(walk_id):
     folder = _folder(walk_id)
     meta = read_meta(folder)
     return {"id": walk_id, **meta, "steps": read_steps(folder), "events": read_events(folder)}
+
+
+def read_imu(walk_id):
+    """Raw samples as [[t, ax, ay, az, gx, gy, gz], ...] (for exports used to train sensing)."""
+    path = _folder(walk_id) / "imu.csv"
+    if not path.exists() or path.stat().st_size < 40:
+        return []
+    return np.round(np.loadtxt(path, delimiter=",", skiprows=1, ndmin=2), 4).tolist()
 
 
 def _folder(walk_id):

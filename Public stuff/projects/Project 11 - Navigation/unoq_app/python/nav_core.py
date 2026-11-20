@@ -24,7 +24,7 @@ import policy as pol
 import walks as wk
 from sensing import Sensing
 
-MODE_KIND = {"calibrate": "calibrate", "record": "demo", "navigate": "test", "dagger": "dagger"}
+MODE_KIND = {"calibrate": "calibrate", "record": "demo", "navigate": "test", "dagger": "dagger", "sensor": "sensor"}
 
 
 class NavCore:
@@ -154,20 +154,26 @@ class NavCore:
         if self.recorder is not None:
             self._finish()
         kind = MODE_KIND[mode]
+        activity = None
+        if mode == "sensor":
+            activity = data.get("activity")
+            if activity not in cfg.SENSOR_ACTIVITIES:
+                return self.notice("Pick what you'll be doing (walk, stairs, turn, still).", error=True)
         if mode == "navigate" and not data.get("test", True):
             kind = None         # navigate without saving
         self.sensing.reset()
         self.steps, self.heading = 0, 0.0
         self.mode = mode
-        self.recorder = wk.WalkRecorder(self.walker, kind, self.route, self._mps(), Sensing.VERSION,
-                                        now=self.clock()) if kind else None
-        self.tracker = feat.StateTracker(self._mps()) if mode != "calibrate" else None
+        self.recorder = wk.WalkRecorder(self.walker, kind, self.route, self._mps(), self.sensing.VERSION,
+                                        now=self.clock(), activity=activity) if kind else None
+        self.tracker = feat.StateTracker(self._mps()) if mode not in ("calibrate", "sensor") else None
         self.cues = pol.CueFilter()
         self.last_cue = self.last_pred = None
         self.notice({"calibrate": "Calibrating: walk to your end marker, then press Stop.",
                      "record": "Recording a demo. Tap each maneuver as you start it.",
                      "navigate": "Navigating. Follow the cues.",
-                     "dagger": "DAgger walk. Follow the cues, tap what you actually do."}[mode])
+                     "dagger": "DAgger walk. Follow the cues, tap what you actually do.",
+                     "sensor": f"Recording sensor data: {activity}. Only {activity}, then Stop."}[mode])
         self.send("status", self.status())
 
     def on_stop(self, data):
@@ -184,7 +190,9 @@ class NavCore:
                 self.walkers = wk.save_walker(self.walker, mps)
                 self.notice(f"{self.walker}: {mps:.2f} m per step ({self.steps} steps over {distance:g} m).")
         walk_id = self._finish()
-        if walk_id and self.mode != "calibrate":
+        if walk_id and self.mode == "sensor":
+            self.notice(f"Saved sensor session {walk_id}.")
+        elif walk_id and self.mode != "calibrate":
             self.notice(f"Saved walk {walk_id}. Review it before training.")
         self.mode = "idle"
         self.tracker = self.cues = None
@@ -278,11 +286,14 @@ class NavCore:
             wk.reprocess(s["id"], Sensing())
             count += 1
         self.sensing.reset()
-        self.notice(f"Re-ran sensing ({Sensing.VERSION}) on {count} walks. Check reviews, then retrain.")
+        self.notice(f"Re-ran sensing ({self.sensing.VERSION}) on {count} walks. Check reviews, then retrain.")
         self.on_list_walks({})
 
     def on_export(self, data):
         walks = [wk.load_walk(s["id"]) for s in wk.list_walks()]
+        if data.get("imu"):
+            for w in walks:
+                w["imu"] = wk.read_imu(w["id"])
         self.send("export", {"exported": self.clock(), "walkers": self.walkers, "walks": walks,
                              "policy": self.policy.info, "config": {
                                  "maneuvers": cfg.MANEUVERS, "classes": cfg.CLASSES, "features": cfg.FEATURES,
@@ -302,7 +313,7 @@ class NavCore:
         info = self.policy.info if self.policy.trained else None
         return {
             "board_time": now, "imu": imu, "mode": self.mode, "walker": self.walker,
-            "walkers": self.walkers, "route": self.route, "sensing": Sensing.VERSION,
+            "walkers": self.walkers, "route": self.route, "sensing": self.sensing.VERSION,
             "steps": self.steps, "heading": round(self.heading, 1), "meters": round(self.steps * self._mps(), 1),
             "meters_per_step": self._mps(),
             "walk": None if rec is None else {"id": rec.id, "kind": rec.meta["kind"],
