@@ -11,7 +11,16 @@ GYRO_COUNTS_PER_DPS = 16.4          # sketch sets +-2000 deg/s
 # A maneuver is something the walker does at one place on the route. The policy
 # predicts, at every step, "straight" or "<maneuver>_soon" / "<maneuver>_now".
 MANEUVERS = ["left", "right", "stairs", "arrive"]
-CLASSES = ["straight"] + [f"{m}_{w}" for m in MANEUVERS for w in ("soon", "now")]
+
+# Combined maneuvers: two maneuvers closer than COMBINE_M can't each get their own
+# "now" zone (it spans NOW_BEFORE_M + NOW_AFTER_M), so the later one used to swallow
+# the earlier. They are cued together instead: "Turn left, then take the stairs".
+# Whether a pair is combined is decided per route from the median gap over the
+# training walks (features.route_plan), so every walk is labeled the same way.
+COMBINE_M = 6.0
+COMBINED = [f"{a}+{b}" for a in ("left", "right", "stairs") for b in MANEUVERS]
+CUE_MANEUVERS = MANEUVERS + COMBINED
+CLASSES = ["straight"] + [f"{m}_{w}" for m in CUE_MANEUVERS for w in ("soon", "now")]
 
 SPOKEN = {
     "left_soon": "Left turn coming up",
@@ -23,6 +32,14 @@ SPOKEN = {
     "arrive_soon": "Almost there",
     "arrive_now": "You have arrived",
 }
+_SOON_NAME = {"left": "left turn", "right": "right turn", "stairs": "stairs", "arrive": "destination"}
+_NOW_NAME = {"left": "turn left", "right": "turn right", "stairs": "take the stairs", "arrive": "you're there"}
+for _c in COMBINED:
+    _a, _b = _c.split("+")
+    _then = f"{_b} again" if _a == _b and _a in ("left", "right") else _NOW_NAME[_b]
+    SPOKEN[f"{_c}_soon"] = (f"Two {_a} turns coming up" if _a == _b and _a in ("left", "right")
+                            else f"{_SOON_NAME[_a].capitalize()}, then {_SOON_NAME[_b]} coming up")
+    SPOKEN[f"{_c}_now"] = f"{_NOW_NAME[_a].capitalize()}, then {_then}"
 
 # ---------- labels ----------
 NOW_BEFORE_M = 3.0      # steps from this far before a maneuver...

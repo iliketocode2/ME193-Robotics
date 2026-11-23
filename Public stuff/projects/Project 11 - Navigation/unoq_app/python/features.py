@@ -84,7 +84,7 @@ def walk_labels(steps, maneuvers, meters_per_step):
     now_mask = np.zeros(n, dtype=bool)
     for m in sorted(maneuvers, key=lambda m: m["t"]):
         action = m["action"]
-        if action not in cfg.MANEUVERS:
+        if action not in cfg.CUE_MANEUVERS:
             continue
         i = int(np.argmin(np.abs(times - m["t"])))
         at = meters[i]
@@ -95,6 +95,63 @@ def walk_labels(steps, maneuvers, meters_per_step):
         labels[now] = cfg.CLASSES.index(f"{action}_now")
         now_mask |= now
     return labels
+
+
+# ---------- combined maneuvers (see config.COMBINE_M) ----------
+
+def _sequence(maneuvers):
+    return sorted((m for m in maneuvers if m["action"] in cfg.MANEUVERS), key=lambda m: m["t"])
+
+
+def _positions(steps, seq, meters_per_step):
+    """Meters walked at each maneuver (step nearest its time)."""
+    if not steps:
+        return np.zeros(len(seq))
+    times = np.array([_t(s) for s in steps])
+    meters = np.array([_fields(s)[0] for s in steps]) * meters_per_step
+    return np.array([meters[int(np.argmin(np.abs(times - m["t"])))] for m in seq])
+
+
+def route_plan(walks):
+    """{"actions": [...], "combine": [bool per neighbouring pair]} for the route, or None.
+
+    Only when every walk has the same maneuver sequence: then each neighbouring pair is
+    combined if its median gap over the walks is under COMBINE_M, so all walks (and the
+    held-out walk in the report) are labeled the same way.
+    """
+    seqs = [_sequence(w["maneuvers"]) for w in walks]
+    if not seqs or not seqs[0]:
+        return None
+    actions = [m["action"] for m in seqs[0]]
+    if any([m["action"] for m in s] != actions for s in seqs):
+        return None
+    gaps = np.array([np.diff(_positions(w["steps"], s, w["meters_per_step"])) for w, s in zip(walks, seqs)])
+    median = np.median(gaps, axis=0) if gaps.size else np.zeros(0)
+    return {"actions": actions, "combine": [bool(g < cfg.COMBINE_M) for g in median],
+            "median_gap_m": [round(float(g), 1) for g in median]}
+
+
+def combine_maneuvers(steps, maneuvers, meters_per_step, plan=None):
+    """The maneuver list with close pairs merged into one "<a>+<b>" maneuver at the first one's place.
+
+    Uses the route plan when this walk's sequence matches it, otherwise this walk's own gaps.
+    Pairs are taken greedily from the start, so three close maneuvers become a pair plus one.
+    """
+    seq = _sequence(maneuvers)
+    if plan and [m["action"] for m in seq] == plan["actions"]:
+        combine = plan["combine"]
+    else:
+        combine = [bool(g < cfg.COMBINE_M) for g in np.diff(_positions(steps, seq, meters_per_step))]
+    out, i = [], 0
+    while i < len(seq):
+        a = seq[i]
+        if i + 1 < len(seq) and combine[i] and f"{a['action']}+{seq[i + 1]['action']}" in cfg.COMBINED:
+            out.append({"t": a["t"], "action": f"{a['action']}+{seq[i + 1]['action']}"})
+            i += 2
+        else:
+            out.append({"t": a["t"], "action": a["action"]})
+            i += 1
+    return out
 
 
 def _t(step):

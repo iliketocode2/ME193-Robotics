@@ -148,10 +148,11 @@ function renderTaps() {
 // ---------- cues ----------
 
 function renderCue(action, detail) {
-  const [maneuver, when] = action ? action.split('_') : ['straight', null];
+  const [combined, when] = action ? action.split('_') : ['straight', null];
+  const maneuver = firstManeuver(combined);
   let text = 'Continue straight';
   if (action) {
-    const name = MANEUVER_NAMES[maneuver] || maneuver;
+    const name = maneuverName(combined);
     text = lastCue && lastCue.action === action ? lastCue.text : when === 'soon' ? `${name} coming up` : name;
   }
   for (const el of [$('#cue-nav'), $('#cue-dagger')]) {

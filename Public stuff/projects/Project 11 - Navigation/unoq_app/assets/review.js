@@ -254,7 +254,7 @@ function draw() {
     const x = g.x(e.t);
     if (e.type === 'cue') {
       const [m, when] = e.action.split('_');
-      ctx.fillStyle = css(COLORS[m] || '--muted');
+      ctx.fillStyle = css(COLORS[firstManeuver(m)] || '--muted');
       ctx.globalAlpha = when === 'soon' ? 0.5 : 1;
       ctx.beginPath();
       ctx.moveTo(x - 5, 4);
@@ -406,7 +406,7 @@ board.on_message('train_result', (d) => {
       <p class="muted">Timing: negative = cue came before the maneuver. Mean |error| ${r.mean_abs_error_m ?? '—'} m, standard deviation ${r.std_error_m ?? '—'} m.</p>
       <div class="tablewrap"><table><thead><tr><th>Held-out walk</th><th>Maneuvers (error m)</th><th>False alarms</th></tr></thead><tbody>` +
       r.per_walk.map((w) => `<tr><td>${escapeHtml(w.walk)}</td><td>${w.maneuvers.map((m) =>
-        m.hit ? `${MANEUVER_NAMES[m.action]} ${m.error_m > 0 ? '+' : ''}${m.error_m}` : `<b style="color: var(--bad)">${MANEUVER_NAMES[m.action]} missed</b>`).join(' · ')}</td><td>${w.false_alarms}</td></tr>`).join('') +
+        m.hit ? `${maneuverName(m.action)} ${m.error_m > 0 ? '+' : ''}${m.error_m}` : `<b style="color: var(--bad)">${maneuverName(m.action)} missed</b>`).join(' · ')}</td><td>${w.false_alarms}</td></tr>`).join('') +
       '</tbody></table></div>';
   }
   $('#report').innerHTML = html;
