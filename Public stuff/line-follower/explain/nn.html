@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Imitation learning (neural net) - how it works</title>
+<link rel="stylesheet" href="explain.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '\\(', right: '\\)', display: false}]})"></script>
+</head>
+<body>
+<main>
+<div class="nav">Line Follower &middot; how the controllers work &middot; Imitation learning</div>
+<h1>Imitation learning (with a neural net)</h1>
+<p class="sub">A small network learns to copy a teacher's steering.</p>
+
+<h2>The signal every controller works from</h2>
+<p>The light sensor points down and sits over the <em>edge</em> of the line, so its reading depends on how far the car has drifted
+toward the line or away from it. On the Calibrate tab you measure the reading fully on the line (\(r_{\text{on}}\)) and fully off it
+(\(r_{\text{off}}\)). The target \(r^*\) is halfway between them, and the <strong>error</strong> rescales the distance from the target so that
+&plusmn;1 means fully on or fully off:</p>
+<div class="box eq">
+$$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+  e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+</div>
+<p>So \(e = +1\) means the sensor is well onto the line, \(e = -1\) well off it, and \(e = 0\) means it is exactly on the edge, where we want it.
+The controller's whole job is to steer so that \(e\) stays at zero. It does that by speeding one wheel up and slowing the other down by the same
+amount \(u\) (the <em>steering</em>) around the base speed \(B\):</p>
+<div class="box eq">
+$$v_L = B + u \qquad v_R = B - u$$
+</div>
+<p>Following the right edge, a positive \(u\) turns the car away from the line; following the left edge the sign flips.
+The controllers differ only in <em>how they decide \(u\)</em> from the error.</p>
+
+<h2>The idea</h2>
+<p>A neural net is a flexible function with adjustable numbers (weights). Here it takes in what the car senses and outputs a steering value.
+We don't tell it a rule. We show it <em>examples</em> of good steering and adjust the weights until it reproduces them.
+This is called <strong>imitation learning</strong> (or behavior cloning), and the teacher is a PD controller.</p>
+
+<h2>The three steps</h2>
+<ol>
+<li><strong>Record.</strong> The PD teacher drives the car. At every reading, the page saves three numbers: the error, its rate of change, and the steering the teacher chose.</li>
+<li><strong>Train.</strong> The network is adjusted so that, given the error and rate, it outputs the teacher's steering. The loss on the page shows how far off it still is.</li>
+<li><strong>Start.</strong> The network drives instead of the teacher.</li>
+</ol>
+
+<h2>The network</h2>
+<p>Two inputs go in, a layer of \(H\) hidden units sits in the middle (the <em>Hidden units</em> setting, default 8), and one number comes out:</p>
+<div class="box eq">
+$$x = \begin{bmatrix} e \\ \dot e / 10 \end{bmatrix} \qquad h = \tanh\!\left(W_1 x + b_1\right) \qquad u = w_2^{\top} h + b_2$$
+</div>
+<p>The rate is divided by 10 so both inputs are about the same size, which makes training easier. Each hidden unit computes a weighted sum of the inputs and squashes it with
+\(\tanh\), which gives an S-shaped curve between &minus;1 and +1. The output is a weighted sum of the hidden units. With enough hidden units this can approximate nearly any smooth rule from \((e, \dot e)\) to steering.
+The result is used exactly like the other controllers: \(v_L = B + 100u\) and \(v_R = B - 100u\).</p>
+
+<h2>Training</h2>
+<p>For each example, the network makes a prediction \(u\), and we compare it with the teacher's steering \(u^{*}\):</p>
+<div class="box eq">
+$$u^{*} = \dfrac{K_p\, e + K_d\, \dot e}{100} \qquad L = \tfrac{1}{2}\,(u - u^{*})^2$$
+</div>
+<p>\(L\) is the <strong>loss</strong>: zero when the network matches the teacher exactly, larger the further off it is. Training nudges every weight a small step in the direction that reduces \(L\):</p>
+<div class="box eq">
+$$w \leftarrow w - \eta\, \dfrac{\partial L}{\partial w}$$
+</div>
+<p>\(\eta\) is the learning rate. The slopes \(\partial L / \partial w\) come from <em>backpropagation</em>, which is just the chain rule applied layer by layer. With the miss \(\delta = u - u^{*}\):</p>
+<div class="box eq">
+$$\dfrac{\partial L}{\partial w_{2,j}} = \delta\, h_j \qquad
+\dfrac{\partial L}{\partial W_{1,ji}} = \delta\, w_{2,j}\,(1 - h_j^2)\, x_i$$
+</div>
+<p>The factor \(1 - h_j^2\) is the slope of \(\tanh\). One pass through all the examples is an <em>epoch</em>; the default is 150 epochs, using up to 600 randomly chosen examples per epoch.
+Watch the loss fall as it trains.</p>
+
+<h2>The knobs</h2>
+<table>
+<tr><th>Setting</th><th>Effect</th></tr>
+<tr><td>Teacher \(K_p\), \(K_d\)</td><td>The PD gains of the controller that drives while recording. The network can be no better than its teacher, so make the teacher good first (see the PD tab).</td></tr>
+<tr><td>Hidden units</td><td>More units can copy a more complicated rule but need more examples. Changing it starts a fresh network.</td></tr>
+<tr><td>Epochs</td><td>How many passes over the data. More fits better, with diminishing returns.</td></tr>
+<tr><td>Learning rate \(\eta\)</td><td>Too big and the loss bounces around; too small and training is slow.</td></tr>
+</table>
+
+<h2>Things to know</h2>
+<ul>
+<li><strong>Garbage in, garbage out.</strong> If the teacher wobbles badly, the network copies the wobble.</li>
+<li><strong>It only knows what it has seen.</strong> The recorded examples are mostly of the car near the line, because that is where the teacher keeps it. If the network drifts somewhere the teacher never went, it has no examples there and may do something odd.
+Recording over wobbles and different parts of the track gives it more to learn from. This is the main weakness of imitation learning.</li>
+<li>For a rule as simple as PD, a net is overkill: it ends up as a smooth curved copy of the same straight-line rule. The point is the method. The same recipe works when the teacher is a human driving, or something much more complicated than PD.</li>
+<li>The trained network is saved in your browser, so it is still there next time you open the page.</li>
+</ul>
+
+<h2>Where it is in the code</h2>
+<p>The Imitation learning tab's code card has three parts: <code>forward</code> computes the network's output from the two inputs, <code>decide</code> measures the error and rate and applies the network's output to the wheels,
+and <code>train_steps</code> is the training loop: predict, measure the miss, and nudge every weight.</p>
+
+</main>
+</body>
+</html>

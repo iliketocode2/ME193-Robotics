@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Q-table (reinforcement learning) - how it works</title>
+<link rel="stylesheet" href="explain.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '\\(', right: '\\)', display: false}]})"></script>
+</head>
+<body>
+<main>
+<div class="nav">Line Follower &middot; how the controllers work &middot; Q-table</div>
+<h1>Q-table (reinforcement learning)</h1>
+<p class="sub">No model and no formula: learn from experience which steering works.</p>
+
+<h2>The signal every controller works from</h2>
+<p>The light sensor points down and sits over the <em>edge</em> of the line, so its reading depends on how far the car has drifted
+toward the line or away from it. On the Calibrate tab you measure the reading fully on the line (\(r_{\text{on}}\)) and fully off it
+(\(r_{\text{off}}\)). The target \(r^*\) is halfway between them, and the <strong>error</strong> rescales the distance from the target so that
+&plusmn;1 means fully on or fully off:</p>
+<div class="box eq">
+$$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+  e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+</div>
+<p>So \(e = +1\) means the sensor is well onto the line, \(e = -1\) well off it, and \(e = 0\) means it is exactly on the edge, where we want it.
+The controller's whole job is to steer so that \(e\) stays at zero. It does that by speeding one wheel up and slowing the other down by the same
+amount \(u\) (the <em>steering</em>) around the base speed \(B\):</p>
+<div class="box eq">
+$$v_L = B + u \qquad v_R = B - u$$
+</div>
+<p>Following the right edge, a positive \(u\) turns the car away from the line; following the left edge the sign flips.
+The controllers differ only in <em>how they decide \(u\)</em> from the error.</p>
+
+<h2>The idea</h2>
+<p>The earlier controllers all come from a formula. Q-learning has none. The car just tries things, notices whether they helped, and keeps a score for every steering choice in every situation.
+After enough experience the scores tell it what to do.</p>
+
+<h2>Situations (states)</h2>
+<p>The car can't keep a score for every possible reading, so it sorts what it senses into a handful of situations. The error is split into 5 bins and its rate of change into 3:</p>
+<table>
+<tr><th>Error bins</th><th>Rate bins</th></tr>
+<tr><td>far off the line &nbsp; (\(e \le -0.6\))<br>off the line &nbsp; (\(-0.6 \ldots -0.2\))<br>near the target &nbsp; (\(-0.2 \ldots 0.2\))<br>on the line &nbsp; (\(0.2 \ldots 0.6\))<br>far on the line &nbsp; (\(e > 0.6\))</td>
+<td>moving off &nbsp; (\(\dot e \le -2\) per second)<br>steady &nbsp; (between)<br>moving on &nbsp; (\(\dot e > 2\) per second)</td></tr>
+</table>
+<p>That makes 15 situations \(s\), one row of the table each.</p>
+
+<h2>Choices (actions)</h2>
+<p>In each situation it can pick one of five steering moves, as fractions of the Turn setting \(T\):</p>
+<div class="box eq">
+$$a \in \{-1,\ -\tfrac12,\ 0,\ +\tfrac12,\ +1\} \qquad u = a\,T$$
+</div>
+<p>The table \(Q(s, a)\) holds one score per situation and choice: 15 rows by 5 columns. A higher score means &ldquo;this move has worked out well from here&rdquo;.</p>
+
+<h2>Reward</h2>
+<p>After each move the car gets a reward for how well it is doing: <strong>the closer to the target, the better</strong>.</p>
+<div class="box eq">
+$$r = -|e|$$
+</div>
+
+<h2>The learning rule</h2>
+<p>Every 0.1 seconds the car looks at its new situation \(s'\) and updates the score of the move it just made, in situation \(s\):</p>
+<div class="box eq">
+$$Q(s,a) \leftarrow Q(s,a) + \alpha \left[\, r + \gamma \max_{a'} Q(s',a') - Q(s,a) \,\right]$$
+</div>
+<p>Read it as: the new score is the old one, nudged toward <em>the reward just received plus the best score available in the situation it led to</em>.
+That second part is how good outcomes get credited backwards: a move that leads to a good situation inherits some of that situation's value.</p>
+<ul>
+<li>\(\alpha\) (learning rate): how far each experience moves the score. Near 1 the car forgets quickly; near 0 it learns slowly.</li>
+<li>\(\gamma\) (discount): how much future matters versus now. Near 1 it plans further ahead.</li>
+</ul>
+
+<h2>Choosing a move: explore or exploit</h2>
+<div class="box eq">
+$$a = \begin{cases} \arg\max_a Q(s,a) & \text{with probability } 1-\epsilon \\ \text{a random action} & \text{with probability } \epsilon \end{cases}$$
+</div>
+<p>Usually the car picks the best-scoring move (<em>exploit</em>). With probability \(\epsilon\) it picks a random one (<em>explore</em>), because a move it has never tried might be better than the best one it knows.
+Too little exploring and it gets stuck with a mediocre habit; too much and it keeps driving badly on purpose. Untick <strong>Learning</strong> to turn exploring and updating off and see what it has actually learned.</p>
+
+<h2>Reading the table on the page</h2>
+<p>Each row is a situation, each column a steering move (\(-1\) to \(+1\) times Turn). The cell colors go from red (low score) to green (high), and the best move in each row is bold.
+Rows the car has never visited stay all zeros. Over time you should see the best move in each row make sense: when the car is on the line side and moving further on, the best move should be a strong turn away.</p>
+
+<h2>What to expect</h2>
+<ul>
+<li><strong>It is slow.</strong> Each learning step takes real time on a real car: 10 decisions a second, 75 table entries to fill in. Give it several minutes on a loop of track.</li>
+<li>The defaults matter. The biggest move \(T\) is set from the measured steering authority so that it is about the steering a full error needs (moves several times bigger overshoot the edge), and \(\epsilon\) starts at 0.1 so random moves don't keep knocking it off the line. In a rough simulation, a smaller \(T\) and \(\epsilon\) made the car lose the line far less often while learning. Changing \(b\) or the response speed resets the table, because the moves it learned no longer match.</li>
+<li>Early on it drives badly. That is expected; it is learning by trying.</li>
+<li>The table survives Start and Stop, so you can train in several short sessions. <strong>Reset table</strong> wipes it.</li>
+<li>The car only sees the error and its rate, so some different situations look the same to it. That limits how good it can get.</li>
+</ul>
+
+<h2>When the car loses the line during training</h2>
+<p>It will, especially at first. Here is what to do and why.</p>
+<div class="tip">
+<p><strong>Don't pick the car up and move it while it is running. Press Stop (or wait for the run to end), put it back, and press Run again.</strong> The table is kept; only the memory of the last move is cleared.</p>
+</div>
+<p><strong>Why not move it while it runs?</strong> After every move the car updates the score of that move using the error it sees next. If you lift the car and set it down on the edge, the next reading suddenly looks wonderful, and the car credits its last move with that improvement: a move that did nothing of the kind gets a high score.
+Your hand also disturbs the sensor, so the rate readings are nonsense for a moment. The false credit lands in the situation it was in when you grabbed it, usually &ldquo;far off the line&rdquo;, which is exactly the row you most want to be right.</p>
+<p><strong>Why stopping and running again is safe.</strong> Running again clears the car's memory of what it just did, so the first move after a restart has no &ldquo;previous move&rdquo; to learn from, and nothing is learned across the gap while you moved it. The table itself, everything learned so far, stays. Only <strong>Reset table</strong> wipes it (and changing <i>b</i> or the response speed does too, because the moves it learned no longer match).</p>
+<p><strong>What losing the line teaches.</strong> The steps just before it left the line are not wasted: those moves are scored badly, because they led to a bad situation, and that is real learning. The steps after it is completely off the line are close to wasted. The reading is the same on both sides of the line, so the car can't tell which way to turn, and all it can do is wander randomly. If it has clearly gone and is driving away, stop it rather than letting it wander.</p>
+<p><strong>Tips for training sessions:</strong></p>
+<ul>
+<li><strong>Use short runs.</strong> The button runs for the time in the <em>Run time</em> box (20 seconds by default, 0 means until you press Stop) and then stops by itself. Many 20&ndash;30 second runs, restarting whenever it loses the line, teach more than one long run that is mostly wandering.</li>
+<li><strong>Vary where it starts.</strong> Put the sensor over the edge, but sometimes a little to one side or at a slight angle. Starting always dead on target never teaches it how to recover.</li>
+<li><strong>Use a closed loop</strong> with gentle curves, so it keeps meeting new situations without you having to carry it back to the start.</li>
+<li><strong>Check progress with Learning unticked.</strong> The car then uses only the best moves it knows, with no random ones, so you see how good it really is. Tick it again to keep training.</li>
+</ul>
+
+<h2>Where it is in the code</h2>
+<p>The Q-table tab's code card has two parts: <code>state_of</code> sorts the error and rate into one of the 15 situations, and <code>decide</code> does the learning update for the previous move,
+chooses the next move (explore or exploit) every 0.1 seconds, and turns the chosen move into wheel speeds.</p>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>LQR (linear-quadratic regulator) - how it works</title>
+<link rel="stylesheet" href="explain.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '\\(', right: '\\)', display: false}]})"></script>
+</head>
+<body>
+<main>
+<div class="nav">Line Follower &middot; how the controllers work &middot; LQR</div>
+<h1>LQR (linear-quadratic regulator)</h1>
+<p class="sub">Say what you care about, and let the math pick the best gains.</p>
+
+<h2>The signal every controller works from</h2>
+<p>The light sensor points down and sits over the <em>edge</em> of the line, so its reading depends on how far the car has drifted
+toward the line or away from it. On the Calibrate tab you measure the reading fully on the line (\(r_{\text{on}}\)) and fully off it
+(\(r_{\text{off}}\)). The target \(r^*\) is halfway between them, and the <strong>error</strong> rescales the distance from the target so that
+&plusmn;1 means fully on or fully off:</p>
+<div class="box eq">
+$$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+  e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+</div>
+<p>So \(e = +1\) means the sensor is well onto the line, \(e = -1\) well off it, and \(e = 0\) means it is exactly on the edge, where we want it.
+The controller's whole job is to steer so that \(e\) stays at zero. It does that by speeding one wheel up and slowing the other down by the same
+amount \(u\) (the <em>steering</em>) around the base speed \(B\):</p>
+<div class="box eq">
+$$v_L = B + u \qquad v_R = B - u$$
+</div>
+<p>Following the right edge, a positive \(u\) turns the car away from the line; following the left edge the sign flips.
+The controllers differ only in <em>how they decide \(u\)</em> from the error.</p>
+
+<h2>The idea</h2>
+<p>PD makes you guess the gains \(K_p\) and \(K_d\). LQR turns the question around. You describe what you care about &mdash; staying on target, not swinging around,
+not steering harder than necessary &mdash; and an equation tells you the <em>best possible</em> gains for those preferences. The result still has the form of PD,
+but the gains come out of a calculation instead of trial and error.</p>
+
+<h2>Step 1: a model of the car</h2>
+<p>LQR needs a simple model of how steering changes the error. We use the simplest one that captures the behaviour: steering changes how fast the error is <em>accelerating</em>.</p>
+<div class="box eq">
+$$\ddot e = -b\,u$$
+</div>
+<p>The minus sign says that steering positive reduces the error. \(b\) says how strongly: with \(u\) as a fraction of full steering, \(b\) is how quickly
+full steering changes the error's rate. The page starts with \(b = 1000\), which is what we <strong>measured on our test car</strong> (the Calibrate tab has a test for it). Yours will differ with the surface, the base speed and the edge, so measure it again. In state form, with the state \(x = (e,\ \dot e)\):</p>
+<div class="box eq">
+$$\dot x = A x + B u,\quad
+A = \begin{bmatrix} 0 & 1 \\ 0 & 0 \end{bmatrix},\quad
+B = \begin{bmatrix} 0 \\ -b \end{bmatrix}$$
+</div>
+
+<h2>Step 2: a cost that says what you care about</h2>
+<div class="box eq">
+$$J = \int_0^\infty \left( Q_e\, e^2 + Q_d\, \dot e^2 + R\, u^2 \right) dt$$
+</div>
+<ul>
+<li>\(Q_e\) &mdash; how much you hate being off target.</li>
+<li>\(Q_d\) &mdash; how much you hate the error changing fast.</li>
+<li>\(R\) &mdash; how much you hate using steering.</li>
+</ul>
+<p>Every instant, you pay these penalties; the total over the whole future is \(J\). The best controller is the one that makes \(J\) as small as possible. Only the <em>ratios</em> of the weights matter.</p>
+
+<h3>Why would you hate steering, or hate the error changing fast?</h3>
+<p>If all you cared about was being on target, you would set \(R = 0\) and steer as hard as it takes. Real cars punish that, and these are the reasons the other two penalties exist.</p>
+<p><strong>Why hate steering (\(R\)):</strong></p>
+<ul>
+<li><strong>You run out of it.</strong> Steering is the difference between the wheels, and each is limited to &plusmn;100. Steering hard slows one wheel to a crawl or even reverses it, so the car loses forward speed, or the command simply gets clipped and the math no longer describes what the car does.</li>
+<li><strong>Delay turns big steering into wobble.</strong> The car reacts to what the sensor saw a few tens of milliseconds ago. The harder it steers on old information, the more it overshoots. A small \(R\) means an aggressive, fast loop, and a fast loop is the one most sensitive to that delay (you can see this on the plot).</li>
+<li><strong>It amplifies noise.</strong> Sensor noise gets multiplied by the gain, so a high-gain controller twitches the wheels at every flicker in the reading. That wastes battery, wears the motors and scuffs the wheels.</li>
+<li><strong>The model is only good for gentle steering.</strong> It treats steering as a smooth, proportional push. Slamming the wheels to their limits goes outside the range where that is true.</li>
+</ul>
+<p><strong>Why hate the error changing fast (\(Q_d\)):</strong></p>
+<ul>
+<li><strong>It means overshoot.</strong> If the error is rushing toward zero it will probably shoot straight past and end up on the other side. Penalizing the rate is how you tell the controller to ease off as it arrives. It is the shock absorber from the PD page, but chosen by the optimizer.</li>
+<li><strong>The sensor only sees a narrow strip.</strong> Swinging quickly across the edge can carry the sensor right off the line, where the reading goes flat (error stuck at &minus;1) and the car no longer knows which way to turn.</li>
+<li><strong>Fast swings are hard to catch.</strong> With delay in the loop, a car that is moving across the edge quickly has already traveled a long way before the correction takes effect.</li>
+<li><strong>A smooth ride is easier on everything,</strong> including a payload, a camera, or a passenger, if the car carried one.</li>
+</ul>
+<p>The trade-off is the heart of LQR: raising either penalty gives a calmer, gentler car that reacts a little slower, and lowering it gives a sharper car that is more likely to wobble.
+There is no free setting that is both instant and smooth; the weights are how you choose the compromise.</p>
+
+<h2>Step 3: the best feedback</h2>
+<p>For this kind of problem the best controller is a fixed linear feedback, \(u = K x\) (with the sign convention above that positive steering reduces \(e\)). The gain comes from solving the
+<strong>Riccati equation</strong> for a matrix \(P\):</p>
+<div class="box eq">
+$$A^{\top}P + PA - P B R^{-1} B^{\top} P + Q = 0 \qquad K = R^{-1} B^{\top} P$$
+</div>
+<p><strong>What \(P\) is.</strong> \(P\) is a \(2 \times 2\) symmetric matrix of plain numbers, one row and column for each state (\(e\) and \(\dot e\)):</p>
+<div class="box eq">
+$$P = \begin{bmatrix} p_1 & p_2 \\ p_2 & p_3 \end{bmatrix} \qquad
+x^{\top} P x = p_1\, e^2 + 2 p_2\, e\,\dot e + p_3\, \dot e^2$$
+</div>
+<p>It is the <em>cost-to-go</em>: if the car is in state \(x\) and steers optimally from now on, then \(x^{\top} P x\) is the smallest total cost \(J\) it can still pay.
+Bad states (far from the target, or swinging fast) have a big cost-to-go, good states a small one, and \(P\) is the table that says how big. The best steering is then whatever slides the car most steeply down that cost, which is why the gain is built from it: \(K = R^{-1} B^{\top} P\).
+The Riccati equation is just the condition that makes \(x^{\top} P x\) a consistent cost-to-go (the cost from a state equals the cost of the next small step plus the cost-to-go from where that step leads), and solving it means finding the \(P\) that satisfies it.</p>
+<p>For our model the three entries come out in closed form:</p>
+<div class="box eq">
+$$p_2 = \dfrac{\sqrt{Q_e R}}{b} \qquad p_3 = \dfrac{\sqrt{R}}{b}\sqrt{Q_d + 2 p_2} \qquad p_1 = \dfrac{b^2}{R}\, p_2\, p_3$$
+</div>
+<p>Because \(B\) has \(-b\) in it, \(R^{-1} B^{\top} P\) comes out negative, and the usual \(u = -Kx\) turns that back into the positive feedback used on this page. In magnitudes, \(K_1 = (b/R)\,p_2\) and \(K_2 = (b/R)\,p_3\), which gives the formulas below.</p>
+<p>For our two-state model it can be solved by hand, which is exactly what the code does:</p>
+<div class="box eq">
+$$K_1 = \sqrt{\dfrac{Q_e}{R}} \qquad K_2 = \sqrt{\dfrac{Q_d}{R} + \dfrac{2 K_1}{b}}
+\qquad u = K_1\, e + K_2\, \dot e$$
+</div>
+<p>The page shows the result live, for example <code>K = [0.100, 0.014]</code>. Steering as a percentage is \(100\,u\), so it is PD with \(K_p = 100 K_1\) and \(K_d = 100 K_2\).</p>
+
+<h2>A worked example</h2>
+<p>Take the page's defaults: \(b = 1000\), \(Q_e = 1\), \(Q_d = 0\), and \(R = 100\) (the page sets \(R\) from \(b\) so the response comes out at 10 rad/s). Then:</p>
+<div class="box eq">
+$$K_1 = \sqrt{\dfrac{1}{100}} = 0.1 \qquad K_2 = \sqrt{0 + \dfrac{2 \times 0.1}{1000}} \approx 0.014$$
+$$\omega = \sqrt{b K_1} = \sqrt{1000 \times 0.1} = 10 \text{ rad/s} \qquad \zeta = \dfrac{b K_2}{2\omega} = \dfrac{1000 \times 0.014}{20} \approx 0.71$$
+</div>
+<p>The \(P\) behind those gains (from the closed forms above) is</p>
+<div class="box eq">
+$$P = \begin{bmatrix} 0.141 & 0.010 \\ 0.010 & 0.0014 \end{bmatrix}$$
+</div>
+<p>so a car that starts fully on the line and not moving (\(e = 1,\ \dot e = 0\)) faces a best-possible total cost of \(p_1 \approx 0.14\), and \(K_1 = (b/R)\,p_2 = 10 \times 0.01 = 0.1\) as before.
+As a steering percentage the gains are \(u\,[\%] = 10\,e + 1.4\,\dot e\). If you measure a different \(b\) the same steps give different numbers; for example \(b = 100\) needs \(R = 1\) for the same 10 rad/s.</p>
+
+<h2>What the weights do</h2>
+<ul>
+<li>Raise \(Q_e\) or lower \(R\): the car cares more about error than effort, so \(K_1\) grows and it steers harder and corrects faster.</li>
+<li>Raise \(R\): the car steers more gently, giving up some accuracy.</li>
+<li>Raise \(Q_d\): extra damping. It starts at 0 because the \(2K_1/b\) term already provides a sensible amount.</li>
+</ul>
+
+<div class="tip">
+<p><strong>Why it behaves well.</strong> The closed loop is \(\ddot e + bK_2\,\dot e + bK_1\, e = 0\), a classic damped oscillator with natural frequency \(\omega = \sqrt{bK_1}\)
+and damping ratio \(\zeta = bK_2 / (2\omega)\). With \(Q_d = 0\) the formulas give \(\zeta = 1/\sqrt{2} \approx 0.71\) whatever you choose for \(Q_e\) and \(R\): quick and only slightly overshooting.
+The page chooses \(R\) so that \(\omega\) equals the <em>Target response speed</em> on the Calibrate tab (10 rad/s by default), whatever \(b\) turns out to be.</p>
+</div>
+
+<h2>Where the model is wrong</h2>
+<p>The real car has delays, the sensor's reading saturates when it is fully on or off the line, and \(b\) is one measurement on one car, so remeasure it on the Calibrate tab for yours. So LQR is only as good as the model.
+If the car behaves oddly, the first things to try are changing \(R\), and measuring \(b\) with the <em>Estimating steering authority</em> card on the Calibrate tab.
+The error's rate \(\dot e\) is also not measured directly: the code estimates it by smoothed differencing, which is why a very small \(R\) can make the car twitchy.</p>
+
+<h2>Where it is in the code</h2>
+<p>The LQR tab's code card has two parts: <code>gains</code> turns the three weights into \(K_1\) and \(K_2\) with the formulas above,
+and <code>decide</code> computes the error, estimates its rate, and applies \(u = K_1 e + K_2 \dot e\).</p>
+
+</main>
+</body>
+</html>

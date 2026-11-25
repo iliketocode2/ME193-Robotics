@@ -1,0 +1,18 @@
+name = "Line Follower"
+packages = ["legoeducation==1.2.0"]
+
+[files]
+"./webhub.py" = "./webhub.py"
+"./devices.py" = "./devices.py"
+"./bangbang.py" = "./bangbang.py"
+"./pd.py" = "./pd.py"
+"./lqr.py" = "./lqr.py"
+"./steering.py" = "./steering.py"
+"./track.py" = "./track.py"
+"./mpc.py" = "./mpc.py"
+"./qtable.py" = "./qtable.py"
+"./nnet.py" = "./nnet.py"
+"./main.py" = "./main.py"
+
+[js_modules.main]
+"./ble.js" = "ble"

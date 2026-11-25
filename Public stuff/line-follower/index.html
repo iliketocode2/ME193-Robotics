@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>Line Follower</title>
+    <script>
+        // Web Bluetooth (needed for the hardware) only exists in Chrome/Chromium browsers
+        if (!navigator.bluetooth) {
+            alert("Line Follower needs Google Chrome to talk to the hardware.\n\nPlease reopen this page in Chrome.");
+        }
+    </script>
+    <link rel="stylesheet" href="https://pyscript.net/releases/2026.3.1/core.css">
+    <script type="module" src="https://pyscript.net/releases/2026.3.1/core.js"></script>
+    <py-config src="./pyscript.toml"></py-config>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+            onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '\\(', right: '\\)', display: false}]})"></script>
+    <script src="scope.js"></script>
+    <script src="runplot.js"></script>
+</head>
+<body>
+    <div class="page">
+
+        <!-- ── Title bar ───────────────────────────────────────── -->
+        <section class="card">
+            <div class="devices">
+                <h1>Line Follower</h1>
+                <button id="btn-stop" class="stop" disabled>Stop motors</button>
+                <span id="status" class="status">Loading…</span>
+            </div>
+        </section>
+
+        <!-- ── Devices + oscilloscopes: each plot opens when its device connects ── -->
+        <section class="scopes">
+            <div class="card scope-card closed" id="card-light">
+                <div class="scope-head">
+                    <span class="dot"></span>
+                    <h2 id="label-light">Color Sensor <small>(reflection, 0–100)</small></h2>
+                    <span class="battery" id="batt-light"></span>
+                    <span class="battery" id="rate-light" title="Readings per second actually arriving"></span>
+                    <span class="readout" id="read-light"></span>
+                    <button id="btn-light" disabled>Connect</button>
+                </div>
+                <canvas id="scope-light"></canvas>
+            </div>
+            <div class="card scope-card closed" id="card-motor">
+                <div class="scope-head">
+                    <span class="dot"></span>
+                    <h2 id="label-motor">Double Motor <small>(speed, forward = +)</small></h2>
+                    <span class="battery" id="batt-motor"></span>
+                    <span class="battery" id="rate-motor" title="Readings per second actually arriving"></span>
+                    <span class="readout">
+                        <span class="key left">L</span> <span id="read-left">–</span>
+                        <span class="key right">R</span> <span id="read-right">–</span>
+                    </span>
+                    <button id="btn-motor" disabled>Connect</button>
+                </div>
+                <canvas id="scope-motor"></canvas>
+            </div>
+        </section>
+
+        <!-- ── Tabs ────────────────────────────────────────────── -->
+        <section class="card">
+            <nav class="tabs" id="tabs" role="tablist">
+                <button class="tab active" data-tab="intro" role="tab">Intro</button>
+                <button class="tab" data-tab="calibrate" role="tab">Calibrate</button>
+                <button class="tab" data-tab="bangbang" role="tab">Bang bang</button>
+                <button class="tab" data-tab="pd" role="tab">PD</button>
+                <button class="tab" data-tab="lqr" role="tab">LQR</button>
+                <button class="tab" data-tab="mpc" role="tab">MPC</button>
+                <button class="tab" data-tab="qtable" role="tab">Q-table</button>
+                <button class="tab" data-tab="nn" role="tab">Imitation learning</button>
+            </nav>
+
+            <div class="panel active" id="panel-intro">
+                <div class="intro">
+                    <img src="assets/robot.jpg" alt="The line-following robot" class="intro-img">
+                    <div class="intro-text">
+                        <h3>The goal</h3>
+                        <p>This page is a playground for seeing many different ways of controlling a robot. The robot is a simple line follower:
+                           a Double Motor drives, and a color sensor pointing at the floor reads the reflection as it sits over the edge of a line.
+                           Each tab (Bang bang, PD, LQR, MPC, Q-table, Imitation learning) steers the same car with a different method, and each shows
+                           the equations, the code, and a live plot of what the controller sees and does, so you can compare how they behave.</p>
+                        <h3>Before you start</h3>
+                        <p class="remind"><b>Connect</b> the Double Motor and the Color Sensor above, then go to the <b>Calibrate</b> tab and measure
+                           the sensor on and off the line. Every controller depends on those two readings. Recalibrate whenever the lighting or the surface changes.</p>
+                        <h3>Limitations of this setup</h3>
+                        <p>One sensor over the edge only tells the car how far it is from the target, not which way the line went; if it drives completely off the line,
+                           it can&rsquo;t tell which side to turn toward. All the control runs in the browser, so Bluetooth delays of a few tens of milliseconds
+                           (and some jitter) sit between each reading and the car&rsquo;s reaction, which limits how fast and how smoothly it can drive.
+                           The LQR and MPC models are deliberately crude, and the sensor&rsquo;s reading is not perfectly linear across the edge.
+                           The Q-table and the neural net learn from only a few minutes of driving, so expect them to be rougher than the hand-designed controllers.
+                           Treat the comparison as a demonstration of the ideas, not a race between tuned controllers.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="panel" id="panel-calibrate">
+                <div class="cal">
+                    <h3>Calibrate the color sensor</h3>
+                    <p>Connect the color sensor, hold it over the line and press <b>Measure on line</b>,
+                       then hold it over the floor and press <b>Measure off line</b>. Each takes the average over one second.</p>
+                    <div class="cal-row">
+                        <button id="cal-on" disabled>Measure on line</button>
+                        <span class="cal-val" id="cal-on-val">–</span>
+                        <button id="cal-off" disabled>Measure off line</button>
+                        <span class="cal-val" id="cal-off-val">–</span>
+                        <span class="cal-mid">Target (halfway): <b id="cal-mid">–</b></span>
+                    </div>
+                </div>
+                <div class="cal">
+                    <h3>Reading rate</h3>
+                    <p>How often each device is asked to send a new reading. Set it <em>before</em> measuring the steering authority below, because the delay between what the car senses and how it reacts changes the result.
+                       The rate that really arrives over Bluetooth is shown in each device&rsquo;s header.</p>
+                    <div class="controls">
+                        <span class="ctl"><label>Reading interval
+                            <select id="rate-select">
+                                <option value="15">15 ms (66 Hz)</option>
+                                <option value="20" selected>20 ms (50 Hz)</option>
+                                <option value="50">50 ms (20 Hz)</option>
+                                <option value="100">100 ms (10 Hz)</option>
+                                <option value="200">200 ms (5 Hz)</option>
+                            </select></label>
+                            <span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop wide" role="note"><b>How often each device is asked to send a reading.</b>
+                                It is only a request: the rate that really arrives is shown in each device&rsquo;s header (in orange if it is well below what was asked).
+                                Slowing it down affects the controllers differently:
+                                <ul>
+                                <li><b>PD, LQR, MPC and Imitation learning</b> estimate the error&rsquo;s rate of change from the last two readings. They work at any rate but get noisier or laggier, and their smoothing and MPC&rsquo;s 0.05 s step are fixed, so they won&rsquo;t adapt.</li>
+                                <li><b>Q-table</b> decides every 0.1 s whatever the rate, so a rate slower than 100 ms starves it.</li>
+                                <li><b>Motor commands:</b> faster readings mean more commands to send. The page drops queued commands when more than 10 are waiting, which is a real Bluetooth limit.</li>
+                                <li><b>Overall,</b> the car reacts later to what it senses, so it will start to wobble at lower gains.</li>
+                                </ul></span></span></span>
+                    </div>
+                </div>
+                <div class="cal">
+                    <h3>Estimating steering authority</h3>
+                    <p>The LQR and MPC tabs use a simple model of the car, and its key number is the <b>steering authority</b> <i>b</i>:
+                       how strongly steering changes the error (bigger means the car swings into or out of the line faster; it grows with speed).
+                       This test steers with Kp only, so the car wobbles back and forth across the edge, and the wobble&rsquo;s period gives <i>b</i>.
+                       Calibrate first, use the base speed you plan to drive at, and let it wobble for several cycles. You want the <em>lowest</em> Kp that gives a steady wobble, not the biggest one: try two or three values, and if the estimates agree trust them, but if <i>b</i> keeps falling as Kp rises, Bluetooth delay is biasing it.</p>
+                    <div class="controls">
+                        <button id="b-run" class="go" disabled>Measure</button>
+                        <span class="ctl"><label>Base speed <input type="number" id="b-base" value="25" min="0" max="100" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The forward speed during the test, in percent of full motor speed. Use the base speed you plan to drive at: the steering authority grows with speed, so a value measured slowly will be too low for fast driving.</span></span></span>
+                        <span class="ctl"><label>Kp <input type="number" id="b-kp" value="30" min="0" step="1"></label>
+                            <span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The proportional steering used for the test. Pick a value where the car wobbles steadily across the edge: raise it if the wobble dies out, lower it if the swings get wild or the car leaves the line.</span></span></span>
+                        <span class="ctl"><label>Follow the
+                            <select id="b-side">
+                                <option value="right">right edge of the line</option>
+                                <option value="left">left edge of the line</option>
+                            </select></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The sensor sits over the edge of the line, not the middle. This says which edge the car follows. If the car steers away from the line instead of toward it, switch this.</span></span></span>
+                        <span class="b-result" id="b-result"></span>
+                    </div>
+                    <div class="cal-row" style="margin-top:8px">
+                        <button id="b-use" disabled>Use this value</button>
+                        <button id="b-reset">Reset to default (1000)</button>
+                        <span class="ctl"><label>Target response speed <input type="number" id="b-omega" value="10" min="1" step="1"> rad/s</label>
+                            <span class="gains" id="b-omega-time"></span>
+                            <span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop wide" role="note"><b>How quickly the car should correct an error once it notices one</b> (not how often it reads the sensor: that is the Reading interval). It is a frequency, in rad/s; the time it implies is shown next to the box. Picture the car knocked off the edge: it gets most of the way back in the first time shown, and has stopped wobbling and sits on the edge by the second. Bigger is a snappier car.
+                            Together with <i>b</i> this sets the default gains: PD&rsquo;s Kp and Kd (also the neural net&rsquo;s teacher) and the R weight for LQR and MPC. Faster reacts sooner but is less forgiving of Bluetooth delay.
+                            In simulation 6 rad/s was safest and 10 rad/s started to wobble with 40 ms of delay or more, but on the real car 10 rad/s ran smoothly, so that is the default. Try raising it further and watch the plots to find where it starts to wobble.
+                            (For reference, the spin test shows the car can turn at about 10 rad/s at most. That is how fast it can rotate, a different number from how fast the control loop can respond.)
+                            Changing this overwrites those gain boxes; edit them afterwards as you like.</span></span></span>
+                        <span class="cal-mid">Current <i>b</i>: <b id="b-current">1000</b></span>
+                    </div>
+                    <div id="plot-b"></div>
+                </div>
+                <div class="cal">
+                    <h3>Spin test: how fast can the car turn?</h3>
+                    <p>This drives the car in a circle on the spot at full differential speed. The turn rate it reaches is the most the steering can ever do: a controller can&rsquo;t
+                       correct a heading error any faster. The hub&rsquo;s gyro measures it for you. Put the car on the floor with room to spin, and try both directions.</p>
+                    <div class="controls">
+                        <button id="spin-left" disabled>Spin left &#8634;</button>
+                        <button id="spin-right" disabled>Spin right &#8635;</button>
+                        <button id="spin-stop" class="stop" disabled>Stop</button>
+                        <span class="ctl"><label>Wheel speed <input type="number" id="spin-speed" value="100" min="0" max="100" step="5"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How fast each wheel turns, in percent of full motor speed; the two wheels turn in opposite directions so the car spins on the spot. 100 gives the maximum turn rate; a lower value shows a lower rate.</span></span></span>
+                        <span class="ctl"><label>Seconds <input type="number" id="spin-time" value="10" min="2" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How long the spin lasts before the car stops by itself (at least 2 seconds). The first second is left out of the average, while the car is still speeding up.</span></span></span>
+                    </div>
+                    <table class="spin-table">
+                        <tr><th>Direction</th><th>Turn rate (gyro average)</th></tr>
+                        <tr><td>Left &#8634;</td><td id="spin-gyro-left">–</td></tr>
+                        <tr><td>Right &#8635;</td><td id="spin-gyro-right">–</td></tr>
+                    </table>
+                    <div class="spin-summary" id="spin-summary"></div>
+                </div>
+            </div>
+            <div class="panel" id="panel-bangbang">
+                <p>Two-state control: if the sensor reads on-line, turn one way at full strength; if it reads off-line, turn the other.
+                   The target is halfway between the two calibrated readings (set them on the Calibrate tab).</p>
+                <div class="controls">
+                    <button id="bb-run" class="go" disabled>Start</button>
+                    <span class="ctl"><label>Base speed <input type="number" id="bb-base" value="25" min="0" max="100" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How fast the car drives forward when it is going straight, as a percent of full motor speed (0&ndash;100). Faster is more fun but harder to control: the car has less time to react before it leaves the line. Start low and work up.</span></span></span>
+                    <span class="ctl"><label>Turn <input type="number" id="bb-turn" value="15" min="0" max="100" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How hard the car steers, in percent of motor speed. The wheel on the outside of the turn speeds up by this amount and the other slows down by the same amount. Too small and the car can&rsquo;t follow curves; too big and it zigzags. If Turn is bigger than Base Speed, the slow wheel runs backwards.</span></span></span>
+                    <span class="ctl"><label>Follow the
+                        <select id="bb-side">
+                            <option value="right">right edge of the line</option>
+                            <option value="left">left edge of the line</option>
+                        </select>
+                    </label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The sensor sits over the edge of the line, not the middle. This says which edge the car follows. If the car steers away from the line instead of toward it, switch this.</span></span></span>
+                    <span class="cal-line" id="bb-cal">Not calibrated yet.</span>
+                </div>
+                <div id="plot-bb"></div>
+                <div class="equations">
+                    <div class="code-title"><a class="title-link" href="explain/bangbang.html" target="_blank" rel="noopener" title="Opens an explanation of how this controller works">The equations &mdash; how it works &#8599;</a></div>
+                    $$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+                      e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+                    $$u = \begin{cases} +T & e > 0 \ \text{(on the line)} \\ -T & e \le 0 \ \text{(off the line)} \end{cases}
+                      \qquad v_L = B + u \qquad v_R = B - u$$
+                    <p>\(r\) measured reflection, \(r_{\text{on}}, r_{\text{off}}\) the calibrated readings, \(e\) error
+                       (+1 on the line, &minus;1 off it), \(B\) base speed, \(T\) turn. Speeds are limited to &plusmn;100;
+                       following the left edge flips the sign of \(u\).</p>
+                </div>
+                <div class="code-card">
+                    <div class="code-title"><a class="title-link" href="https://github.com/chrisbuerginrogers/ME193-Robotics/blob/main/Public%20stuff/line-follower/bangbang.py" target="_blank" rel="noopener" title="Opens bangbang.py on GitHub">The controller &mdash; full code on GitHub &#8599;</a></div>
+                    <pre class="code"><code id="bb-code"></code></pre>
+                </div>
+            </div>
+            <div class="panel" id="panel-pd">
+                <p>Proportional-derivative control: steer in proportion to how far the reading is from the target (P),
+                   and against how fast that error is changing (D). Unlike bang-bang, the steering fades smoothly to zero on the target.</p>
+                <div class="controls">
+                    <button id="pd-run" class="go" disabled>Start</button>
+                    <span class="ctl"><label>Base speed <input type="number" id="pd-base" value="25" min="0" max="100" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How fast the car drives forward when it is going straight, as a percent of full motor speed (0&ndash;100). Faster is more fun but harder to control: the car has less time to react before it leaves the line. Start low and work up.</span></span></span>
+                    <span class="ctl"><label>Kp <input type="number" id="pd-kp" value="10" min="0" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">Proportional gain: how hard to steer for each bit of error. The error is how far the reading is from the target, scaled so that fully on the line is +1 and fully off it is &minus;1. With Kp = 20 the car steers by 20 when it is fully on the line, and by less the closer it is to the target. Too low and it loses the line on curves; too high and it wobbles.</span></span></span>
+                    <span class="ctl"><label>Kd <input type="number" id="pd-kd" value="1.4" min="0" step="0.05"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">Derivative gain: steers against how fast the error is changing. It acts like a shock absorber, calming the wobble that a high Kp causes. Too much and it amplifies sensor noise, so the car twitches. Try raising Kp until it wobbles, then add a little Kd.</span></span></span>
+                    <span class="ctl"><label>Follow the
+                        <select id="pd-side">
+                            <option value="right">right edge of the line</option>
+                            <option value="left">left edge of the line</option>
+                        </select>
+                    </label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The sensor sits over the edge of the line, not the middle. This says which edge the car follows. If the car steers away from the line instead of toward it, switch this.</span></span></span>
+                    <span class="cal-line" id="pd-cal">Not calibrated yet.</span>
+                </div>
+                <div id="plot-pd"></div>
+                <div class="equations">
+                    <div class="code-title"><a class="title-link" href="explain/pd.html" target="_blank" rel="noopener" title="Opens an explanation of how this controller works">The equations &mdash; how it works &#8599;</a></div>
+                    $$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+                      e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+                    $$u = K_p\, e + K_d\, \dfrac{de}{dt} \qquad v_L = B + u \qquad v_R = B - u$$
+                    <p>\(r\) measured reflection, \(r_{\text{on}}, r_{\text{off}}\) the calibrated readings, \(e\) error
+                       (+1 on the line, &minus;1 off it), \(B\) base speed, \(K_p\) and \(K_d\) the gains.
+                       Speeds are limited to &plusmn;100; following the left edge flips the sign of \(u\).</p>
+                </div>
+                <div class="code-card">
+                    <div class="code-title"><a class="title-link" href="https://github.com/chrisbuerginrogers/ME193-Robotics/blob/main/Public%20stuff/line-follower/pd.py" target="_blank" rel="noopener" title="Opens pd.py on GitHub">The controller &mdash; full code on GitHub &#8599;</a></div>
+                    <pre class="code"><code id="pd-code"></code></pre>
+                </div>
+            </div>
+            <div class="panel" id="panel-lqr">
+                <p>Linear-quadratic regulator: you say how much you care about error, swinging and steering effort, and the math finds
+                   the best steering feedback for a simple model of the car. It has the same shape as PD, but the gains come from the weights.</p>
+                <div class="controls">
+                    <button id="lqr-run" class="go" disabled>Start</button>
+                    <span class="ctl"><label>Base speed <input type="number" id="lqr-base" value="25" min="0" max="100" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How fast the car drives forward when it is going straight, as a percent of full motor speed (0&ndash;100). Faster is more fun but harder to control: the car has less time to react before it leaves the line. Start low and work up.</span></span></span>
+                    <span class="ctl"><label>Q error <input type="number" id="lqr-qe" value="1" min="0" step="0.5"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How much the controller cares about being off target. Bigger means it works harder to keep the error near zero, so it steers more strongly. Only the ratio of the three weights matters.</span></span></span>
+                    <span class="ctl"><label>Q rate <input type="number" id="lqr-qd" value="0" min="0" step="0.001"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How much the controller cares about the error changing fast. A fast-changing error means the car is swinging across the edge, so it overshoots and can carry the sensor right off the line. Bigger means more damping: it steers against sudden swings. Start at 0; the controller already adds the damping it needs, and a large value amplifies sensor noise.</span></span></span>
+                    <span class="ctl"><label>R effort <input type="number" id="lqr-r" value="100" min="0.01" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The price of steering. Steering hard has costs: the wheels run out of speed range, Bluetooth delay turns big steering into wobble, and sensor noise gets amplified into twitchy wheels. Bigger R means the controller steers more gently and gives up some accuracy; smaller means it steers hard to correct. If the car wobbles, raise it; if it can&rsquo;t follow curves, lower it. It is set automatically from the steering authority <i>b</i> (on the Calibrate tab) to keep the loop at about 6 rad/s, so that Bluetooth delay doesn&rsquo;t make it wobble; edit it freely after that.</span></span></span>
+                    <span class="ctl"><label>Follow the
+                        <select id="lqr-side">
+                            <option value="right">right edge of the line</option>
+                            <option value="left">left edge of the line</option>
+                        </select>
+                    </label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The sensor sits over the edge of the line, not the middle. This says which edge the car follows. If the car steers away from the line instead of toward it, switch this.</span></span></span>
+                    <span class="gains" id="lqr-info"></span>
+                    <span class="cal-line" id="lqr-cal">Not calibrated yet.</span>
+                </div>
+                <div id="plot-lqr"></div>
+                <div class="equations">
+                    <div class="code-title"><a class="title-link" href="explain/lqr.html" target="_blank" rel="noopener" title="Opens an explanation of how this controller works">The equations &mdash; how it works &#8599;</a></div>
+                    $$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+                      e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+                    $$\ddot e = -b\,u \quad\Rightarrow\quad
+                      \dot x = A x + B u,\;\; x = \begin{bmatrix} e \\ \dot e \end{bmatrix},\;\;
+                      A = \begin{bmatrix} 0 & 1 \\ 0 & 0 \end{bmatrix},\;\;
+                      B = \begin{bmatrix} 0 \\ -b \end{bmatrix}$$
+                    $$J = \int_0^\infty \left( Q_e\, e^2 + Q_d\, \dot e^2 + R\, u^2 \right) dt
+                      \qquad A^{\top}P + PA - P B R^{-1} B^{\top} P + Q = 0 \qquad K = R^{-1} B^{\top} P$$
+                    $$K_1 = \sqrt{\dfrac{Q_e}{R}} \qquad
+                      K_2 = \sqrt{\dfrac{Q_d}{R} + \dfrac{2 K_1}{b}}
+                      \qquad u = K_1\, e + K_2\, \dot e \qquad v_L = B_s + 100\,u \qquad v_R = B_s - 100\,u$$
+                    <p>\(e\) error (+1 on the line, &minus;1 off it), \(u\) steering as a fraction of full, \(b\) the model&rsquo;s steering
+                       authority (1000 until you measure it on the Calibrate tab), \(Q_e, Q_d, R\) your weights, \(B_s\) base speed. \(\dot e\) is estimated by smoothed
+                       differencing of the sensor. Speeds are limited to &plusmn;100; following the left edge flips the sign of \(u\).</p>
+                </div>
+                <div class="code-card">
+                    <div class="code-title"><a class="title-link" href="https://github.com/chrisbuerginrogers/ME193-Robotics/blob/main/Public%20stuff/line-follower/lqr.py" target="_blank" rel="noopener" title="Opens lqr.py on GitHub">The controller &mdash; full code on GitHub &#8599;</a></div>
+                    <pre class="code"><code id="lqr-code"></code></pre>
+                </div>
+            </div>
+            <div class="panel" id="panel-mpc">
+                <p>Model predictive control: at every reading it uses a simple model of the car to plan the best steering for the next
+                   half second or so, subject to a steering limit, applies only the first move, and then plans again.</p>
+                <div class="controls">
+                    <button id="mpc-run" class="go" disabled>Start</button>
+                    <span class="ctl"><label>Base speed <input type="number" id="mpc-base" value="25" min="0" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How fast the car drives forward when it is going straight, as a percent of full motor speed (0&ndash;100). Faster is more fun but harder to control: the car has less time to react before it leaves the line. Start low and work up.</span></span></span>
+                    <span class="ctl"><label>Q error <input type="number" id="mpc-qe" value="1" min="0" step="0.5"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How much the planner cares about being off target. Bigger means it steers harder to get the error to zero. Only the ratio of the three weights matters.</span></span></span>
+                    <span class="ctl"><label>Q rate <input type="number" id="mpc-qd" value="0.001" min="0" step="0.001"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How much the planner cares about the error changing fast. Bigger means more damping.</span></span></span>
+                    <span class="ctl"><label>R effort <input type="number" id="mpc-r" value="100" min="0.01" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The price of steering. Bigger means gentler steering; smaller means the planner steers hard to correct. It is set automatically from the steering authority <i>b</i> (on the Calibrate tab), so Bluetooth delay doesn&rsquo;t make it wobble; edit it freely after that.</span></span></span>
+                    <span class="ctl"><label>Horizon <input type="number" id="mpc-n" value="10" min="1" max="30" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How many steps ahead it plans, each 0.05 seconds long (10 steps = half a second). Longer plans see trouble coming sooner but need more computing and trust the model further.</span></span></span>
+                    <span class="ctl"><label>Max steering % <input type="number" id="mpc-max" value="10" min="0" max="100" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The most it may steer, in percentage points added to one wheel&rsquo;s speed and taken from the other&rsquo;s (so the wheels differ by up to twice this). This limit is what MPC handles and LQR can&rsquo;t: the plan always respects it, so it starts turning earlier when a big correction is coming.</span></span></span>
+                    <span class="ctl"><label>Follow the
+                        <select id="mpc-side">
+                            <option value="right">right edge of the line</option>
+                            <option value="left">left edge of the line</option>
+                        </select>
+                    </label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The sensor sits over the edge of the line, not the middle. This says which edge the car follows. If the car steers away from the line instead of toward it, switch this.</span></span></span>
+                    <span class="gains" id="mpc-info"></span>
+                    <span class="cal-line" id="mpc-cal">Not calibrated yet.</span>
+                </div>
+                <div id="plot-mpc"></div>
+                <div class="equations">
+                    <div class="code-title"><a class="title-link" href="explain/mpc.html" target="_blank" rel="noopener" title="Opens an explanation of how this controller works">The equations &mdash; how it works &#8599;</a></div>
+                    $$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+                      e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+                    $$e_{k+1} = e_k + \Delta t\,\dot e_k - \tfrac{b}{2}\,\Delta t^2\,u_k \qquad \dot e_{k+1} = \dot e_k - b\,\Delta t\,u_k$$
+                    $$\min_{u_0,\dots,u_{N-1}} \ \sum_{k=1}^{N} \left( Q_e\, e_k^2 + Q_d\, \dot e_k^2 \right) + R \sum_{k=0}^{N-1} u_k^2
+                      \quad \text{subject to} \quad |u_k| \le u_{\max}$$
+                    $$e_k = e + k\,\Delta t\,\dot e + g_k^{\top} u \qquad \dot e_k = \dot e + h_k^{\top} u
+                      \qquad g_{k,j} = -b\,\Delta t^2 \left(k - j - \tfrac12\right),\ \ h_{k,j} = -b\,\Delta t \ \ (j < k,\ \text{else } 0)$$
+                    $$J(u) = \tfrac{1}{2}\, u^{\top} H u + f^{\top} u \qquad
+                      H = 2\sum_{k=1}^{N} \left( Q_e\, g_k g_k^{\top} + Q_d\, h_k h_k^{\top} \right) + 2R\, I \qquad
+                      f = f_e\, e + f_d\, \dot e$$
+                    $$f_e = 2\sum_{k=1}^{N} Q_e\, g_k \qquad f_d = 2\sum_{k=1}^{N} \left( Q_e\, k\,\Delta t\; g_k + Q_d\, h_k \right)$$
+                    $$u = u_0 \ \text{(then plan again)} \qquad v_L = B + 100\,u \qquad v_R = B - 100\,u$$
+                    <p>\(r\) measured reflection, \(r_{\text{on}}, r_{\text{off}}\) the calibrated readings, \(e\) error (+1 on the line, &minus;1 off it), \(B\) base speed. \(u\) steering as a fraction of full, \(b\) the model&rsquo;s steering authority (1000 until you measure it on the Calibrate tab), \(\Delta t = 0.05\) s, \(N\) the horizon, \(u_{\max}\) the steering limit. The vector \(u\) holds the \(N\) planned moves; \(g_k\) and \(h_k\) say how much each move changes the error and rate \(k\) steps ahead; \(H\) (fixed) and \(f\) (from the latest measured \(e\) (that is, \(e_0\)) and the estimated \(\dot e\)) are what the solver works with. The plan is found by sweeping the moves one at a time and clipping each to the limit. Speeds are limited to &plusmn;100; following the left edge flips the sign of \(u\).</p>
+                </div>
+                <div class="code-card">
+                    <div class="code-title"><a class="title-link" href="https://github.com/chrisbuerginrogers/ME193-Robotics/blob/main/Public%20stuff/line-follower/mpc.py" target="_blank" rel="noopener" title="Opens mpc.py on GitHub">The controller &mdash; full code on GitHub &#8599;</a></div>
+                    <pre class="code"><code id="mpc-code"></code></pre>
+                </div>
+            </div>
+            <div class="panel" id="panel-qtable">
+                <p>Q-learning: no model and no formula. The car sorts what it senses into a few situations (a row of the table) and keeps a score
+                   for each steering choice in each situation. It tries moves, sees whether the error got smaller, and updates the scores.
+                   Let it run a few minutes on a loop of track and watch the table fill in. The table is kept until you press Reset. If the car loses the line, press Stop (or wait for the run to end), put it back and press Run again rather than carrying it while it runs (see &ldquo;How it works&rdquo; below).</p>
+                <div class="controls">
+                    <button id="ql-run" class="go" disabled>Run 20 s</button>
+                    <button id="ql-reset">Reset table</button>
+                    <span class="ctl"><label>Run time <input type="number" id="ql-secs" value="20" min="0" step="5"> s</label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How long a run lasts before it stops itself (0 means run until you press Stop). Short runs of 20&ndash;30 seconds teach more than one long one that ends up wandering off the line. You can always press Stop sooner.</span></span></span>
+                    <span class="ctl"><label class="check"><input type="checkbox" id="ql-learn" checked> Learning</label>
+                    <span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">Ticked: the car learns, and sometimes tries a random move to explore. Unticked: it just uses the best move it already knows, which shows how well it has learned.</span></span></span>
+                    <span class="ctl"><label>Base speed <input type="number" id="ql-base" value="25" min="0" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How fast the car drives forward when it is going straight, as a percent of full motor speed (0&ndash;100). Faster is more fun but harder to control: the car has less time to react before it leaves the line. Start low and work up.</span></span></span>
+                    <span class="ctl"><label>Turn <input type="number" id="ql-turn" value="15" min="0" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The size of the biggest steering move, in percent of motor speed. It is set automatically from the steering authority <i>b</i> and the target response speed on the Calibrate tab (about the steering a full error needs): moves much bigger than that overshoot the edge and the car keeps losing the line. The five choices are &minus;1, &minus;&frac12;, 0, +&frac12; and +1 times this.</span></span></span>
+                    <span class="ctl"><label>&alpha; <input type="number" id="ql-alpha" value="0.3" min="0" step="0.05"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">Learning rate: how far each new experience moves a score. Near 1 it forgets quickly; near 0 it learns slowly.</span></span></span>
+                    <span class="ctl"><label>&gamma; <input type="number" id="ql-gamma" value="0.9" min="0" step="0.05"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">Discount: how much it cares about later rewards versus the immediate one. Near 1 it plans further ahead.</span></span></span>
+                    <span class="ctl"><label>&epsilon; <input type="number" id="ql-eps" value="0.1" min="0" step="0.05"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">Exploration: the chance of trying a random move instead of the best known one. Too low and it never finds better moves; too high and it keeps driving badly.</span></span></span>
+                    <span class="ctl"><label>Follow the
+                        <select id="ql-side">
+                            <option value="right">right edge of the line</option>
+                            <option value="left">left edge of the line</option>
+                        </select>
+                    </label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The sensor sits over the edge of the line, not the middle. This says which edge the car follows. If the car steers away from the line instead of toward it, switch this.</span></span></span>
+                    <span class="gains" id="ql-info"></span>
+                    <span class="cal-line" id="ql-cal">Not calibrated yet.</span>
+                </div>
+                <div id="plot-ql"></div>
+                <div class="qtable-card">
+                    <div class="code-title">The Q-table <span class="sub">score of each steering choice (columns, times Turn) in each situation (rows); brightest green is best, bold is the pick</span></div>
+                    <div id="ql-table"></div>
+                </div>
+                <div class="equations">
+                    <div class="code-title"><a class="title-link" href="explain/qtable.html" target="_blank" rel="noopener" title="Opens an explanation of how this controller works">The equations &mdash; how it works &#8599;</a></div>
+                    $$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+                      e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+                    $$s = (\text{error bin},\ \text{rate bin}) \qquad a \in \{-1,\,-\tfrac12,\,0,\,+\tfrac12,\,+1\} \qquad u = a\,T \qquad r = -|e|$$
+                    $$Q(s,a) \leftarrow Q(s,a) + \alpha \left[\, r + \gamma \max_{a'} Q(s',a') - Q(s,a) \,\right]$$
+                    $$a = \begin{cases} \arg\max_a Q(s,a) & \text{with probability } 1-\epsilon \\ \text{a random action} & \text{with probability } \epsilon \end{cases}
+                      \qquad v_L = B + u \qquad v_R = B - u$$
+                    <p>\(r\) measured reflection, \(r_{\text{on}}, r_{\text{off}}\) the calibrated readings, \(e\) error (+1 on the line, &minus;1 off it), \(B\) base speed. \(T\) the Turn setting, \(\alpha,\gamma,\epsilon\) learning rate, discount and exploration. It chooses a move every 0.1 s. Speeds are limited to &plusmn;100; following the left edge flips the sign of \(u\).</p>
+                </div>
+                <div class="code-card">
+                    <div class="code-title"><a class="title-link" href="https://github.com/chrisbuerginrogers/ME193-Robotics/blob/main/Public%20stuff/line-follower/qtable.py" target="_blank" rel="noopener" title="Opens qtable.py on GitHub">The controller &mdash; full code on GitHub &#8599;</a></div>
+                    <pre class="code"><code id="ql-code"></code></pre>
+                </div>
+            </div>
+            <div class="panel" id="panel-nn">
+                <p>Imitation learning: a small neural net steers from the error and its rate, and learns by copying a teacher: press <b>Record</b> and let a PD teacher drive
+                   (the plot shows it), press <b>Train</b> so the net copies the teacher&rsquo;s steering, then press <b>Start</b> and the net drives.
+                   More and more varied examples (wobbles, curves) make a better copy.</p>
+                <div class="controls">
+                    <button id="nn-rec" class="go" disabled>Record</button>
+                    <button id="nn-clear">Clear examples</button>
+                    <button id="nn-train">Train</button>
+                    <button id="nn-run" class="go" disabled>Start</button>
+                    <span class="ctl"><label>Base speed <input type="number" id="nn-base" value="25" min="0" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How fast the car drives forward when it is going straight, as a percent of full motor speed (0&ndash;100). Faster is more fun but harder to control: the car has less time to react before it leaves the line. Start low and work up.</span></span></span>
+                    <span class="ctl"><label>Teacher Kp <input type="number" id="nn-kp" value="10" min="0" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The proportional gain of the PD teacher that drives while recording. See the PD tab.</span></span></span>
+                    <span class="ctl"><label>Teacher Kd <input type="number" id="nn-kd" value="1.4" min="0" step="0.05"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The derivative gain of the PD teacher. See the PD tab.</span></span></span>
+                    <span class="ctl"><label>Hidden units <input type="number" id="nn-hidden" value="8" min="1" max="32" step="1"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How many tanh units sit between the inputs and the output. More can copy a more complicated rule but needs more examples. Changing it starts a fresh network.</span></span></span>
+                    <span class="ctl"><label>Epochs <input type="number" id="nn-epochs" value="150" min="1" step="10"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How many passes over the examples training makes. More passes fit better, up to a point.</span></span></span>
+                    <span class="ctl"><label>Learning rate <input type="number" id="nn-lr" value="0.05" min="0.001" step="0.01"></label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">How big a step each example takes the weights. Too big and the loss bounces around; too small and training is slow.</span></span></span>
+                    <span class="ctl"><label>Follow the
+                        <select id="nn-side">
+                            <option value="right">right edge of the line</option>
+                            <option value="left">left edge of the line</option>
+                        </select>
+                    </label><span class="help"><button type="button" class="help-btn" aria-label="Help">?</button><span class="help-pop" role="note">The sensor sits over the edge of the line, not the middle. This says which edge the car follows. If the car steers away from the line instead of toward it, switch this.</span></span></span>
+                    <span class="gains" id="nn-info"></span>
+                    <span class="cal-line" id="nn-cal">Not calibrated yet.</span>
+                </div>
+                <div id="plot-nn"></div>
+                <div class="equations">
+                    <div class="code-title"><a class="title-link" href="explain/nn.html" target="_blank" rel="noopener" title="Opens an explanation of how this controller works">The equations &mdash; how it works &#8599;</a></div>
+                    $$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+                      e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+                    $$x = \begin{bmatrix} e \\ \dot e / 10 \end{bmatrix} \qquad h = \tanh\!\left(W_1 x + b_1\right) \qquad u = w_2^{\top} h + b_2
+                      \qquad v_L = B + 100\,u \qquad v_R = B - 100\,u$$
+                    $$u^{*} = \dfrac{K_p\, e + K_d\, \dot e}{100} \qquad L = \tfrac{1}{2}\,(u - u^{*})^2 \qquad
+                      w \leftarrow w - \eta\, \dfrac{\partial L}{\partial w}$$
+                    <p>\(r\) measured reflection, \(r_{\text{on}}, r_{\text{off}}\) the calibrated readings, \(e\) error (+1 on the line, &minus;1 off it), \(B\) base speed. \(h\) the hidden units, \(W_1, b_1, w_2, b_2\) the weights, \(u^{*}\) the teacher&rsquo;s steering for the same inputs, \(\eta\) the learning rate. Training nudges every weight a little after each example. Speeds are limited to &plusmn;100; following the left edge flips the sign of \(u\).</p>
+                </div>
+                <div class="code-card">
+                    <div class="code-title"><a class="title-link" href="https://github.com/chrisbuerginrogers/ME193-Robotics/blob/main/Public%20stuff/line-follower/nnet.py" target="_blank" rel="noopener" title="Opens nnet.py on GitHub">The controller &mdash; full code on GitHub &#8599;</a></div>
+                    <pre class="code"><code id="nn-code"></code></pre>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script type="py" src="./main.py"></script>
+
+    <script>
+        // Hover help: open each popup to the right, but flip it to the left if it would run off the page
+        document.addEventListener("mouseover", (e) => {
+            const ctl = e.target.closest(".ctl");
+            const pop = ctl && ctl.querySelector(".help-pop");
+            if (!pop) return;
+            requestAnimationFrame(() => {
+                pop.style.left = "0"; pop.style.right = "auto";
+                if (pop.getBoundingClientRect().right > window.innerWidth - 8) {
+                    pop.style.left = "auto"; pop.style.right = "0";
+                }
+            });
+        });
+    </script>
+    <script>
+        // ? help buttons: click to open the note, click anywhere else to close it
+        document.addEventListener("click", (e) => {
+            const btn = e.target.closest(".help-btn");
+            document.querySelectorAll(".help.open").forEach((h) => {
+                if (!btn || h !== btn.parentElement) h.classList.remove("open");
+            });
+            if (btn) btn.parentElement.classList.toggle("open");
+        });
+    </script>
+    <script>
+        // Tabs are plain HTML so they work even before Python has finished loading
+        document.getElementById("tabs").addEventListener("click", (e) => {
+            const tab = e.target.closest(".tab");
+            if (!tab) return;
+            document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
+            document.querySelectorAll(".panel").forEach(
+                (p) => p.classList.toggle("active", p.id === "panel-" + tab.dataset.tab));
+        });
+    </script>
+</body>
+</html>

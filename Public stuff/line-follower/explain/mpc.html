@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>MPC (model predictive control) - how it works</title>
+<link rel="stylesheet" href="explain.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '\\(', right: '\\)', display: false}]})"></script>
+</head>
+<body>
+<main>
+<div class="nav">Line Follower &middot; how the controllers work &middot; MPC</div>
+<h1>MPC (model predictive control)</h1>
+<p class="sub">Plan the best steering for the next half second, use the first move, then plan again.</p>
+
+<h2>The signal every controller works from</h2>
+<p>The light sensor points down and sits over the <em>edge</em> of the line, so its reading depends on how far the car has drifted
+toward the line or away from it. On the Calibrate tab you measure the reading fully on the line (\(r_{\text{on}}\)) and fully off it
+(\(r_{\text{off}}\)). The target \(r^*\) is halfway between them, and the <strong>error</strong> rescales the distance from the target so that
+&plusmn;1 means fully on or fully off:</p>
+<div class="box eq">
+$$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+  e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+</div>
+<p>So \(e = +1\) means the sensor is well onto the line, \(e = -1\) well off it, and \(e = 0\) means it is exactly on the edge, where we want it.
+The controller's whole job is to steer so that \(e\) stays at zero. It does that by speeding one wheel up and slowing the other down by the same
+amount \(u\) (the <em>steering</em>) around the base speed \(B\):</p>
+<div class="box eq">
+$$v_L = B + u \qquad v_R = B - u$$
+</div>
+<p>Following the right edge, a positive \(u\) turns the car away from the line; following the left edge the sign flips.
+The controllers differ only in <em>how they decide \(u\)</em> from the error.</p>
+
+<h2>The idea</h2>
+<p>PD and LQR react to where the car is <em>now</em>. MPC looks ahead. At every reading it uses a model of the car to predict what would happen for many possible
+sequences of steering moves, picks the sequence with the lowest cost, <strong>applies only the first move</strong>, and then throws the rest away and plans again at the next reading.
+Because it re-plans from the newest measurement every time, it corrects itself as things change.</p>
+
+<h2>The model, in steps</h2>
+<p>It uses the same simple model of the car as LQR, \(\ddot e = -b\,u\), but written as one small step of \(\Delta t = 0.05\) s at a time:</p>
+<div class="box eq">
+$$e_{k+1} = e_k + \Delta t\,\dot e_k - \tfrac{b}{2}\,\Delta t^2\,u_k \qquad \dot e_{k+1} = \dot e_k - b\,\Delta t\,u_k$$
+</div>
+<p>Starting from the error and rate measured now, this predicts the error and rate after each of the next \(N\) steps for any choice of the moves \(u_0, u_1, \dots, u_{N-1}\).
+(The <strong>Horizon</strong> setting is \(N\); the default 10 steps looks half a second ahead.)</p>
+
+<h2>The plan</h2>
+<div class="box eq">
+$$\min_{u_0,\dots,u_{N-1}} \ \sum_{k=1}^{N} \left( Q_e\, e_k^2 + Q_d\, \dot e_k^2 \right) + R \sum_{k=0}^{N-1} u_k^2
+\quad \text{subject to} \quad |u_k| \le u_{\max}$$
+</div>
+<p>The cost is the same kind as LQR's: penalties for error, for the error changing fast, and for using steering, but added up over the <em>planned</em> steps instead of forever.
+The new part is the constraint: <strong>no planned move may exceed the steering limit</strong> \(u_{\max}\) (the <em>Max steering %</em> setting).</p>
+
+<p><strong>Reading the indices.</strong> The subscript is a time label: step \(k\) runs from time \(k\) to time \(k+1\), and \(u_k\) is the steering applied during it. The error \(e_0\) is the one you measure right now; it is already fixed, so no choice of steering can change it and it is not in the sum.
+The first move \(u_0\) produces the first predicted error \(e_1\), and the last move \(u_{N-1}\) produces \(e_N\). So there are \(N\) moves (\(k = 0\) to \(N-1\)) and \(N\) predicted results (\(k = 1\) to \(N\)): each error is the result of the move before it.</p>
+<p><strong>What is being assumed.</strong> The plan is the best sequence of \(N\) steering moves for the next \(N\) steps, found with the limit \(|u_k| \le u_{\max}\) built into the search (not clipped afterward, so the whole plan adapts to it).
+It assumes the model is right and that nothing unexpected happens during the plan. It knows nothing about what the line does ahead: a curve that starts simply shows up as a growing error. Only the first move is used; at the next reading the car measures the new error and rate and plans again, which is how it copes with curves and with the model being slightly wrong.</p>
+
+<h2>Why the limit matters</h2>
+<p>LQR's formula doesn't know the car can't steer harder than 100%. When the error is big it asks for more steering than exists and the number is simply clipped.
+MPC knows the limit while it plans, so when a large correction is coming it starts turning earlier and spreads the effort over the moves it is allowed to make.
+This is the main reason MPC is used in industry: it handles limits (and, with a better model, many other constraints) directly.</p>
+
+<h3>What &ldquo;max steering %&rdquo; means in wheel speeds</h3>
+<p>The limit is in percentage points added to the base speed on one wheel and taken from it on the other: \(v_L = B + 100u\) and \(v_R = B - 100u\) with \(|100u| \le\) the limit, so the two wheels can differ by up to twice the limit. It is not a percentage of the room left above the base speed.
+Separately, after the plan is made, each wheel speed is cut off at &plusmn;100, and that cut-off is <em>not</em> part of the model. At high base speeds the faster wheel can run out of range before the slower one: with \(B = 45\) and a 60% limit, the left wheel asks for 105 and gets 100, while the right wheel still drops to &minus;15, so the car steers a little less than the plan assumed (a difference of 115 rather than 120).
+This matters more as the base speed approaches 100 or the limit grows. The same is true of PD and LQR, which are cut off in the same way. At low limits such as the 10% default it makes no difference.</p>
+
+<h2>How the plan is found</h2>
+<p>Writing every predicted state in terms of the planned moves turns the problem into one of the standard form
+\(\min\ \tfrac12 u^{\top} H u + f^{\top} u\) with \(|u_i| \le u_{\max}\). Here \(u\) is the vector of the \(N\) planned moves, and each predicted state is &ldquo;what would happen with no steering&rdquo; (set by the latest measured error \(e_0\), written just \(e\) in these formulas, and the estimated rate \(\dot e\)) plus a fixed effect per move.
+Substituting that into the cost and expanding the squares gives three kinds of terms: ones with \(u\) times \(u\), ones with \(u\) alone, and a constant (the cost if you never steer) that cannot change which moves are best and is dropped.</p>
+<ul>
+<li>\(H\) is an \(N \times N\) matrix collecting the \(u \times u\) terms. Entry \(H_{ij}\) says how the cost grows when moves \(i\) and \(j\) are used together, through the penalties \(Q_e\) and \(Q_d\) on the predicted states and, on the diagonal only, the steering price \(R\). It does not depend on where the car is, and because \(R > 0\) it is positive, so there is one best answer.</li>
+<li>\(f\) is a list of \(N\) numbers collecting the terms with \(u\) alone. It depends on the car's current error \(e\) and rate \(\dot e\) (in the code, \(f = f_e\,e + f_d\,\dot e\)), and says which way each move should push: for a car on the line side, it favors steering back.</li>
+</ul>
+<p>In full, with \(g_k\) and \(h_k\) the effect of the moves on the error and rate \(k\) steps ahead:</p>
+<div class="box eq">
+$$e_k = e + k\,\Delta t\,\dot e + g_k^{\top} u \qquad \dot e_k = \dot e + h_k^{\top} u
+  \qquad g_{k,j} = -b\,\Delta t^2 \left(k - j - \tfrac12\right),\ \ h_{k,j} = -b\,\Delta t \ \ (j < k,\ \text{else } 0)$$
+$$H = 2\sum_{k=1}^{N} \left( Q_e\, g_k g_k^{\top} + Q_d\, h_k h_k^{\top} \right) + 2R\, I \qquad
+  f = f_e\, e + f_d\, \dot e$$
+$$f_e = 2\sum_{k=1}^{N} Q_e\, g_k \qquad f_d = 2\sum_{k=1}^{N} \left( Q_e\, k\,\Delta t\; g_k + Q_d\, h_k \right)$$
+</div>
+<p>With no steering limit the best moves are where the slope \(H u + f\) is zero. The code's <code>slope</code> is exactly that expression for one move at a time. The code solves it by sweeping through the moves one at a time,
+adjusting each to its best value and clipping it to the limit, repeated 25 times. It starts each plan from the previous one (shifted along by one step), so the answer is almost right before it begins.
+On a laptop this takes a fraction of a millisecond.</p>
+
+<h2>The knobs</h2>
+<table>
+<tr><th>Setting</th><th>Effect</th></tr>
+<tr><td>Q error, Q rate, R effort</td><td>As in LQR: how much you mind error, swinging, and steering effort. Only the ratios matter.</td></tr>
+<tr><td>Horizon \(N\)</td><td>How far ahead it plans. Short is twitchy and short-sighted; long sees trouble coming but trusts the model further into the future, and costs more computing.</td></tr>
+<tr><td>Max steering %</td><td>The limit \(u_{\max}\). The default is 10%, low enough that it actually matters for large errors (with a high limit the plan never comes near it and MPC behaves like LQR). Lower it and you will see the planner use the whole allowance and take longer to recover.</td></tr>
+</table>
+
+<h2>Where the model is wrong</h2>
+<p><strong>The measurement is a little old.</strong> The plan starts from the latest measured error \(e_0\), but by the time the first move reaches the wheels that reading is already tens of milliseconds old (Bluetooth in both directions, plus processing). The model doesn't include that delay, so it plans from a slightly out-of-date starting point, and the rate \(\dot e\) is an estimate that is smoothed and so lags a little too. Re-planning at every reading is what keeps these small mistakes from adding up. A larger target response speed or a longer delay makes them matter more, which is why the car starts to wobble when the response is pushed too fast.</p>
+<p>MPC is exactly as good as its model: the steering strength \(b\) starts at 1000, measured on our test car, and should be re-measured on the Calibrate tab for yours, and the delays in the real car aren't modelled. Re-planning at every reading is what keeps small model errors from piling up.
+In practice, with a good model MPC does best when the limit matters, and gives a result very close to LQR when it doesn't.</p>
+
+<h2>Where it is in the code</h2>
+<p>The MPC tab's code card has three parts: <code>build</code> turns the weights into the matrix form of the problem, <code>solve</code> does the clipped sweeps,
+and <code>decide</code> measures the error and rate, builds the model when a setting changes, plans, uses the first move, and shifts the rest along as the next starting guess.</p>
+
+</main>
+</body>
+</html>

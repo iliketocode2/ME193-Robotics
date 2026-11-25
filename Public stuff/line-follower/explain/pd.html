@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>PD (proportional-derivative) - how it works</title>
+<link rel="stylesheet" href="explain.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '\\(', right: '\\)', display: false}]})"></script>
+</head>
+<body>
+<main>
+<div class="nav">Line Follower &middot; how the controllers work &middot; PD</div>
+<h1>PD (proportional-derivative)</h1>
+<p class="sub">Steer in proportion to the error, and against how fast it is changing.</p>
+
+<h2>The signal every controller works from</h2>
+<p>The light sensor points down and sits over the <em>edge</em> of the line, so its reading depends on how far the car has drifted
+toward the line or away from it. On the Calibrate tab you measure the reading fully on the line (\(r_{\text{on}}\)) and fully off it
+(\(r_{\text{off}}\)). The target \(r^*\) is halfway between them, and the <strong>error</strong> rescales the distance from the target so that
+&plusmn;1 means fully on or fully off:</p>
+<div class="box eq">
+$$r^* = \tfrac{1}{2}\,(r_{\text{on}} + r_{\text{off}}) \qquad
+  e = \dfrac{r^* - r}{\tfrac{1}{2}\,(r_{\text{off}} - r_{\text{on}})}$$
+</div>
+<p>So \(e = +1\) means the sensor is well onto the line, \(e = -1\) well off it, and \(e = 0\) means it is exactly on the edge, where we want it.
+The controller's whole job is to steer so that \(e\) stays at zero. It does that by speeding one wheel up and slowing the other down by the same
+amount \(u\) (the <em>steering</em>) around the base speed \(B\):</p>
+<div class="box eq">
+$$v_L = B + u \qquad v_R = B - u$$
+</div>
+<p>Following the right edge, a positive \(u\) turns the car away from the line; following the left edge the sign flips.
+The controllers differ only in <em>how they decide \(u\)</em> from the error.</p>
+
+<h2>The idea</h2>
+<p>Bang-bang has only two outputs, so it can't ease off as it nears the target. PD makes the steering a <em>smooth function of the error</em>:
+a big error gets a big correction, a small error gets a small one, and zero error gets none. It has two parts.</p>
+<ul>
+<li><strong>P (proportional)</strong>: steer in proportion to how far off you are right now.</li>
+<li><strong>D (derivative)</strong>: steer against how fast the error is changing. If you are rushing toward the target, the D term pushes back before you overshoot.</li>
+</ul>
+
+<h2>The rule</h2>
+<div class="box eq">
+$$u = K_p\, e + K_d\, \dfrac{de}{dt}$$
+</div>
+<p>\(K_p\) is how many percent of steering you get per unit of error. With, say, \(K_p = 20\), being fully on the line (\(e = 1\)) steers by 20, being halfway
+there steers by 10, and sitting on the target steers by 0.</p>
+<p>The derivative is estimated from the last two readings:</p>
+<div class="box eq">
+$$\dfrac{de}{dt} \approx \dfrac{e_{\text{now}} - e_{\text{before}}}{\Delta t}$$
+</div>
+<p>It is the speed at which the error is changing, in error-units per second. A positive value means the error is growing (the car is moving further onto the line),
+so \(K_d\) adds a bit more steering away from it; a negative value means the car is already coming back, so \(K_d\) takes some steering away to stop it overshooting.</p>
+
+<h2>Why the D term matters: a spring and a shock absorber</h2>
+<p>Picture the car as a mass on a spring. \(K_p\) is the spring: it pulls the car back toward the edge. A spring alone makes the car swing back and forth through the target
+forever. \(K_d\) is the shock absorber: it resists the <em>speed</em>, so the swings die out. Too little damping and it still wobbles; too much and it is sluggish and noisy.</p>
+
+<h2>The knobs and a way to tune them</h2>
+<p>The starting values on the PD tab are not arbitrary: they are computed from the steering authority \(b\) (Calibrate tab) so that the car responds at the target loop speed with a well-damped, quick response: \(K_p = 100\,\omega^2 / b\) and \(K_d = 100 \cdot 2\zeta\omega / b\) with \(\zeta \approx 0.7\).</p>
+<table>
+<tr><th>Setting</th><th>Too small</th><th>Too big</th></tr>
+<tr><td>\(K_p\)</td><td>Loses the line on curves; slow to correct</td><td>Wobbles back and forth, then oscillates wildly</td></tr>
+<tr><td>\(K_d\)</td><td>Still wobbles after a correction</td><td>Amplifies sensor noise: the wheels twitch</td></tr>
+</table>
+<div class="tip">
+<p><strong>A good recipe.</strong> Set \(K_d = 0\). Raise \(K_p\) until the car follows the line but starts to wobble. Then raise \(K_d\) a little at a time until the wobble settles.
+Back \(K_p\) off if it gets twitchy.</p>
+</div>
+
+<h2>What you will see on the plot</h2>
+<ul>
+<li>The motor lines now take <strong>many different values</strong>, rising and falling smoothly with the error, instead of flipping between two.</li>
+<li>When the car is on the target the two motors run at nearly the same speed and it drives almost straight.</li>
+<li>On a long steady curve a P-only controller settles with a small constant error: it needs <em>some</em> error to produce the steering the curve demands.
+(Adding an integral term, the &ldquo;I&rdquo; in PID, removes that offset. We haven't added one here.)</li>
+</ul>
+
+<h2>Where it is in the code</h2>
+<p>The PD tab's code card: compute the error, estimate how fast it is changing, add the two terms, and apply the result to the wheels.
+The time between readings is never allowed below 0.01 s, so a pair of readings that arrive almost together can't produce a huge fake derivative.</p>
+
+</main>
+</body>
+</html>
