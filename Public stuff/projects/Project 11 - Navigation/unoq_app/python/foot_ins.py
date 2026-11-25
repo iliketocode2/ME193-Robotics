@@ -83,8 +83,8 @@ def quat_between(a, b):
 
 class FootTracker:
     # stance = foot still: rotation and |acceleration - 1 g| both small for STANCE_MIN samples
-    STANCE_GYRO_DPS = 40.0
-    STANCE_ACC_G = 0.12
+    STANCE_GYRO_DPS = 65.0     # was 40: on real stairs going down the foot never got that still
+    STANCE_ACC_G = 0.18        # was 0.12 (same reason)
     STANCE_MIN = 6          # samples in a row to start a stance (0.06 s)
     SWING_MIN = 4           # moving samples in a row to end one
     MIN_STRIDE_S = 0.4      # a "stride" shorter than this is a stumble or shuffle; merged into the next

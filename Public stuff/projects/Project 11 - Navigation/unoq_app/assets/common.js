@@ -70,3 +70,6 @@ function escapeHtml(s) {
 }
 
 const MANEUVER_NAMES = { left: 'Left', right: 'Right', stairs: 'Stairs', arrive: 'Arrived' };
+// combined maneuvers ("left+stairs") are named "Left + Stairs" and drawn like their first part
+const maneuverName = (a) => a.split('+').map((m) => MANEUVER_NAMES[m] || m).join(' + ');
+const firstManeuver = (a) => a.split('+')[0];

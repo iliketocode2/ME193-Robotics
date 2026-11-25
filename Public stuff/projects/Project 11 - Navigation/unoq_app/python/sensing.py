@@ -49,6 +49,20 @@ HOLD_S = 1.0                # a step with no stride that close yet waits up to t
                             # way downstairs the network can fire before the tracker confirms the stride)
 MIN_PLAUSIBLE_STRIDE_M = 0.4    # median stride shorter than this = tracking unreliable, stairs unknown
 
+# Swing fill-in. Going down stairs quickly the foot never comes to rest, so neither the
+# tracker nor the network sees the stride end (real walks: ~7 strides lost per flight).
+# Every stride still shows one sharp rotation spike as the foot swings. A spike that is
+# part of a walking rhythm (another spike PEAK_GAP_S before it) and has no network step
+# near it becomes a step.
+FILL_IN = True
+PEAK_DPS = 200.0            # a swing spike rotates the foot at least this fast
+PEAK_HALF_S = 0.25          # ...and is the fastest rotation within this much either side
+PEAK_GAP_S = (0.5, 1.6)     # the previous spike came this long before (walking rhythm)
+EXPLAINED_S = (-0.3, 0.9)   # a network step this close after (or just before) a spike accounts for it
+FILL_OFFSET_S = 0.45        # median time from spike to the end of the stride (measured on real walks)
+FILL_DECIDE_S = 1.5         # wait this long after a spike for the network (it reports ~0.45 s late)
+FILL_MIN_GAP_S = 0.5        # never put a filled step this close to another step
+
 
 @dataclass
 class Step:
@@ -62,7 +76,7 @@ class Sensing:
     def __init__(self, step_source=STEP_SOURCE):
         self.net = stepnet_np.load() if step_source == "net" else None
         self.stairs = stairs_mod.StairsClassifier()
-        self.VERSION = ("stepnet" if self.net else "tracker") + "-ins-1"
+        self.VERSION = ("stepnet" if self.net else "tracker") + "-ins-1" + ("-fill" if self.net and FILL_IN else "")
         self.reset()
 
     def reset(self):
@@ -76,6 +90,12 @@ class Sensing:
         self.lengths = []
         self.last_stride = None         # (time, stairs flag)
         self.pending = []               # network step times waiting for their stride
+        half = int(PEAK_HALF_S * foot_ins.HZ)
+        self.gyro = deque(maxlen=2 * half + 1)      # (t, |gyro - bias|) for spike detection
+        self.spikes = []                # [t, explained] swing spikes not yet decided
+        self.last_spike = -np.inf
+        self.step_times = deque(maxlen=8)   # recent network/filled step times
+        self.last_out = -np.inf         # time of the last step handed out
 
     def feed(self, t, rows):
         out = []
@@ -97,10 +117,43 @@ class Sensing:
                 if len(self.chans) == self.net.window and self.samples % HOP == 0:
                     p = self.net.prob(np.array(self.chans))
                     step_t = self.detector.update(self.times[self.net.center], p)
-                    if step_t is not None:
-                        self.pending.append(step_t)
+                    if step_t is not None and self._clear_of_steps(step_t, self.net.min_gap):
+                        self._add_pending(step_t)
+                if FILL_IN:
+                    self._fill_in(ts, row)
                 out += self._release(ts)
         return out
+
+    # ---------- swing fill-in (see FILL_IN) ----------
+
+    def _clear_of_steps(self, t, gap):
+        return all(abs(t - s) >= gap for s in self.step_times) and t - self.last_out >= gap
+
+    def _add_pending(self, step_t):
+        self.step_times.append(step_t)
+        for s in self.spikes:
+            if EXPLAINED_S[0] <= step_t - s[0] <= EXPLAINED_S[1]:
+                s[1] = True
+        self.pending.append(step_t)
+        self.pending.sort()
+
+    def _fill_in(self, ts, row):
+        g = float(np.linalg.norm(np.asarray(row[3:], dtype=float) - self.tracker.bias))
+        self.gyro.append((ts, g))
+        if len(self.gyro) == self.gyro.maxlen:
+            mid_t, mid_g = self.gyro[len(self.gyro) // 2]
+            if (mid_g >= PEAK_DPS and mid_g == max(v for _, v in self.gyro)
+                    and mid_t - self.last_spike > PEAK_GAP_S[0]):
+                rhythm = mid_t - self.last_spike <= PEAK_GAP_S[1]
+                explained = any(EXPLAINED_S[0] <= s - mid_t <= EXPLAINED_S[1] for s in self.step_times)
+                self.last_spike = mid_t
+                if rhythm:
+                    self.spikes.append([mid_t, explained])
+        while self.spikes and ts - self.spikes[0][0] >= FILL_DECIDE_S:
+            spike_t, explained = self.spikes.pop(0)
+            fill_t = spike_t + FILL_OFFSET_S
+            if not explained and self._clear_of_steps(fill_t, FILL_MIN_GAP_S):
+                self._add_pending(fill_t)
 
     def _release(self, now, stride_arrived=False):
         """Emit held network steps once their stride is known, or once they've waited HOLD_S."""
@@ -126,4 +179,5 @@ class Sensing:
 
     def _step(self, t, flag):
         self.n += 1
+        self.last_out = max(self.last_out, t)
         return Step(t=float(t), n=self.n, heading_deg=float(self.tracker.heading), stairs=int(flag))

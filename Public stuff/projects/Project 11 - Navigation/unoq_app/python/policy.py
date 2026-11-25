@@ -123,18 +123,24 @@ class CueFilter:
 
 # ---------- training ----------
 
-def walk_dataset(walk):
+def cue_maneuvers(walk, plan):
+    """The walk's maneuvers as they are cued: close pairs combined (config.COMBINE_M)."""
+    return feat.combine_maneuvers(walk["steps"], walk["maneuvers"], walk["meters_per_step"], plan)
+
+
+def walk_dataset(walk, plan=None):
     """walk: dict with steps, maneuvers, meters_per_step -> (x, y)."""
     x, _ = feat.walk_features(walk["steps"], walk["meters_per_step"])
-    y = feat.walk_labels(walk["steps"], walk["maneuvers"], walk["meters_per_step"])
+    y = feat.walk_labels(walk["steps"], cue_maneuvers(walk, plan), walk["meters_per_step"])
     return x, y
 
 
 def train(walks):
     """walks: list of dicts (id, steps, maneuvers, meters_per_step). Returns (Policy, report)."""
     xs, ys = [], []
+    plan = feat.route_plan(walks)
     for w in walks:
-        x, y = walk_dataset(w)
+        x, y = walk_dataset(w, plan)
         xs.append(x)
         ys.append(y)
     if not xs or sum(len(x) for x in xs) == 0:
@@ -143,7 +149,8 @@ def train(walks):
     policy = Policy().fit(np.vstack(xs), np.concatenate(ys), info={
         "walks": [w["id"] for w in walks],
         "steps": int(sum(len(x) for x in xs)),
-        "class_counts": {c: int(n) for c, n in zip(cfg.CLASSES, counts)},
+        "class_counts": {c: int(n) for c, n in zip(cfg.CLASSES, counts) if n},
+        "route_plan": plan,
     })
     report = leave_one_walk_out(walks) if len(walks) >= 2 else None
     policy.info["report"] = report
@@ -175,7 +182,8 @@ def leave_one_walk_out(walks):
     hits = misses = false_alarms = soon_hits = 0
     for i, held in enumerate(walks):
         rest = walks[:i] + walks[i + 1:]
-        xs, ys = zip(*(walk_dataset(w) for w in rest))
+        plan = feat.route_plan(rest)
+        xs, ys = zip(*(walk_dataset(w, plan) for w in rest))
         policy = Policy().fit(np.vstack(xs), np.concatenate(ys))
         cues = run_walk(policy, held)
         steps = held["steps"]
@@ -183,8 +191,8 @@ def leave_one_walk_out(walks):
         meters = np.array([int(s["n"]) for s in steps]) * held["meters_per_step"]
         used = set()
         walk_rows = []
-        for m in sorted(held["maneuvers"], key=lambda m: m["t"]):
-            if m["action"] not in cfg.MANEUVERS or len(times) == 0:
+        for m in sorted(cue_maneuvers(held, plan), key=lambda m: m["t"]):
+            if m["action"] not in cfg.CUE_MANEUVERS or len(times) == 0:
                 continue
             at = float(meters[int(np.argmin(np.abs(times - m["t"])))])
             match = None
