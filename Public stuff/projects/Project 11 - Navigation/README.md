@@ -5,19 +5,24 @@ tracks heading from its IMU, and a policy learned by behavior cloning from our o
 say "left turn coming up" and "turn left". The phone is only the screen and the speaker; all sensing,
 recording, training and inference run on the board.
 
-Status: both halves are built and tested on simulated walks and on Project 8's real recordings. Nothing
-has run on the board or on a real walk yet.
+Status: running on the board. Julian's first real walks (Nov 23) led to three sensing fixes and
+combined cues for maneuvers that come close together. They're described under
+[Changes from the first board tests](#changes-from-the-first-board-tests).
+
+**After pulling these changes**, retrain the policy on the Review page (the list of cue classes changed,
+so an older saved policy is ignored) and press **Reprocess walks** (the sensing version changed).
 
 ## Contents
 
 1. [How it works](#how-it-works)
 2. [Sensing: steps, heading, stairs](#sensing-steps-heading-stairs)
-3. [Hardware: the shoe case](#hardware-the-shoe-case)
-4. [Running it](#running-it)
-5. [Field workflow for the shared day](#field-workflow-for-the-shared-day)
-6. [The policy](#the-policy)
-7. [Files and data formats](#files-and-data-formats)
-8. [Known limits](#known-limits)
+3. [Changes from the first board tests](#changes-from-the-first-board-tests)
+4. [Hardware: the shoe case](#hardware-the-shoe-case)
+5. [Running it](#running-it)
+6. [Field workflow for the shared day](#field-workflow-for-the-shared-day)
+7. [The policy](#the-policy)
+8. [Files and data formats](#files-and-data-formats)
+9. [Known limits](#known-limits)
 
 ## How it works
 
@@ -70,6 +75,10 @@ stance it uses that stillness three ways:
 - the accelerometer reads pure gravity, which levels the orientation estimate
 - the gyro should read zero, so whatever it reads is its offset, and that gets re-measured
 
+The foot counts as still when it rotates slower than 65°/s and its acceleration is within 0.18 g of
+gravity, for 6 samples in a row. (These started at 40°/s and 0.12 g, which real stair descents never
+met. See [the board-test changes](#changes-from-the-first-board-tests).)
+
 A stance counts as a new stride only if the foot swung (rotated faster than 150°/s) since the last one.
 The jolt when the *other* foot lands briefly breaks a stance but doesn't swing this foot, so it isn't
 counted.
@@ -110,8 +119,8 @@ walks** reruns either one over every recorded walk, so the choice can wait.
 
 On stairs, the instrumented foot rises or falls about two stairs (~0.34 m) per stride and moves less far
 forward. A logistic regression on height change, stride length, stride time and swing time decides each
-stride. It's trained on simulated strides for now (99–100% on held-out strides) and should be retrained
-on real **Sensor data** stairs sessions. If the tracker's median stride is shorter than 0.4 m, the board
+stride. The current model is trained on simulated strides plus Julian's real board sessions: 98.9% on
+held-out strides, and no strides on flat walks flagged as stairs. If the tracker's median stride is shorter than 0.4 m, the board
 isn't tracking the foot properly, so the flag reports −1 (unknown) instead of guessing.
 
 ### Mounting the board (this matters for the housing)
@@ -141,6 +150,30 @@ and not loose on a strap.
 
 `python tools/test_sensing.py` checks the tracker, network and stairs against simulated truth and
 Project 8's counts. `python tools/test_pipeline.py` checks that the navigator still works on top.
+
+## Changes from the first board tests
+
+Julian's first runs on the UNO Q, with the MPU-6050 on a shoe, turned up three problems. Each fix was
+checked on the board recordings and on the simulator (commit `13cbdd6`, merged in PR #5).
+
+| Problem | Fix | Before → after |
+| --- | --- | --- |
+| Going down real stairs the foot never got still enough to count as a stance, so strides went missing | `foot_ins.py`: stance thresholds 40°/s, 0.12 g → 65°/s, 0.18 g | strides found on two descents: 7/13 and 5/12 → 13/13 and 11/12 |
+| The stairs classifier, trained only on simulated feet, flagged flat strides | `models/stairs.json` retrained on simulated + real board sessions | flat strides flagged: 5 → 0; 98.9% on held-out strides |
+| Taking stairs down quickly, neither the network nor the tracker saw about 7 strides per flight | `sensing.py`: swing fill-in (below) | the same route measured 63 / 53 / 49 m → 63 / 63 / 61 m; other recordings unchanged |
+| A left turn 1–2 m before the stairs was never announced (the stairs cue swallowed it) | combined cues (see [The policy](#the-policy)) | leave-one-walk-out on 3 real demos: 71% → 92% of maneuvers cued, every one with a heads-up, no false alarms |
+
+**Swing fill-in.** Every stride has one sharp rotation spike while the foot swings, even when the foot
+never comes to rest. A spike of at least 200°/s that is the fastest rotation within 0.25 s either side,
+and came 0.5–1.6 s after the previous spike (a walking rhythm), is checked 1.5 s later. If the network
+reported no step from 0.3 s before it to 0.9 s after, a step is added 0.45 s after the spike (the
+typical time from spike to stride end on the real walks), as long as it isn't within 0.5 s of another
+step. `FILL_IN = False` at the top of `sensing.py` turns this off. When it's on, the sensing version ends
+in `-fill`, so walks recorded before it show as needing reprocessing.
+
+The known cost: `tools/test_sensing.py` now has one failure. On simulated walk seed 703, a slow descent
+with long strides, the step count is still exact (85/85), but only 7 of the 14 stair strides are flagged
+as stairs. We accepted that in favor of the real data.
 
 ## Hardware: the shoe case
 
@@ -233,6 +266,17 @@ Labels come from the reviewed maneuver times. Steps from 3 m before a maneuver t
 `_now`, and the 8 m before that `_soon`. That window gives the heads-up, and it lets "now" fire as soon
 as the gyro feels a turn begin when distance alone isn't precise enough.
 
+**Combined maneuvers**: a "now" zone spans 5 m (3 m before to 2 m after), so when two maneuvers are
+closer than `COMBINE_M` (6 m) the later one's labels used to overwrite the earlier one's, and the
+earlier one was never cued. Close pairs are now one maneuver, named like `left+stairs`, labeled at the
+first one's place and spoken together ("Left turn, then stairs coming up", then "Turn left, then take
+the stairs"). Which pairs to combine is decided once per route (`features.route_plan`): if every
+training walk has the same maneuver sequence, a pair is combined when its median gap over those walks
+is under 6 m, so every walk gets labeled the same way. A walk whose sequence doesn't match falls back to
+its own gaps. Pairs are taken in order, so three close maneuvers become a pair plus a single. The phone
+shows a combined cue with the first maneuver's arrow and the name "Left + Stairs", and the Review page's
+report names it the same way.
+
 **Model**: distance-weighted k-nearest-neighbors (k = 3) on standardized, weighted features, in plain
 numpy. With 10 walks there are only a few hundred steps per maneuver class, too few to fit a network,
 and k-NN can't invent behavior it never saw. The turn count gets the largest weight because it says
@@ -243,7 +287,8 @@ right after "soon"), and each maneuver is announced once as soon and once as now
 
 On simulated walks (3 demos per walker, two different strides, a test walker with a third stride, all
 through the real sensing), the held-out score was 30/30 maneuvers cued with a mean timing error of
-2.5 m. Every maneuver got a heads-up and nothing fired falsely. Real walks will be worse; the report on the Review page measures that.
+2.5 m. Every maneuver got a heads-up and nothing fired falsely. On Julian's 3 real demos, with combined
+cues and the sensing fixes, it was 92% cued, all with a heads-up, and no false alarms.
 
 ## Files and data formats
 
@@ -258,7 +303,7 @@ unoq_app/
   python/stepnet_np.py     the step network in numpy + Project 8's debouncer
   python/stairs.py         stairs classifier on stride features
   python/models/           stepnet.npz, stairs.json (from the training scripts)
-  python/features.py       state per step, labels from maneuvers, turn detection and snapping
+  python/features.py       state per step, labels from maneuvers, combined maneuvers, turn detection and snapping
   python/policy.py         k-NN, cue filter, training, leave-one-walk-out report
   python/walks.py          walk storage, walkers, reprocessing
   python/config.py         every tunable number
@@ -288,10 +333,14 @@ Each walk folder `data/walks/<time>_<walker>_<kind>/` holds:
 
 ## Known limits
 
-- Everything has been tested on simulated walks, Project 8's five real recordings, and in a browser
-  against the laptop stand-in. Nothing has run on the board or on a real walk yet.
-- The step network and stairs classifier have only seen Project 8's wobbly mount and simulated feet.
-  Retrain them on the new housing before trusting them.
+- The stairs classifier now includes real board data, but the step network has still only seen
+  Project 8's wobbly mount and simulated feet. Retrain it on Sensor data from the new housing if step
+  counts look off.
+- The swing fill-in was tuned on a handful of real walks. On simulated seed 703 it costs half the
+  stairs flags on one slow descent (see above).
+- Combining needs every training walk to share the same maneuver sequence. A demo with a missing or
+  extra tap makes the route plan fall back to per-walk gaps, which can label walks inconsistently, so
+  review taps carefully.
 - Sensing costs about 25–80 ms of laptop CPU per second of walking. The board's ARM cores are slower;
   check that the page stays responsive during a walk.
 - The route is learned as "after this many meters and turns, do this". If a walker misses a turn, the
