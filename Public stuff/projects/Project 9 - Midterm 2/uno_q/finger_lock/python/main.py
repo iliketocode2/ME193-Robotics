@@ -151,6 +151,10 @@ def poll_status():
     press_count[0] = count
 
 
+def on_press():
+    presses.put(time.monotonic())
+
+
 def on_latch(state):
     latch_state[0] = state
     print("latch:", {0: "locked", 1: "open", 2: "FAULT, a limit switch did not click", 3: "moving"}.get(state, state),
@@ -191,12 +195,18 @@ sent = {"mask": None, "latch": None, "at": 0.0}
 last_print = [0.0]
 live = viewer.Viewer()
 fps = [0.0, time.monotonic()]   # smoothed frames per second, time of the last frame
+infer_ms = [0.0]                # smoothed time for one pass through the network
+NET_EVERY_S = 0.25              # redraw the "inside the network" panel at most 4 times a second
+net_drawn = [0.0]
+history = deque()               # (time, count, confidence, state) for the live timeline
+HISTORY_S = 16
+WHERE = "on the UNO Q" if ON_BOARD else "on this computer"
 
 
 def no_camera(now, why):
     """Keep the board going without a picture: LEDs off, the live view says what is wrong."""
-    if live.watching:
-        live.publish(viewer.message_frame(why))
+    if live.watching("cam"):
+        live.publish(viewer.message_frame(why), "cam")
     if now - sent["at"] > KEEPALIVE_S:
         sent["mask"], sent["at"] = 0, now
         send("set_leds", 0)
@@ -234,21 +244,41 @@ def loop():
         events += policy.press(now)
 
     inp = camera.frame_to_input(frame)
-    recent.append(npnet.forward(weights, inp))
+    t0 = time.perf_counter()
+    probs, maps = npnet.forward(weights, inp, return_maps=True)
+    infer_ms[0] = 0.9 * infer_ms[0] + 0.1 * (time.perf_counter() - t0) * 1000 if infer_ms[0] else         (time.perf_counter() - t0) * 1000
+    recent.append(probs)
     avg = np.mean(recent, axis=0)
     count, conf = int(np.argmax(avg)), float(avg.max())
     events += policy.update(count, conf, now)
 
     dt = now - fps[1]
     fps[0], fps[1] = 0.9 * fps[0] + 0.1 / max(dt, 1e-3), now
-    if live.watching:
-        live.publish(viewer.draw(frame, inp, policy, count, conf, now, latch_state[0], fps[0], inputs))
+    if live.watching("cam"):
+        live.publish(viewer.draw(frame, inp, policy, count, conf, now, latch_state[0], fps[0], inputs), "cam")
+    if live.watching("net") and now - net_drawn[0] > NET_EVERY_S:
+        net_drawn[0] = now
+        live.publish(viewer.draw_network(inp, maps, avg, weights, policy.min_conf), "net")
+    history.append((now, count, conf, policy.state))
+    while history and now - history[0][0] > HISTORY_S:
+        history.popleft()
+    if live.wants_status:
+        left = policy.time_left(now)
+        live.status = {
+            "now": now, "state": policy.state, "message": policy.message, "digits": len(policy.entered),
+            "fails": policy.fails, "max_fails": policy.max_fails, "min_conf": policy.min_conf,
+            "progress": policy.progress(now) if policy.state in ("CLEAR", "READ") else 0,
+            "time_left": None if left is None or left == float("inf") else left,
+            "count": count, "conf": conf, "fps": fps[0], "infer_ms": infer_ms[0], "where": WHERE, "can_press": not ON_BOARD,
+            "history": [[round(t, 2), c, round(p, 3), st] for t, c, p, st in history],
+        }
 
     for event in events:
         print(f"{event:8s} state={policy.state} digits={len(policy.entered)} fails={policy.fails}", flush=True)
     if now - last_print[0] > PRINT_EVERY_S:
         last_print[0] = now
-        print(f"reading {count} ({conf:.0%})  {policy.state}: {policy.message}", flush=True)
+        print(f"reading {count} ({conf:.0%})  {policy.state}: {policy.message}   "
+              f"[{fps[0]:.0f} fps, network {infer_ms[0]:.1f} ms]", flush=True)
 
     latch = 1 if policy.unlocked else 0
     if latch != sent["latch"]:
@@ -264,6 +294,7 @@ if ON_BOARD:
     Bridge.provide("latch", on_latch)
     App.run(user_loop=loop)
 else:
-    print("Running without the board. Ctrl+C to stop.")
+    live.on_press = on_press
+    print("Running without the board. Open http://localhost:8000 and use the button on the page. Ctrl+C to stop.")
     while True:
         loop()

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Navigator Review</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="top">
+        <h1>Review &amp; train</h1>
+        <span id="pill-link" class="pill bad">Board: connecting…</span>
+      </div>
+      <nav class="tabs">
+        <a href="index.html">← Walk</a>
+        <a href="review.html" class="active">Review</a>
+      </nav>
+    </header>
+
+    <main class="wide">
+      <section class="card">
+        <div class="toolbar">
+          <span class="grow" id="budget"></span>
+          <button class="btn primary" id="train">Train policy</button>
+          <button class="btn" id="reprocess" title="Re-run sensing.py over every walk's saved raw IMU">Reprocess walks</button>
+          <button class="btn" id="export">Export JSON</button>
+          <button class="btn" id="export-imu" title="Includes every walk's raw IMU, for retraining the step counter and stairs classifier on a laptop">Export with raw IMU</button>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr><th>When</th><th>Walker</th><th>Kind</th><th>Distance</th><th>Maneuvers</th><th>Reviewed</th><th>Training</th></tr>
+            </thead>
+            <tbody id="walks"></tbody>
+          </table>
+        </div>
+        <p class="muted" id="no-walks" style="margin: 10px 0 0">No walks recorded yet.</p>
+      </section>
+
+      <section class="card hidden" id="editor">
+        <h2 id="walk-title"></h2>
+        <div class="toolbar">
+          <button class="btn" id="snap-all" title="Move each turn to where the heading started changing">Snap turns to heading</button>
+          <button class="btn" id="reset-taps">Reset to taps</button>
+          <label class="muted">Add:
+            <select id="add-action">
+              <option value="">(click to add off)</option>
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+              <option value="stairs">Stairs</option>
+              <option value="arrive">Arrived</option>
+            </select>
+          </label>
+          <button class="btn danger" id="delete-marker" disabled>Delete selected</button>
+        </div>
+        <canvas id="plot"></canvas>
+        <div class="legend">
+          <span><i style="background: var(--text)"></i>heading</span>
+          <span><i style="background: var(--muted)"></i>steps</span>
+          <span><i style="background: var(--warn)"></i>detected turn</span>
+          <span><i style="background: var(--left)"></i>left</span>
+          <span><i style="background: var(--right)"></i>right</span>
+          <span><i style="background: var(--stairs)"></i>stairs</span>
+          <span><i style="background: var(--arrive)"></i>arrived</span>
+          <span>▼ policy cue · ✕ wrong-cue tap · dashed = original tap</span>
+        </div>
+        <p class="muted">Drag a maneuver line to where it really happened. Click a line to select it. With "Add" set, click the plot to place one. Left/right lines belong where the heading <i>starts</i> to bend.</p>
+        <div class="toolbar">
+          <label class="muted"><input type="checkbox" id="include" /> Use for training</label>
+          <label class="muted">m per step
+            <input id="mps" type="number" step="0.01" min="0.3" max="3" style="width: 90px" />
+          </label>
+          <button class="btn hidden" id="use-walker-mps"></button>
+          <span class="grow"></span>
+          <button class="btn primary" id="save">Save review</button>
+        </div>
+      </section>
+
+      <section class="card hidden" id="report-card">
+        <h2>Training report: leave-one-walk-out</h2>
+        <div id="report"></div>
+      </section>
+    </main>
+
+    <div id="toast"></div>
+
+    <script src="libs/socket.io.min.js"></script>
+    <script src="libs/arduino.js"></script>
+    <script src="common.js"></script>
+    <script src="review.js"></script>
+  </body>
+</html>

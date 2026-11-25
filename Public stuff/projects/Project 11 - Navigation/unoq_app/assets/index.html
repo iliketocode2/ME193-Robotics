@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Campus Navigator</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="top">
+        <h1>Campus Navigator</h1>
+        <span id="pill-link" class="pill bad">Board: connecting…</span>
+        <span id="pill-imu" class="pill">IMU: —</span>
+      </div>
+      <nav class="tabs">
+        <button data-tab="navigate" class="active">Navigate</button>
+        <button data-tab="record">Record</button>
+        <button data-tab="dagger">DAgger</button>
+        <button data-tab="calibrate">Calibrate</button>
+        <a href="review.html">Review</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="card" id="walker-card">
+        <div class="row">
+          <label class="field">Walker
+            <select id="walker"></select>
+          </label>
+          <label class="field">Route
+            <input id="route" autocomplete="off" />
+          </label>
+        </div>
+        <p class="muted" id="walker-info" style="margin: 8px 0 0"></p>
+        <div class="row hidden" id="new-walker-row" style="margin-top: 8px">
+          <input id="new-walker" placeholder="Name" autocomplete="off" />
+          <button class="btn" id="add-walker" style="flex: 0">Add</button>
+        </div>
+      </section>
+
+      <section class="stats card">
+        <div><b id="s-steps">0</b><span>steps</span></div>
+        <div><b id="s-meters">0</b><span>meters</span></div>
+        <div><b id="s-heading">0°</b><span>heading</span></div>
+        <div><b id="s-time">—</b><span>walk</span></div>
+      </section>
+
+      <!-- Navigate -->
+      <section data-panel="navigate">
+        <div class="cue" id="cue-nav">
+          <div class="arrow">↑</div>
+          <div class="text">Ready</div>
+          <div class="detail">Train a policy on the Review page, then press Start.</div>
+        </div>
+        <div class="card">
+          <div class="row">
+            <button class="btn primary" data-start="navigate">Start</button>
+            <button class="btn danger" data-stop>Stop</button>
+          </div>
+          <div class="row" style="margin-top: 10px">
+            <label class="muted" style="flex: 0 0 auto"><input type="checkbox" id="save-test" checked /> Save as a test walk</label>
+            <button class="btn" data-repeat style="flex: 0 0 auto">Repeat cue</button>
+          </div>
+          <p class="muted" id="policy-info" style="margin: 8px 0 0"></p>
+        </div>
+      </section>
+
+      <!-- Record -->
+      <section data-panel="record" class="hidden">
+        <div class="card">
+          <h2>Demonstration walk</h2>
+          <p class="muted" style="margin-top: 0">Start at the route's start. Tap a button the moment you <b>begin</b> each maneuver. Timing gets fixed on the Review page, so a late tap is fine; a missing one isn't.</p>
+          <div class="row">
+            <button class="btn primary" data-start="record">Start demo</button>
+            <button class="btn danger" data-stop>Stop</button>
+          </div>
+          <p class="muted" id="budget-record" style="margin: 8px 0 0"></p>
+        </div>
+        <div class="maneuvers" data-taps>
+          <button class="left" data-action="left">← Left</button>
+          <button class="right" data-action="right">Right →</button>
+          <button class="stairs" data-action="stairs">Stairs</button>
+          <button class="arrive" data-action="arrive">Arrived</button>
+        </div>
+        <div class="subactions">
+          <button class="btn" data-undo>Undo last tap</button>
+          <span></span>
+        </div>
+        <ul class="taplog" data-taplog></ul>
+      </section>
+
+      <!-- DAgger -->
+      <section data-panel="dagger" class="hidden">
+        <div class="cue" id="cue-dagger">
+          <div class="arrow">↑</div>
+          <div class="text">Ready</div>
+          <div class="detail">The policy guides; you correct it.</div>
+        </div>
+        <div class="card">
+          <div class="row">
+            <button class="btn primary" data-start="dagger">Start DAgger walk</button>
+            <button class="btn danger" data-stop>Stop</button>
+          </div>
+          <p class="muted" style="margin: 8px 0 0">Walk the right route whatever the cue says. Tap each maneuver as you do it, and <b>Wrong cue</b> when a cue is wrong.</p>
+          <p class="muted" id="budget-dagger" style="margin: 4px 0 0"></p>
+        </div>
+        <div class="maneuvers" data-taps>
+          <button class="left" data-action="left">← Left</button>
+          <button class="right" data-action="right">Right →</button>
+          <button class="stairs" data-action="stairs">Stairs</button>
+          <button class="arrive" data-action="arrive">Arrived</button>
+        </div>
+        <div class="subactions">
+          <button class="btn" data-undo>Undo last tap</button>
+          <button class="btn danger" data-wrong>Wrong cue</button>
+        </div>
+        <ul class="taplog" data-taplog></ul>
+      </section>
+
+      <!-- Calibrate -->
+      <section data-panel="calibrate" class="hidden">
+        <div class="card">
+          <h2>Stride calibration</h2>
+          <p class="muted" style="margin-top: 0">Pick two landmarks a known distance apart, ideally 40 m or more (measure it on a campus map). Each step miscounted on a short walk throws the stride off by several percent. Stand at the first, press Start, walk normally to the second, press Stop.</p>
+          <div class="row">
+            <label class="field">Distance (m)
+              <input id="cal-distance" type="number" inputmode="decimal" value="40" min="1" step="0.5" />
+            </label>
+          </div>
+          <div class="row" style="margin-top: 10px">
+            <button class="btn primary" data-start="calibrate">Start</button>
+            <button class="btn danger" id="cal-stop">Stop &amp; save</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Sensor data</h2>
+          <p class="muted" style="margin-top: 0">Training recordings for the step counter and the stairs classifier. Do only the one activity for the whole recording (30–60 s; for stairs, a full flight). These never count toward the 10 navigation walks.</p>
+          <div class="row">
+            <label class="field">Activity
+              <select id="sensor-activity">
+                <option value="walk">Walking (flat, straight)</option>
+                <option value="stairs">Stairs (up or down)</option>
+                <option value="turn">Walking with turns</option>
+                <option value="still">Standing / fidgeting</option>
+              </select>
+            </label>
+          </div>
+          <div class="row" style="margin-top: 10px">
+            <button class="btn primary" data-start="sensor">Start</button>
+            <button class="btn danger" data-stop>Stop</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Phone setup</h2>
+          <ul class="muted" style="margin: 0; padding-left: 18px">
+            <li>Set screen auto-lock to <b>Never</b> while walking (the page can't keep the screen on over http).</li>
+            <li>Turn the ringer/silent switch off and the volume up: cues are spoken.</li>
+            <li>If the page disconnects mid-walk, the board keeps recording. Taps are queued and resent.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast"></div>
+
+    <script src="libs/socket.io.min.js"></script>
+    <script src="libs/arduino.js"></script>
+    <script src="common.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

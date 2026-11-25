@@ -1,0 +1,6 @@
+name: Campus Navigator
+description: "Shoe-mounted MPU-6050 + behavior cloning: spoken turn-by-turn directions without GPS"
+icon: 🧭
+ports: []
+bricks:
+  - arduino:web_ui

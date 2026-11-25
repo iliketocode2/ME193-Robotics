@@ -1,0 +1,7 @@
+# Your Onshape keys. Never commit them.
+.env
+# Training output and caches (copy the files you want to keep into media/)
+runs/
+logs/
+__pycache__/
+*.pyc

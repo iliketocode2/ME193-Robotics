@@ -32,3 +32,6 @@ Kat-Projects/MQTT/
 # Throwaway venv created by virtualTesting/setup_test_env.py, ignored even
 # inside "Public stuff"
 Public stuff/virtualTesting/test/
+
+# Full-size videos are too big for GitHub; smaller copies are on the Notion page
+Public stuff/projects/Project 9 - Midterm 2/media/*.mp4
