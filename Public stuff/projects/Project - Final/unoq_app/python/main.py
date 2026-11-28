@@ -159,12 +159,13 @@ def make_plan(command, cancel):
     if mode == "llm":
         if llm_warm.is_set():
             set_doing(f"thinking about {command!r} with {llm.model}")
+            info = {}
             try:
                 plan, info = ask_llm(command, cancel)
                 return planner.validate(plan, FORBIDDEN_TOPICS), llm.name, info
             except planner.PlanError as e:
-                # The grammar makes this rare; if it happens, say so rather than guess.
-                return [{"skill": "refuse", "reason": f"I couldn't make a safe plan ({e})."}], llm.name, {}
+                # A plan jim can't carry out (unknown icon, 5-minute wait...): say why.
+                return [{"skill": "refuse", "reason": str(e)}], llm.name, info
             except OSError as e:
                 print(f"[llm] request failed: {e}; using rules", flush=True)
         else:

@@ -204,7 +204,7 @@ def main():
     ap.add_argument("--port", type=int, default=8091)
     ap.add_argument("--no-grammar", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--prompt", default="v2", choices=["v1", "v2"])
+    ap.add_argument("--prompt", default="v3", choices=["v1", "v2", "v3"])
     args = ap.parse_args()
 
     sys.path.insert(0, args.planner)

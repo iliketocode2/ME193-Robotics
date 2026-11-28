@@ -1,0 +1,25 @@
+[
+ {
+  "model": "Qwen3-1.7B-Q4_K_M",
+  "prompt": "v3",
+  "grammar": true,
+  "file_mb": 1056,
+  "first40_correct_pct": 98,
+  "heldout_correct_pct": 100,
+  "load_s": 3.6,
+  "peak_rss_mb": 1426,
+  "mem_drop_mb": 363,
+  "cold_prompt_tok_s": 4.9,
+  "cold_prompt_s": 155.8,
+  "gen_tok_s": 2.14,
+  "median_s": 17.7,
+  "max_s": 32.2,
+  "json_ok_pct": 100,
+  "valid_pct": 96,
+  "correct_pct": 98,
+  "in_domain_correct_pct": 100,
+  "ood_refused_pct": 94,
+  "false_refusals": 0,
+  "instructor_cases_ok": 2
+ }
+]

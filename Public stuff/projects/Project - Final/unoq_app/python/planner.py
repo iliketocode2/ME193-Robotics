@@ -43,10 +43,11 @@ def _step(skill, props=None, required=()):
             "required": ["skill", *required], "additionalProperties": False}
 
 
-def _schema(grammar_max_wait):
+def _schema(grammar_max_wait, icon_enum=True):
+    icon = {"enum": ICONS} if icon_enum else {"type": "string", "minLength": 1, "maxLength": 20}
     steps = [
         _step("show_text", {"text": {"type": "string", "minLength": 1, "maxLength": MAX_TEXT}}, ["text"]),
-        _step("show_icon", {"icon": {"enum": ICONS}}, ["icon"]),
+        _step("show_icon", {"icon": icon}, ["icon"]),
         _step("clear_display"),
         _step("reset_yaw"),
         _step("wait", {"seconds": {"type": "integer", "minimum": 0, "maximum": grammar_max_wait}}, ["seconds"]),
@@ -69,7 +70,12 @@ def _schema(grammar_max_wait):
 # left it no way to say 300. v2 lets the model write what it means (up to an
 # hour) and validate() refuses anything over MAX_WAIT_S, so the user is told
 # instead of being quietly given a different wait.
-PLAN_SCHEMAS = {"v1": _schema(MAX_WAIT_S), "v2": _schema(3600)}
+#
+# v3 applies the same lesson to icons: with the icon list in the grammar, "show
+# a picture of a cat" became a heart (the model had to pick *something* from
+# the list). Without it the model writes "cat", validate() rejects it, and jim
+# says it has no cat icon. The grammar still fixes the structure.
+PLAN_SCHEMAS = {"v1": _schema(MAX_WAIT_S), "v2": _schema(3600), "v3": _schema(3600, icon_enum=False)}
 SKILLS = [s["properties"]["skill"]["const"]
           for s in PLAN_SCHEMAS["v2"]["properties"]["steps"]["items"]["anyOf"]]
 
@@ -77,7 +83,7 @@ SKILLS = [s["properties"]["skill"]["const"]
 # Kept identical for every command so llama-server can reuse the processed
 # prompt (KV cache) and only has to read the new command each time.
 
-PROMPT_VERSION = "v2"     # what the app uses; the benchmark can pick either
+PROMPT_VERSION = "v3"     # what the app uses; the benchmark can pick any version
 
 SYSTEM_PROMPT_V1 = f"""You plan commands for "jim", an Arduino UNO Q robot. Turn the user's command into a JSON plan using ONLY these skills:
 - show_text {{text}}: show text on the 8x13 LED matrix. Short text stays still, long text scrolls.
@@ -134,7 +140,29 @@ FEW_SHOT_V2 = FEW_SHOT_V1 + [
      {"steps": [{"skill": "show_text", "text": "on"}]}),
 ]
 
-PROMPTS = {"v1": (SYSTEM_PROMPT_V1, FEW_SHOT_V1), "v2": (SYSTEM_PROMPT_V2, FEW_SHOT_V2)}
+# v3 = v2's prompt with the looser icon grammar and repair_placeholders().
+PROMPTS = {"v1": (SYSTEM_PROMPT_V1, FEW_SHOT_V1), "v2": (SYSTEM_PROMPT_V2, FEW_SHOT_V2),
+           "v3": (SYSTEM_PROMPT_V2, FEW_SHOT_V2)}
+
+
+def repair_placeholders(plan, command):
+    """Every configuration in benchmark run 2 sometimes wrote the bare word
+    instead of the live value: "tell me the temperature" -> message
+    "temperature", "show the yaw on the matrix" -> text "yaw". If a whole
+    text/message is exactly one live-value name, and the user didn't quote
+    that word (asking to *show the word* "yaw"), use the live value."""
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list):
+        return plan
+    quoted = {q.strip().lower() for q in re.findall(
+        "[" + _Q_OPEN + "]([^" + _Q_CLOSE + "]+)[" + _Q_CLOSE + "]", command)}
+    for step in plan["steps"]:
+        if not isinstance(step, dict):
+            continue
+        for key in ("text", "message"):
+            word = str(step.get(key, "")).strip().strip(".!?").lower()
+            if word in PLACEHOLDERS and word not in quoted:
+                step[key] = "{" + word + "}"
+    return plan
 
 
 def chat_messages(command, version=PROMPT_VERSION):
@@ -188,7 +216,7 @@ def validate(plan, forbidden_topics=()):
             step["text"] = text[:MAX_TEXT]
         elif skill == "show_icon":
             if raw.get("icon") not in ICONS:
-                raise PlanError(f"unknown icon {raw.get('icon')!r}")
+                raise PlanError(f"I have no {raw.get('icon')!r} picture (I have: {', '.join(ICONS)})")
             step["icon"] = raw["icon"]
         elif skill == "wait":
             try:
@@ -370,6 +398,8 @@ class LLMPlanner:
             plan = json.loads(_strip_fences(text))
         except json.JSONDecodeError as e:
             raise PlanError(f"model output is not JSON: {text[:120]!r}") from e
+        if self.prompt_version == "v3":
+            plan = repair_placeholders(plan, command)
         return plan, info
 
 

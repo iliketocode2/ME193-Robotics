@@ -84,6 +84,18 @@ check("schema skills", planner.SKILLS,
       ["show_text", "show_icon", "clear_display", "reset_yaw", "wait", "send_message", "refuse"])
 
 
+# --- placeholder repair (v3) ---------------------------------------------------------
+check("repair: bare 'temperature' -> live value",
+      planner.repair_placeholders({"steps": [{"skill": "send_message", "topic": "fred", "message": "temperature"}]},
+                                  "tell me the temperature on topic fred")["steps"][0]["message"], "{temperature}")
+check("repair: quoted word stays literal",
+      planner.repair_placeholders({"steps": [{"skill": "show_text", "text": "yaw"}]},
+                                  'show the word "yaw" on the matrix')["steps"][0]["text"], "yaw")
+check("repair: normal text untouched",
+      planner.repair_placeholders({"steps": [{"skill": "show_text", "text": "Hi"}]}, "type Hi")["steps"][0]["text"], "Hi")
+check("schema v3 lets the model name an icon we don't have (validate refuses it)",
+      "enum" in planner.PLAN_SCHEMAS["v3"]["properties"]["steps"]["items"]["anyOf"][1]["properties"]["icon"], False)
+
 # --- executor with fakes -------------------------------------------------------------
 class FakeDisplay:
     def __init__(self):
