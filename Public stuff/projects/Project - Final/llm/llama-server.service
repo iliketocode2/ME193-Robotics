@@ -1,0 +1,28 @@
+# systemd *user* service: keeps the planner LLM loaded on jim's Linux side.
+# Installed by llm/setup_jim.sh to ~/.config/systemd/user/. Starts at boot
+# (lingering is enabled for the arduino user), restarts if it crashes.
+#
+# The app container reaches it through its Docker gateway on port 8090
+# (planner.default_llm_url). To switch models: point ~/models/active.gguf at
+# another file and `systemctl --user restart llama-server`.
+#
+# Flags: -c 2048 context (the prompt is ~600 tokens), -t 4 = all four A53
+# cores, -np 1 one slot so every command reuses the cached prompt, -cram 256
+# caps the prompt cache at 256 MiB (default is 8 GiB, more than the board has).
+# Same flags as llm/bench/run_bench.py, so benchmark numbers match production.
+# The app (python/main.py) sends one warm-up request whenever the server
+# comes up, so the ~600-token prompt is already cached before the first
+# real command arrives.
+
+[Unit]
+Description=llama.cpp server for Jim's command planner
+After=network-online.target
+
+[Service]
+# readlink: pass the real file name so /props (and jim's /status) name the model, not "active".
+ExecStart=/bin/sh -c 'exec %h/llama/current/llama-server -m "$(readlink -f %h/models/active.gguf)" --host 0.0.0.0 --port 8090 -c 2048 -t 4 -np 1 -cram 256 --jinja'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

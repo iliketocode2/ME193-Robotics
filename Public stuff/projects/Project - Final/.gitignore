@@ -1,0 +1,6 @@
+# Your board's address stays on your laptop.
+tools/board_host.txt
+__pycache__/
+*.pyc
+# Model weights live on the board (~/models), never in git.
+*.gguf

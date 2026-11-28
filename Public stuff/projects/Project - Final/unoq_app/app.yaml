@@ -1,0 +1,5 @@
+name: Jim
+description: "Plain-English commands over MQTT, planned by an on-board LLM (llama.cpp) and run as skills"
+icon: 🤖
+ports: []
+bricks: []
